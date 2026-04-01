@@ -1,99 +1,362 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🔥 마장 FINAL</title>
-  <link rel="stylesheet" href="/style.css" />
+  <title>노마 FINAL</title>
+
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #0b0b0f;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 12px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 20px;
+      background: #111217;
+      border: 1px solid #1f2129;
+      margin-bottom: 12px;
+    }
+
+    .logo {
+      min-width: 180px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .search-box {
+      flex: 1;
+      display: flex;
+      gap: 8px;
+    }
+
+    .search-box input {
+      flex: 1;
+      height: 44px;
+      border: 1px solid #252733;
+      border-radius: 14px;
+      background: #161821;
+      color: #ffffff;
+      padding: 0 16px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .btn {
+      height: 44px;
+      padding: 0 16px;
+      border: none;
+      border-radius: 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .btn-yellow {
+      background: #ffbf00;
+      color: #111111;
+    }
+
+    .btn-dark {
+      background: #23252f;
+      color: #ffffff;
+    }
+
+    .map-card {
+      background: #0d0f14;
+      border: 1px solid #1f2129;
+      border-radius: 24px;
+      padding: 18px;
+      min-height: 620px;
+    }
+
+    .map-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .map-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .status {
+      color: #c9c9d1;
+      font-size: 14px;
+    }
+
+    .count-badge {
+      background: #171922;
+      color: #ffbf00;
+      border: 1px solid #2b2d36;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    #map {
+      width: 100%;
+      height: 520px;
+      border-radius: 18px;
+      overflow: hidden;
+      background: #111111;
+    }
+
+    .info-box {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: #14161d;
+      border: 1px solid #22252f;
+      color: #d7d7de;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 900px) {
+      .topbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .logo {
+        min-width: auto;
+      }
+
+      .search-box {
+        width: 100%;
+      }
+
+      .map-header {
+        flex-direction: column;
+      }
+
+      #map {
+        height: 420px;
+      }
+    }
+  </style>
 </head>
 <body>
-  <div class="page">
-    <header class="topbar">
-      <div class="brand">🔥 마장 FINAL</div>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="logo">🔥 노마 FINAL</div>
 
-      <div class="search-area">
-        <input id="keywordInput" type="text" placeholder="맛집 이름 실시간 검색" />
-        <button id="searchBtn" class="btn btn-primary">검색</button>
-        <button id="reloadBtn" class="btn btn-dark">새로고침</button>
+      <div class="search-box">
+        <input id="keyword" type="text" placeholder="맛집 이름 실시간 검색" />
+        <button class="btn btn-yellow" id="searchBtn">검색</button>
+        <button class="btn btn-dark" id="refreshBtn">새로고침</button>
+        <button class="btn btn-dark">로그인</button>
+        <button class="btn btn-yellow">회원가입</button>
       </div>
+    </div>
 
-      <div class="auth-area">
-        <div id="guestBox" class="auth-buttons">
-          <button id="openLoginBtn" class="btn btn-dark">로그인</button>
-          <button id="openRegisterBtn" class="btn btn-primary">회원가입</button>
+    <div class="map-card">
+      <div class="map-header">
+        <div>
+          <div class="map-title">🗺️ 카카오맵</div>
+          <div class="status" id="status">위치 확인 중...</div>
         </div>
 
-        <div id="userBox" class="user-box hidden">
-          <span id="userGreeting"></span>
-          <button id="logoutBtn" class="btn btn-danger">로그아웃</button>
-        </div>
-      </div>
-    </header>
-
-    <main class="content">
-      <section class="map-section card">
-        <div class="map-header">
-          <div>
-            <div class="section-title">🗺️ 카카오맵</div>
-            <div id="statusText" class="muted">위치 확인 중...</div>
-          </div>
-          <div class="chip-row">
-            <span id="resultCountChip" class="chip">주변 맛집 0개</span>
-          </div>
-        </div>
-        <div id="map"></div>
-      </section>
-
-      <section class="grid-2">
-        <section class="card list-section">
-          <div class="section-title">📍 주변 맛집</div>
-          <div id="restaurantList" class="list"></div>
-        </section>
-
-        <section class="card list-section">
-          <div class="section-title">⭐ 저장한 맛집</div>
-          <div id="favoriteList" class="list"></div>
-        </section>
-      </section>
-    </main>
-  </div>
-
-  <div id="authModal" class="modal hidden">
-    <div class="modal-backdrop"></div>
-    <div class="modal-card">
-      <button id="closeAuthModalBtn" class="close-btn">✕</button>
-
-      <div class="tab-row">
-        <button id="loginTabBtn" class="tab-btn active">로그인</button>
-        <button id="registerTabBtn" class="tab-btn">회원가입</button>
+        <div class="count-badge" id="countBadge">주변 맛집 0개</div>
       </div>
 
-      <form id="loginForm" class="form-box">
-        <h3>로그인</h3>
-        <input id="loginAccount" type="text" placeholder="아이디 또는 이메일" required />
-        <input id="loginPassword" type="password" placeholder="비밀번호" required />
-        <button class="btn btn-primary full" type="submit">로그인</button>
-      </form>
+      <div id="map"></div>
 
-      <form id="registerForm" class="form-box hidden">
-        <h3>회원가입</h3>
-        <input id="registerUsername" type="text" placeholder="아이디" required />
-        <input id="registerEmail" type="email" placeholder="이메일" required />
-        <input id="registerPassword" type="password" placeholder="비밀번호" required />
-        <button class="btn btn-primary full" type="submit">회원가입</button>
-      </form>
+      <div class="info-box" id="infoBox">
+        현재 위치를 불러온 뒤 지도를 표시합니다. 위치를 가져오지 못하면 서울 시청 기본 위치로 표시합니다.
+      </div>
     </div>
   </div>
 
-  <div id="detailModal" class="modal hidden">
-    <div class="modal-backdrop"></div>
-    <div class="modal-card detail-card">
-      <button id="closeDetailModalBtn" class="close-btn">✕</button>
-      <div id="detailContent"></div>
-    </div>
-  </div>
+  <script>
+    let map;
+    let currentMarker;
+    let placesMarkers = [];
+    let placesService;
 
-  <script src="/config.js"></script>
-  <script src="/app.js"></script>
+    function createMap(lat, lng) {
+      const container = document.getElementById("map");
+      const center = new kakao.maps.LatLng(lat, lng);
+
+      map = new kakao.maps.Map(container, {
+        center: center,
+        level: 3
+      });
+
+      placesService = new kakao.maps.services.Places();
+
+      currentMarker = new kakao.maps.Marker({
+        position: center
+      });
+      currentMarker.setMap(map);
+
+      const infowindow = new kakao.maps.InfoWindow({
+        content: '<div style="padding:6px 10px;font-size:13px;">현재 위치</div>'
+      });
+      infowindow.open(map, currentMarker);
+    }
+
+    function clearPlaceMarkers() {
+      for (const marker of placesMarkers) {
+        marker.setMap(null);
+      }
+      placesMarkers = [];
+    }
+
+    function searchNearbyRestaurants(lat, lng, keyword = "") {
+      if (!placesService || !map) return;
+
+      clearPlaceMarkers();
+
+      const center = new kakao.maps.LatLng(lat, lng);
+      map.setCenter(center);
+
+      const searchKeyword = keyword && keyword.trim() ? keyword.trim() : "맛집";
+
+      placesService.keywordSearch(
+        searchKeyword,
+        function (data, status) {
+          if (status !== kakao.maps.services.Status.OK) {
+            document.getElementById("countBadge").innerText = "주변 맛집 0개";
+            document.getElementById("infoBox").innerText =
+              "검색 결과가 없습니다. 다른 검색어로 다시 시도하세요.";
+            return;
+          }
+
+          const bounds = new kakao.maps.LatLngBounds();
+          bounds.extend(center);
+
+          data.forEach((place) => {
+            const marker = new kakao.maps.Marker({
+              map: map,
+              position: new kakao.maps.LatLng(place.y, place.x)
+            });
+
+            placesMarkers.push(marker);
+            bounds.extend(new kakao.maps.LatLng(place.y, place.x));
+
+            const info = new kakao.maps.InfoWindow({
+              content: `
+                <div style="padding:8px 10px;font-size:12px;line-height:1.5;max-width:220px;">
+                  <strong>${place.place_name}</strong><br/>
+                  ${place.road_address_name || place.address_name || ""}
+                </div>
+              `
+            });
+
+            kakao.maps.event.addListener(marker, "click", function () {
+              info.open(map, marker);
+            });
+          });
+
+          map.setBounds(bounds);
+          document.getElementById("countBadge").innerText = `주변 맛집 ${data.length}개`;
+          document.getElementById("infoBox").innerText =
+            `"${searchKeyword}" 검색 결과 ${data.length}개를 찾았습니다.`;
+        },
+        {
+          location: center,
+          radius: 2000,
+          size: 15,
+          sort: kakao.maps.services.SortBy.DISTANCE
+        }
+      );
+    }
+
+    function saveLocation(lat, lng) {
+      fetch("/location", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ lat, lng })
+      }).catch(() => {});
+    }
+
+    function loadMapWithPosition(lat, lng, statusText) {
+      document.getElementById("status").innerText = statusText;
+      createMap(lat, lng);
+      searchNearbyRestaurants(lat, lng);
+      saveLocation(lat, lng);
+    }
+
+    function useFallbackLocation() {
+      const lat = 37.5665;
+      const lng = 126.9780;
+      loadMapWithPosition(lat, lng, "위치 실패 → 서울 시청 기본 위치 표시");
+    }
+
+    function getUserLocation() {
+      if (!navigator.geolocation) {
+        useFallbackLocation();
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        function (position) {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          loadMapWithPosition(lat, lng, "위치 확인 완료");
+        },
+        function () {
+          useFallbackLocation();
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 0
+        }
+      );
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", function () {
+      document.getElementById("status").innerText = "위치 다시 확인 중...";
+      getUserLocation();
+    });
+
+    document.getElementById("searchBtn").addEventListener("click", function () {
+      if (!map) return;
+      const center = map.getCenter();
+      const keyword = document.getElementById("keyword").value;
+      searchNearbyRestaurants(center.getLat(), center.getLng(), keyword);
+    });
+
+    document.getElementById("keyword").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        document.getElementById("searchBtn").click();
+      }
+    });
+
+    window.onload = function () {
+      getUserLocation();
+    };
+  </script>
 </body>
 </html>
