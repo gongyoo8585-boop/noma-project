@@ -1,78 +1,150 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
   <title>맛집 FINAL</title>
 
-  <!-- 카카오맵 -->
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&autoload=false"></script>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services&autoload=false"></script>
 
   <style>
-    body {
-      margin: 0;
-      background: #000;
-      color: #fff;
-      font-family: sans-serif;
-    }
-
-    #map {
-      width: 100%;
-      height: 500px;
-    }
-
-    .status {
-      padding: 10px;
-      color: #aaa;
-    }
+    body { margin:0; background:#000; color:#fff; }
+    #map { width:100%; height:500px; }
+    input, button { margin:5px; padding:5px; }
   </style>
 </head>
 
 <body>
 
-<h2>🔥 카카오 지도</h2>
+<h2>🔥 맛집 검색 + 저장</h2>
+
+<div>
+  <input id="username" placeholder="아이디">
+  <input id="password" placeholder="비밀번호">
+  <button onclick="register()">회원가입</button>
+  <button onclick="login()">로그인</button>
+</div>
+
+<input id="keyword" placeholder="맛집 검색">
+<button onclick="search()">검색</button>
 
 <div id="map"></div>
-<div class="status" id="status">위치 확인 중...</div>
 
 <script>
+let map;
+let ps;
+let token = "";
+
 kakao.maps.load(function () {
 
-  const status = document.getElementById("status");
+  navigator.geolocation.getCurrentPosition(function (pos) {
 
-  if (!navigator.geolocation) {
-    status.innerText = "❌ 위치 지원 안됨";
-    return;
-  }
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
 
-  navigator.geolocation.getCurrentPosition(
-    function (pos) {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
+    map = new kakao.maps.Map(document.getElementById("map"), {
+      center: new kakao.maps.LatLng(lat, lng),
+      level: 3
+    });
 
-      const mapContainer = document.getElementById("map");
+    ps = new kakao.maps.services.Places();
 
-      const mapOption = {
-        center: new kakao.maps.LatLng(lat, lng),
-        level: 3,
-      };
+    loadMyPlaces();
 
-      const map = new kakao.maps.Map(mapContainer, mapOption);
-
-      new kakao.maps.Marker({
-        map: map,
-        position: new kakao.maps.LatLng(lat, lng),
-      });
-
-      status.innerText = "✅ 위치 로딩 완료";
-    },
-    function (err) {
-      status.innerText = "❌ 위치 권한 필요";
-      console.error(err);
-    }
-  );
+  });
 
 });
+
+/* ===== 검색 ===== */
+function search() {
+  const keyword = document.getElementById("keyword").value;
+
+  ps.keywordSearch(keyword, function (data, status) {
+    if (status === kakao.maps.services.Status.OK) {
+
+      data.forEach(place => {
+
+        const marker = new kakao.maps.Marker({
+          map: map,
+          position: new kakao.maps.LatLng(place.y, place.x)
+        });
+
+        kakao.maps.event.addListener(marker, 'click', function () {
+          save(place.place_name, place.y, place.x);
+        });
+
+      });
+
+    }
+  });
+}
+
+/* ===== 저장 ===== */
+function save(name, lat, lng) {
+
+  if (!token) return alert("로그인 필요");
+
+  fetch("/places", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": token
+    },
+    body: JSON.stringify({ name, lat, lng })
+  })
+  .then(res => res.json())
+  .then(() => alert("저장됨"));
+}
+
+/* ===== 내 맛집 불러오기 ===== */
+function loadMyPlaces() {
+
+  if (!token) return;
+
+  fetch("/places", {
+    headers: { "Authorization": token }
+  })
+  .then(res => res.json())
+  .then(data => {
+
+    data.forEach(p => {
+      new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(p.lat, p.lng)
+      });
+    });
+
+  });
+}
+
+/* ===== 회원가입 ===== */
+function register() {
+  fetch("/register", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      username: username.value,
+      password: password.value
+    })
+  }).then(()=>alert("회원가입 완료"));
+}
+
+/* ===== 로그인 ===== */
+function login() {
+  fetch("/login", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      username: username.value,
+      password: password.value
+    })
+  })
+  .then(res=>res.json())
+  .then(data=>{
+    token = data.token;
+    alert("로그인 성공");
+    loadMyPlaces();
+  });
+}
 </script>
 
 </body>
