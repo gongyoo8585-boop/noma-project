@@ -2,10 +2,10 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>맛집 FINAL</title>
 
-  <!-- 카카오맵 SDK -->
+  <!-- 카카오맵 -->
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&autoload=false"></script>
 
   <style>
@@ -16,16 +16,9 @@
       font-family: sans-serif;
     }
 
-    header {
-      padding: 15px;
-      font-size: 20px;
-      font-weight: bold;
-    }
-
     #map {
       width: 100%;
       height: 500px;
-      background: #222;
     }
 
     .status {
@@ -37,7 +30,7 @@
 
 <body>
 
-<header>🔥 맛집 FINAL</header>
+<h2>🔥 카카오 지도</h2>
 
 <div id="map"></div>
 <div class="status" id="status">위치 확인 중...</div>
@@ -53,19 +46,18 @@ kakao.maps.load(function () {
   }
 
   navigator.geolocation.getCurrentPosition(
-    function (position) {
+    function (pos) {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
 
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
+      const mapContainer = document.getElementById("map");
 
-      const container = document.getElementById("map");
-
-      const options = {
+      const mapOption = {
         center: new kakao.maps.LatLng(lat, lng),
         level: 3,
       };
 
-      const map = new kakao.maps.Map(container, options);
+      const map = new kakao.maps.Map(mapContainer, mapOption);
 
       new kakao.maps.Marker({
         map: map,
@@ -73,12 +65,10 @@ kakao.maps.load(function () {
       });
 
       status.innerText = "✅ 위치 로딩 완료";
-
-      console.log("지도 정상 작동");
     },
-    function (error) {
+    function (err) {
       status.innerText = "❌ 위치 권한 필요";
-      console.error(error);
+      console.error(err);
     }
   );
 
