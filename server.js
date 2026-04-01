@@ -1,48 +1,31 @@
-import express from "express";
-import mongoose from "mongoose";
-import cors from "cors";
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
-
-dotenv.config();
+const express = require("express");
+const mongoose = require("mongoose");
+const path = require("path");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
-// 🔥 현재 파일 경로 설정 (ESM용)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// 🔥 public 폴더 연결
-app.use(express.static(path.join(__dirname, "public")));
+// 🔥 환경변수
+const MONGO_URI = process.env.MONGO_URI;
+const PORT = process.env.PORT || 10000;
 
 // 🔥 MongoDB 연결
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(MONGO_URI)
   .then(() => console.log("🔥 MongoDB 연결 성공"))
   .catch(err => console.log(err));
 
-// 🔥 테스트 API
-app.get("/api/test", (req, res) => {
-  res.json({ message: "서버 정상 작동 🚀" });
-});
+// 🔥 기본 설정
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// 🔥 위치 저장 API
-app.post("/location", (req, res) => {
-  const { lat, lng } = req.body;
-  console.log("📍 위치:", lat, lng);
-  res.json({ success: true });
-});
+// 🔥 public 폴더 연결 (여기 중요)
+app.use(express.static(path.join(__dirname, "public")));
 
-// 🔥 index.html 연결
+// 🔥 기본 라우트
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// 🔥 Render용 PORT
-const PORT = process.env.PORT || 10000;
-
+// 🔥 서버 실행
 app.listen(PORT, () => {
-  console.log(`🔥 서버 실행됨: ${PORT}`);
+  console.log(`🔥 서버 실행: http://localhost:${PORT}`);
 });
