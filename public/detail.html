@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>상세</title>
+</head>
+<body>
+
+<h2 id="name"></h2>
+
+<div id="reviews"></div>
+
+<input id="reviewText" placeholder="리뷰">
+<div id="stars"></div>
+<button onclick="addReview()">등록</button>
+
+<script>
+const id = new URLSearchParams(location.search).get("id");
+
+let rating = 5;
+
+// 별 UI
+for(let i=1;i<=5;i++){
+  const star = document.createElement("span");
+  star.innerText = "⭐";
+  star.onclick = ()=>rating=i;
+  document.getElementById("stars").appendChild(star);
+}
+
+// 매장 정보
+fetch("/shops")
+  .then(r=>r.json())
+  .then(data=>{
+    const shop = data.find(s=>s.id==id);
+    document.getElementById("name").innerText = shop.name;
+  });
+
+// 리뷰 불러오기
+function loadReviews(){
+  fetch("/reviews/"+id)
+    .then(r=>r.json())
+    .then(data=>{
+      document.getElementById("reviews").innerHTML =
+        data.map(r=>`<p>⭐${r.rating} - ${r.text}</p>`).join("");
+    });
+}
+
+// 리뷰 추가
+function addReview(){
+  const text = document.getElementById("reviewText").value;
+
+  fetch("/reviews", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({shopId:id,text,rating})
+  }).then(loadReviews);
+}
+
+loadReviews();
+</script>
+
+</body>
+</html>
