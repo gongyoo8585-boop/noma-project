@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
-/* ===== Mongo 연결 ===== */
+/* ===== MongoDB ===== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB 연결 성공"))
   .catch(err => console.log(err));
@@ -24,7 +24,8 @@ const Place = mongoose.model("Place", {
   name: String,
   lat: Number,
   lng: Number,
-  user: String
+  user: String,
+  createdAt: { type: Date, default: Date.now }
 });
 
 /* ===== 회원가입 ===== */
@@ -45,9 +46,10 @@ app.post("/login", async (req, res) => {
   res.json({ token });
 });
 
-/* ===== 인증 미들웨어 ===== */
+/* ===== 인증 ===== */
 function auth(req, res, next) {
   const token = req.headers.authorization;
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded.username;
@@ -57,7 +59,7 @@ function auth(req, res, next) {
   }
 }
 
-/* ===== 맛집 저장 ===== */
+/* ===== 저장 ===== */
 app.post("/places", auth, async (req, res) => {
   const { name, lat, lng } = req.body;
 
@@ -71,12 +73,17 @@ app.post("/places", auth, async (req, res) => {
   res.json({ message: "저장 완료" });
 });
 
-/* ===== 맛집 불러오기 ===== */
+/* ===== 불러오기 ===== */
 app.get("/places", auth, async (req, res) => {
   const places = await Place.find({ user: req.user });
   res.json(places);
 });
 
-/* ===== 서버 실행 ===== */
+/* ===== 삭제 ===== */
+app.delete("/places/:id", auth, async (req, res) => {
+  await Place.deleteOne({ _id: req.params.id });
+  res.json({ message: "삭제 완료" });
+});
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log("서버 실행"));

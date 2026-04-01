@@ -1,21 +1,22 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>맛집 FINAL</title>
+<meta charset="UTF-8">
+<title>🔥 맛집 FINAL</title>
 
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services&autoload=false"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services&autoload=false"></script>
 
-  <style>
-    body { margin:0; background:#000; color:#fff; }
-    #map { width:100%; height:500px; }
-    input, button { margin:5px; padding:5px; }
-  </style>
+<style>
+body { margin:0; background:#000; color:#fff; font-family:sans-serif; }
+#map { width:100%; height:500px; }
+input, button { margin:5px; padding:5px; }
+.card { background:#111; margin:5px; padding:5px; }
+</style>
 </head>
 
 <body>
 
-<h2>🔥 맛집 검색 + 저장</h2>
+<h2>🔥 맛집 앱 완성</h2>
 
 <div>
   <input id="username" placeholder="아이디">
@@ -29,10 +30,14 @@
 
 <div id="map"></div>
 
+<h3>📌 내 저장 맛집</h3>
+<div id="list"></div>
+
 <script>
 let map;
 let ps;
 let token = "";
+let myMarkers = [];
 
 kakao.maps.load(function () {
 
@@ -47,8 +52,6 @@ kakao.maps.load(function () {
     });
 
     ps = new kakao.maps.services.Places();
-
-    loadMyPlaces();
 
   });
 
@@ -84,36 +87,56 @@ function save(name, lat, lng) {
   if (!token) return alert("로그인 필요");
 
   fetch("/places", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": token
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":token
     },
     body: JSON.stringify({ name, lat, lng })
   })
-  .then(res => res.json())
-  .then(() => alert("저장됨"));
+  .then(()=> {
+    alert("저장 완료");
+    loadMyPlaces();
+  });
 }
 
-/* ===== 내 맛집 불러오기 ===== */
+/* ===== 불러오기 ===== */
 function loadMyPlaces() {
 
-  if (!token) return;
-
   fetch("/places", {
-    headers: { "Authorization": token }
+    headers:{ "Authorization":token }
   })
-  .then(res => res.json())
-  .then(data => {
+  .then(res=>res.json())
+  .then(data=>{
+
+    document.getElementById("list").innerHTML = "";
 
     data.forEach(p => {
+
       new kakao.maps.Marker({
         map: map,
         position: new kakao.maps.LatLng(p.lat, p.lng)
       });
+
+      document.getElementById("list").innerHTML += `
+        <div class="card">
+          ${p.name}
+          <button onclick="del('${p._id}')">삭제</button>
+        </div>
+      `;
     });
 
   });
+}
+
+/* ===== 삭제 ===== */
+function del(id) {
+
+  fetch("/places/"+id, {
+    method:"DELETE",
+    headers:{ "Authorization":token }
+  })
+  .then(()=> loadMyPlaces());
 }
 
 /* ===== 회원가입 ===== */
