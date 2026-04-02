@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <title>🔥 맛집 PRO</title>
 
-  <!-- 카카오 지도 -->
-  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28"></script>
+  <!-- ⭐ 카카오 지도 (services 반드시 포함) -->
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services"></script>
 
   <style>
     body {
@@ -66,20 +66,19 @@
   <div>
     <input id="username" placeholder="아이디">
     <input id="password" type="password" placeholder="비밀번호">
-    <button onclick="register()">회원가입</button>
-    <button onclick="login()">로그인</button>
+    <button id="registerBtn">회원가입</button>
+    <button id="loginBtn">로그인</button>
   </div>
 
   <!-- 검색 -->
   <div>
     <input id="keyword" placeholder="맛집 검색">
-    <button onclick="searchPlace()">검색</button>
-    <button onclick="loadPlaces()">내 맛집</button>
+    <button id="searchBtn">검색</button>
+    <button id="myBtn">내 맛집</button>
   </div>
 </header>
 
 <div id="map"></div>
-
 <div class="list" id="list"></div>
 
 <script>
@@ -87,7 +86,7 @@ let map;
 let userLat, userLng;
 let token = localStorage.getItem("token");
 
-// 지도 초기화
+// ================= 지도 =================
 navigator.geolocation.getCurrentPosition(pos => {
   userLat = pos.coords.latitude;
   userLng = pos.coords.longitude;
@@ -103,43 +102,67 @@ navigator.geolocation.getCurrentPosition(pos => {
   });
 });
 
-// 회원가입
+// ================= 이벤트 연결 =================
+document.getElementById("registerBtn").addEventListener("click", register);
+document.getElementById("loginBtn").addEventListener("click", login);
+document.getElementById("searchBtn").addEventListener("click", searchPlace);
+document.getElementById("myBtn").addEventListener("click", loadPlaces);
+
+// ================= 회원가입 =================
 async function register() {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
 
-  await fetch("/register", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({username, password})
-  });
+  try {
+    await fetch("/register", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({username, password})
+    });
 
-  alert("회원가입 완료");
+    alert("회원가입 완료");
+  } catch (e) {
+    alert("회원가입 실패");
+  }
 }
 
-// 로그인
+// ================= 로그인 =================
 async function login() {
+  console.log("로그인 클릭됨");
+
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
 
-  const res = await fetch("/login", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({username, password})
-  });
+  try {
+    const res = await fetch("/login", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({username, password})
+    });
 
-  const data = await res.json();
-  token = data.token;
-  localStorage.setItem("token", token);
+    const data = await res.json();
 
-  alert("로그인 성공");
+    if (!data.token) {
+      alert("로그인 실패");
+      return;
+    }
+
+    token = data.token;
+    localStorage.setItem("token", token);
+
+    alert("로그인 성공");
+  } catch (e) {
+    console.error(e);
+    alert("로그인 에러");
+  }
 }
 
-// 검색
+// ================= 검색 =================
 function searchPlace() {
   const keyword = document.getElementById("keyword").value;
 
   const ps = new kakao.maps.services.Places();
+
   ps.keywordSearch(keyword, (data, status) => {
     if (status !== kakao.maps.services.Status.OK) return;
 
@@ -156,7 +179,7 @@ function searchPlace() {
   });
 }
 
-// 저장
+// ================= 저장 =================
 async function savePlace(place) {
   if (!token) return alert("로그인 필요");
 
@@ -178,7 +201,7 @@ async function savePlace(place) {
   alert("저장 완료");
 }
 
-// 거리 계산
+// ================= 거리 계산 =================
 function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371;
   const dLat = (lat2-lat1) * Math.PI/180;
@@ -193,7 +216,7 @@ function getDistance(lat1, lng1, lat2, lng2) {
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 }
 
-// 내 맛집 불러오기 + 거리순 정렬
+// ================= 리스트 =================
 async function loadPlaces() {
   if (!token) return alert("로그인 필요");
 
@@ -203,12 +226,10 @@ async function loadPlaces() {
 
   let data = await res.json();
 
-  // 거리 계산
   data.forEach(p => {
     p.distance = getDistance(userLat, userLng, p.lat, p.lng);
   });
 
-  // 거리순 정렬
   data.sort((a,b)=>a.distance - b.distance);
 
   const list = document.getElementById("list");
