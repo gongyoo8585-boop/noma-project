@@ -11,7 +11,7 @@ app.use(express.json());
 app.use(express.static("public"));
 app.use("/uploads", express.static("uploads"));
 
-/* ===== 파일 업로드 ===== */
+/* ===== 업로드 ===== */
 const storage = multer.diskStorage({
   destination: "uploads/",
   filename: (req, file, cb) => {
@@ -38,8 +38,7 @@ const Place = mongoose.model("Place", {
   rating: Number,
   review: String,
   image: String,
-  favorite: Boolean,
-  createdAt: { type: Date, default: Date.now }
+  favorite: Boolean
 });
 
 /* ===== 인증 ===== */
@@ -88,26 +87,22 @@ app.post("/places", auth, upload.single("image"), async (req, res) => {
 
 /* ===== 조회 ===== */
 app.get("/places", auth, async (req, res) => {
-
   const places = await Place.find({ user: req.user });
-
   res.json(places);
+});
+
+/* ===== 즐겨찾기 ===== */
+app.patch("/favorite/:id", auth, async (req, res) => {
+  const place = await Place.findById(req.params.id);
+  place.favorite = !place.favorite;
+  await place.save();
+  res.json(place);
 });
 
 /* ===== 삭제 ===== */
 app.delete("/places/:id", auth, async (req, res) => {
   await Place.deleteOne({ _id: req.params.id });
   res.json({ message: "삭제" });
-});
-
-/* ===== 즐겨찾기 ===== */
-app.patch("/favorite/:id", auth, async (req, res) => {
-
-  const place = await Place.findById(req.params.id);
-  place.favorite = !place.favorite;
-  await place.save();
-
-  res.json(place);
 });
 
 app.listen(process.env.PORT || 10000, () => console.log("서버 실행"));
