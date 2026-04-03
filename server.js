@@ -1,8 +1,7 @@
-onst express = require("express");
+const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
@@ -12,7 +11,8 @@ app.use(express.static("public"));
 
 /* ===== DB ===== */
 mongoose.connect(process.env.MONGO_URI)
-  .then(()=>console.log("DB 연결 성공"));
+  .then(()=>console.log("DB 연결 성공"))
+  .catch(err=>console.log(err));
 
 /* ===== 모델 ===== */
 const User = mongoose.model("User", {
@@ -22,63 +22,36 @@ const User = mongoose.model("User", {
 
 /* ===== 회원가입 ===== */
 app.post("/register", async (req,res)=>{
-  const {username,password} = req.body;
-  await User.create({username,password});
-  res.json({message:"가입 성공"});
+  try{
+    const {username,password} = req.body;
+    await User.create({username,password});
+    res.json({message:"가입 성공"});
+  }catch{
+    res.status(500).json({message:"서버 오류"});
+  }
 });
 
 /* ===== 로그인 ===== */
 app.post("/login", async (req,res)=>{
   const {username,password} = req.body;
+
   const user = await User.findOne({username,password});
 
   if(!user){
-    return res.status(401).json({message:"로그인 실패"});
+    return res.json({error:true});
   }
 
   const token = jwt.sign({username}, process.env.JWT_SECRET);
   res.json({token});
 });
 
-/* ===== 카카오 로그인 시작 ===== */
+/* ===== 🔥 카카오 로그인 (안전버전) ===== */
 app.get("/kakao", (req,res)=>{
-  const url = `https://kauth.kakao.com/oauth/authorize?client_id=${process.env.KAKAO_REST_KEY}&redirect_uri=${process.env.KAKAO_REDIRECT}&response_type=code`;
-  res.redirect(url);
-});
-
-/* ===== 카카오 콜백 ===== */
-app.get("/kakao/callback", async (req,res)=>{
-  const code = req.query.code;
-
-  try{
-    const tokenRes = await axios.post("https://kauth.kakao.com/oauth/token", null, {
-      params:{
-        grant_type:"authorization_code",
-        client_id:process.env.KAKAO_REST_KEY,
-        redirect_uri:process.env.KAKAO_REDIRECT,
-        code
-      }
-    });
-
-    const access_token = tokenRes.data.access_token;
-
-    const userRes = await axios.get("https://kapi.kakao.com/v2/user/me", {
-      headers:{ Authorization:`Bearer ${access_token}` }
-    });
-
-    const kakaoId = userRes.data.id;
-
-    const token = jwt.sign(
-      {username:"kakao_"+kakaoId},
-      process.env.JWT_SECRET
-    );
-
-    res.redirect(`/?token=${token}`);
-
-  }catch(err){
-    console.log(err.response?.data || err);
-    res.send("카카오 로그인 실패");
-  }
+  res.send(`
+    <h1>카카오 로그인 준비중</h1>
+    <p>현재 테스트 모드입니다</p>
+    <a href="/">돌아가기</a>
+  `);
 });
 
 /* ===== 서버 ===== */

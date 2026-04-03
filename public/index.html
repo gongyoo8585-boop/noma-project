@@ -4,13 +4,26 @@
 <meta charset="utf-8">
 <title>맛집 PRO</title>
 
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=여기에_JS키"></script>
-
 <style>
-body{margin:0;background:#111;color:white;font-family:sans-serif;}
-header{padding:10px;background:#000;}
-input,button{padding:8px;margin:3px;}
-#map{width:100%;height:400px;}
+body{
+  margin:0;
+  background:#111;
+  color:white;
+  font-family:sans-serif;
+}
+header{
+  padding:15px;
+  background:#000;
+}
+input{
+  padding:8px;
+  margin:5px;
+}
+button{
+  padding:8px 12px;
+  margin:5px;
+  cursor:pointer;
+}
 </style>
 </head>
 
@@ -18,29 +31,20 @@ input,button{padding:8px;margin:3px;}
 
 <header>
 <input id="id" placeholder="아이디">
-<input id="pw" type="password" placeholder="비번">
+<input id="pw" type="password" placeholder="비밀번호">
+
 <button onclick="register()">회원가입</button>
 <button onclick="login()">로그인</button>
 <button onclick="kakaoLogin()">카카오 로그인</button>
 </header>
 
-<div id="map"></div>
-<div id="list"></div>
-
 <script>
 
 let token = "";
 
-/* ===== 카카오 토큰 받기 ===== */
-const urlParams = new URLSearchParams(location.search);
-if(urlParams.get("token")){
-  token = urlParams.get("token");
-  alert("카카오 로그인 성공");
-}
-
 /* ===== 회원가입 ===== */
 async function register(){
-  await fetch("/register",{
+  const res = await fetch("/register",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
@@ -48,7 +52,9 @@ async function register(){
       password:pw.value
     })
   });
-  alert("가입 완료");
+
+  const data = await res.json();
+  alert(data.message);
 }
 
 /* ===== 로그인 ===== */
@@ -64,7 +70,7 @@ async function login(){
 
   const data = await res.json();
 
-  if(!data.token){
+  if(data.error){
     alert("로그인 실패");
     return;
   }
@@ -73,18 +79,10 @@ async function login(){
   alert("로그인 성공");
 }
 
-/* ===== 카카오 로그인 ===== */
+/* ===== 카카오 ===== */
 function kakaoLogin(){
-  location.href="/kakao";
+  window.location.href = "/kakao";
 }
-
-/* ===== 지도 ===== */
-navigator.geolocation.getCurrentPosition(pos=>{
-  const map = new kakao.maps.Map(document.getElementById("map"),{
-    center: new kakao.maps.LatLng(pos.coords.latitude,pos.coords.longitude),
-    level:3
-  });
-});
 
 </script>
 
