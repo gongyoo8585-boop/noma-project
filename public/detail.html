@@ -1,62 +1,94 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>상세</title>
+<title>맛집 PRO</title>
+<style>
+body {
+  margin:0;
+  background:#111;
+  color:white;
+  font-family:Arial;
+}
+header {
+  background:black;
+  padding:10px;
+}
+input {
+  padding:5px;
+}
+button {
+  padding:6px 10px;
+  margin-left:5px;
+  cursor:pointer;
+}
+#map {
+  height:400px;
+}
+</style>
 </head>
 <body>
 
-<h2 id="name"></h2>
+<header>
+  <input id="id" placeholder="아이디">
+  <input id="pw" placeholder="비밀번호" type="password">
+  <button onclick="register()">회원가입</button>
+  <button onclick="login()">로그인</button>
+  <button onclick="kakao()">카카오 로그인</button>
+</header>
 
-<div id="reviews"></div>
-
-<input id="reviewText" placeholder="리뷰">
-<div id="stars"></div>
-<button onclick="addReview()">등록</button>
+<div id="map"></div>
 
 <script>
-const id = new URLSearchParams(location.search).get("id");
 
-let rating = 5;
-
-// 별 UI
-for(let i=1;i<=5;i++){
-  const star = document.createElement("span");
-  star.innerText = "⭐";
-  star.onclick = ()=>rating=i;
-  document.getElementById("stars").appendChild(star);
-}
-
-// 매장 정보
-fetch("/shops")
-  .then(r=>r.json())
-  .then(data=>{
-    const shop = data.find(s=>s.id==id);
-    document.getElementById("name").innerText = shop.name;
-  });
-
-// 리뷰 불러오기
-function loadReviews(){
-  fetch("/reviews/"+id)
-    .then(r=>r.json())
-    .then(data=>{
-      document.getElementById("reviews").innerHTML =
-        data.map(r=>`<p>⭐${r.rating} - ${r.text}</p>`).join("");
-    });
-}
-
-// 리뷰 추가
-function addReview(){
-  const text = document.getElementById("reviewText").value;
-
-  fetch("/reviews", {
+/* ===========================
+   회원가입
+=========================== */
+function register() {
+  fetch("/register", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({shopId:id,text,rating})
-  }).then(loadReviews);
+    body:JSON.stringify({
+      id:document.getElementById("id").value,
+      password:document.getElementById("pw").value
+    })
+  })
+  .then(res=>res.json())
+  .then(data=>{
+    alert(data.msg);
+  });
 }
 
-loadReviews();
+/* ===========================
+   로그인
+=========================== */
+function login() {
+  fetch("/login", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      id:document.getElementById("id").value,
+      password:document.getElementById("pw").value
+    })
+  })
+  .then(res=>res.json())
+  .then(data=>{
+    if(data.token){
+      localStorage.setItem("token", data.token);
+      alert("로그인 성공");
+    } else {
+      alert("실패");
+    }
+  });
+}
+
+/* ===========================
+   카카오 로그인
+=========================== */
+function kakao() {
+  window.location.href = "/kakao";
+}
+
 </script>
 
 </body>

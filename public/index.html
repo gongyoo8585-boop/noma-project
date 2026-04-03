@@ -1,89 +1,116 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-<meta charset="utf-8">
-<title>맛집 PRO</title>
+  <meta charset="UTF-8" />
+  <title>맛집 PRO</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<style>
-body{
-  margin:0;
-  background:#111;
-  color:white;
-  font-family:sans-serif;
-}
-header{
-  padding:15px;
-  background:#000;
-}
-input{
-  padding:8px;
-  margin:5px;
-}
-button{
-  padding:8px 12px;
-  margin:5px;
-  cursor:pointer;
-}
-</style>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: white;
+      font-family: Arial;
+    }
+
+    header {
+      padding: 10px;
+      background: black;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    input {
+      padding: 8px;
+      border: none;
+      border-radius: 4px;
+    }
+
+    button {
+      padding: 8px 12px;
+      border: none;
+      background: orange;
+      color: black;
+      cursor: pointer;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+
+    button:hover {
+      opacity: 0.8;
+    }
+
+    #msg {
+      margin: 10px;
+      color: yellow;
+    }
+  </style>
 </head>
 
 <body>
 
 <header>
-<input id="id" placeholder="아이디">
-<input id="pw" type="password" placeholder="비밀번호">
+  <input id="username" placeholder="아이디" />
+  <input id="password" type="password" placeholder="비밀번호" />
 
-<button onclick="register()">회원가입</button>
-<button onclick="login()">로그인</button>
-<button onclick="kakaoLogin()">카카오 로그인</button>
+  <button onclick="register()">회원가입</button>
+  <button onclick="login()">로그인</button>
+  <button onclick="kakaoLogin()">카카오 로그인</button>
 </header>
 
+<div id="msg"></div>
+
 <script>
+/* ================= 회원가입 ================= */
+async function register() {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
 
-let token = "";
-
-/* ===== 회원가입 ===== */
-async function register(){
-  const res = await fetch("/register",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      username:id.value,
-      password:pw.value
-    })
+  const res = await fetch("/api/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
   });
 
   const data = await res.json();
-  alert(data.message);
+  document.getElementById("msg").innerText = data.msg;
 }
 
-/* ===== 로그인 ===== */
-async function login(){
-  const res = await fetch("/login",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      username:id.value,
-      password:pw.value
-    })
+/* ================= 로그인 ================= */
+async function login() {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
   });
 
   const data = await res.json();
 
-  if(data.error){
-    alert("로그인 실패");
-    return;
+  if (data.token) {
+    localStorage.setItem("token", data.token);
+    document.getElementById("msg").innerText = "로그인 성공";
+  } else {
+    document.getElementById("msg").innerText = data.msg;
   }
-
-  token = data.token;
-  alert("로그인 성공");
 }
 
-/* ===== 카카오 ===== */
-function kakaoLogin(){
-  window.location.href = "/kakao";
+/* ================= 카카오 로그인 ================= */
+function kakaoLogin() {
+  location.href = "/kakao";
 }
 
+/* ================= URL 토큰 처리 ================= */
+const params = new URLSearchParams(window.location.search);
+const token = params.get("token");
+
+if (token) {
+  localStorage.setItem("token", token);
+  document.getElementById("msg").innerText = "카카오 로그인 성공";
+}
 </script>
 
 </body>
