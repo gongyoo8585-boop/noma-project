@@ -1,109 +1,51 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const jwt = require("jsonwebtoken");
 const cors = require("cors");
-const multer = require("multer");
-const path = require("path");
+const jwt = require("jsonwebtoken");
+require("dotenv").config();
 
 const app = express();
-
 app.use(express.json());
 app.use(cors());
-app.use(express.static("public"));
-app.use("/uploads", express.static("uploads"));
+app.use(express.static("public")); // 🔥 중요
 
-// ===== 업로드 설정 =====
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  }
-});
-const upload = multer({ storage });
+// DB 연결
+mongoose.connect(process.env.MONGO_URI)
+.then(()=>console.log("MongoDB 연결 성공"))
+.catch(err=>console.log(err));
 
-// ===== DB =====
-mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/noma");
-
+// 모델
 const User = mongoose.model("User", {
   username: String,
-  password: String,
-  kakao: String
+  password: String
 });
 
-const Place = mongoose.model("Place", {
-  name: String,
-  lat: Number,
-  lng: Number,
-  user: String,
-  rating: Number,
-  review: String,
-  image: String
+// 회원가입
+app.post("/register", async (req,res)=>{
+  const user = new User(req.body);
+  await user.save();
+  res.json({success:true});
 });
 
-// ===== 인증 =====
-function auth(req, res, next) {
-  try {
-    const decoded = jwt.verify(req.headers.authorization, "secretkey");
-    req.user = decoded.username;
-    next();
-  } catch {
-    res.status(401).json({ message: "인증 실패" });
-  }
-}
+// 로그인
+app.post("/login", async (req,res)=>{
+  const user = await User.findOne(req.body);
+  if(!user) return res.json({success:false});
 
-// ===== 회원가입 =====
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-  await User.create({ username, password });
-  res.json({ message: "회원가입 완료" });
+  const token = jwt.sign({id:user._id}, process.env.JWT_SECRET);
+  res.json({success:true, token});
 });
 
-// ===== 로그인 =====
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-
-  const user = await User.findOne({ username, password });
-  if (!user) return res.status(401).json({ message: "실패" });
-
-  const token = jwt.sign({ username }, "secretkey");
-  res.json({ token });
+// 🔥 카카오 로그인
+app.get("/kakao/login", (req,res)=>{
+  const url = `https://kauth.kakao.com/oauth/authorize?client_id=${process.env.KAKAO_REST_KEY}&redirect_uri=${process.env.KAKAO_REDIRECT}&response_type=code`;
+  res.redirect(url);
 });
 
-// ===== 카카오 로그인 =====
-app.post("/kakao", async (req, res) => {
-  const { kakaoId } = req.body;
-
-  let user = await User.findOne({ kakao: kakaoId });
-  if (!user) {
-    user = await User.create({ kakao: kakaoId });
-  }
-
-  const token = jwt.sign({ username: kakaoId }, "secretkey");
-  res.json({ token });
+// 카카오 콜백
+app.get("/kakao/callback", async (req,res)=>{
+  res.send("카카오 로그인 성공 🎉");
 });
 
-// ===== 이미지 업로드 + 저장 =====
-app.post("/places", auth, upload.single("image"), async (req, res) => {
-  const { name, lat, lng, rating, review } = req.body;
-
-  await Place.create({
-    name,
-    lat,
-    lng,
-    rating,
-    review,
-    user: req.user,
-    image: req.file ? "/uploads/" + req.file.filename : ""
-  });
-
-  res.json({ message: "저장 완료" });
-});
-
-// ===== 리스트 =====
-app.get("/places", auth, async (req, res) => {
-  const data = await Place.find({ user: req.user });
-  res.json(data);
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("서버 실행", PORT));
+// 서버 실행
+app.listen(10000, ()=>console.log("서버 실행"));

@@ -1,156 +1,78 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>🔥 맛집 PRO</title>
+<title>맛집 PRO</title>
 
-<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28"></script>
 
-<style>
-body { margin:0; background:#111; color:white; font-family:sans-serif; }
-header { padding:10px; background:#000; display:flex; flex-direction:column; gap:8px; }
-input, button { padding:8px; border-radius:5px; border:none; }
-button { background:orange; font-weight:bold; cursor:pointer; }
-#map { height:350px; }
-.card { background:#222; margin:10px; padding:10px; border-radius:10px; }
-img { width:100%; border-radius:10px; }
-</style>
 </head>
 
-<body>
+<body style="margin:0;background:#111;color:white;font-family:Arial">
 
-<header>
-<h2>🔥 맛집 PRO</h2>
+<header style="padding:10px;background:black;">
+  <h2>🔥 맛집 PRO</h2>
 
-<div>
-<input id="username" placeholder="아이디">
-<input id="password" type="password" placeholder="비번">
-<button onclick="register()">회원가입</button>
-<button onclick="login()">로그인</button>
-<button onclick="kakaoLogin()">카카오 로그인</button>
-</div>
+  <input id="username" placeholder="아이디">
+  <input id="password" type="password" placeholder="비밀번호">
 
-<div>
-<input id="keyword" placeholder="맛집 검색">
-<button onclick="search()">검색</button>
-<button onclick="load()">내 맛집</button>
-</div>
-
-<input type="file" id="image">
+  <button onclick="register()">회원가입</button>
+  <button onclick="login()">로그인</button>
+  <button onclick="kakaoLogin()">카카오 로그인</button>
 </header>
 
-<div id="map"></div>
-<div id="list"></div>
+<div id="map" style="width:100%;height:400px;"></div>
 
 <script>
-let map;
-let token = localStorage.getItem("token");
-let userLat, userLng;
+const API = "https://noma-project-1.onrender.com";
 
+// 회원가입
+function register(){
+  fetch(API+"/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      username:username.value,
+      password:password.value
+    })
+  })
+  .then(res=>res.json())
+  .then(()=>alert("회원가입 완료"));
+}
+
+// 로그인
+function login(){
+  fetch(API+"/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      username:username.value,
+      password:password.value
+    })
+  })
+  .then(res=>res.json())
+  .then(data=>{
+    if(data.success){
+      localStorage.setItem("token", data.token);
+      alert("로그인 성공");
+    } else {
+      alert("로그인 실패");
+    }
+  });
+}
+
+// 카카오 로그인
+function kakaoLogin(){
+  window.location.href = API + "/kakao/login";
+}
+
+// 지도
 navigator.geolocation.getCurrentPosition(pos=>{
-  userLat=pos.coords.latitude;
-  userLng=pos.coords.longitude;
-
-  map=new kakao.maps.Map(document.getElementById("map"),{
-    center:new kakao.maps.LatLng(userLat,userLng),
-    level:3
+  const map = new kakao.maps.Map(document.getElementById("map"), {
+    center: new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude),
+    level: 3
   });
 });
-
-// ===== 회원가입 =====
-async function register(){
-  await fetch("/register",{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({
-    username:username.value,
-    password:password.value
-  })});
-  alert("회원가입 완료");
-}
-
-// ===== 로그인 =====
-async function login(){
-  const res=await fetch("/login",{method:"POST",
-  headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({
-    username:username.value,
-    password:password.value
-  })});
-  const data=await res.json();
-  token=data.token;
-  localStorage.setItem("token",token);
-  alert("로그인 성공");
-}
-
-// ===== 카카오 로그인 =====
-function kakaoLogin(){
-  const kakaoId="kakao_"+Date.now();
-  fetch("/kakao",{method:"POST",
-  headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({kakaoId})})
-  .then(r=>r.json())
-  .then(d=>{
-    token=d.token;
-    localStorage.setItem("token",token);
-    alert("카카오 로그인 완료");
-  });
-}
-
-// ===== 검색 =====
-function search(){
-  const ps=new kakao.maps.services.Places();
-  ps.keywordSearch(keyword.value,(data)=>{
-    data.forEach(p=>{
-      const marker=new kakao.maps.Marker({
-        map,
-        position:new kakao.maps.LatLng(p.y,p.x)
-      });
-      kakao.maps.event.addListener(marker,"click",()=>save(p));
-    });
-  });
-}
-
-// ===== 저장 =====
-async function save(p){
-  const form=new FormData();
-  form.append("name",p.place_name);
-  form.append("lat",p.y);
-  form.append("lng",p.x);
-  form.append("rating",5);
-  form.append("review","좋아요");
-  form.append("image",document.getElementById("image").files[0]);
-
-  await fetch("/places",{method:"POST",
-    headers:{Authorization:token},
-    body:form
-  });
-
-  alert("저장 완료");
-}
-
-// ===== 거리 =====
-function dist(a,b,c,d){
-  return Math.sqrt((a-c)**2+(b-d)**2);
-}
-
-// ===== 리스트 =====
-async function load(){
-  const res=await fetch("/places",{headers:{Authorization:token}});
-  let data=await res.json();
-
-  data.forEach(p=>p.d=dist(userLat,userLng,p.lat,p.lng));
-  data.sort((a,b)=>a.d-b.d);
-
-  list.innerHTML="";
-  data.forEach(p=>{
-    list.innerHTML+=`
-    <div class="card">
-      <h3>${p.name}</h3>
-      <p>⭐ ${p.rating}</p>
-      <p>${p.review}</p>
-      ${p.image ? `<img src="${p.image}">` : ""}
-    </div>`;
-  });
-}
 </script>
 
 </body>
