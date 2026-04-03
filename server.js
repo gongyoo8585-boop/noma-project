@@ -1,24 +1,33 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const cors = require("cors");
 const multer = require("multer");
+const path = require("path");
 
 const app = express();
+
 app.use(express.json());
 app.use(cors());
-app.use("/uploads", express.static("uploads"));
 app.use(express.static("public"));
+app.use("/uploads", express.static("uploads"));
 
-const SECRET = "mysecret";
+// ===== 업로드 설정 =====
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + "-" + file.originalname);
+  }
+});
+const upload = multer({ storage });
 
-// DB 연결
+// ===== DB =====
 mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/noma");
 
-// 모델
 const User = mongoose.model("User", {
   username: String,
   password: String,
+  kakao: String
 });
 
 const Place = mongoose.model("Place", {
@@ -28,23 +37,13 @@ const Place = mongoose.model("Place", {
   user: String,
   rating: Number,
   review: String,
-  image: String,
+  image: String
 });
 
-// 업로드 설정
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  },
-});
-const upload = multer({ storage });
-
-// 인증 미들웨어
+// ===== 인증 =====
 function auth(req, res, next) {
   try {
-    const token = req.headers.authorization;
-    const decoded = jwt.verify(token, SECRET);
+    const decoded = jwt.verify(req.headers.authorization, "secretkey");
     req.user = decoded.username;
     next();
   } catch {
@@ -52,61 +51,59 @@ function auth(req, res, next) {
   }
 }
 
-// 회원가입
+// ===== 회원가입 =====
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
   await User.create({ username, password });
-  res.json({ message: "회원가입 성공" });
+  res.json({ message: "회원가입 완료" });
 });
 
-// 로그인
+// ===== 로그인 =====
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
+
   const user = await User.findOne({ username, password });
+  if (!user) return res.status(401).json({ message: "실패" });
 
-  if (!user) return res.status(401).json({ message: "로그인 실패" });
-
-  const token = jwt.sign({ username }, SECRET);
+  const token = jwt.sign({ username }, "secretkey");
   res.json({ token });
 });
 
-// 맛집 저장
+// ===== 카카오 로그인 =====
+app.post("/kakao", async (req, res) => {
+  const { kakaoId } = req.body;
+
+  let user = await User.findOne({ kakao: kakaoId });
+  if (!user) {
+    user = await User.create({ kakao: kakaoId });
+  }
+
+  const token = jwt.sign({ username: kakaoId }, "secretkey");
+  res.json({ token });
+});
+
+// ===== 이미지 업로드 + 저장 =====
 app.post("/places", auth, upload.single("image"), async (req, res) => {
   const { name, lat, lng, rating, review } = req.body;
 
-  const place = await Place.create({
+  await Place.create({
     name,
     lat,
     lng,
     rating,
     review,
     user: req.user,
-    image: req.file ? req.file.filename : "",
+    image: req.file ? "/uploads/" + req.file.filename : ""
   });
 
-  res.json(place);
+  res.json({ message: "저장 완료" });
 });
 
-// 내 맛집 가져오기 (거리순)
+// ===== 리스트 =====
 app.get("/places", auth, async (req, res) => {
-  const { lat, lng } = req.query;
-
-  let places = await Place.find({ user: req.user });
-
-  if (lat && lng) {
-    places = places.map(p => {
-      const dist = Math.sqrt(
-        Math.pow(p.lat - lat, 2) + Math.pow(p.lng - lng, 2)
-      );
-      return { ...p._doc, dist };
-    });
-
-    places.sort((a, b) => a.dist - b.dist);
-  }
-
-  res.json(places);
+  const data = await Place.find({ user: req.user });
+  res.json(data);
 });
 
-app.listen(process.env.PORT || 10000, () => {
-  console.log("서버 실행");
-});
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log("서버 실행", PORT));
