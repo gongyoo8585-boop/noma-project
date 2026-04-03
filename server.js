@@ -1,7 +1,8 @@
-const express = require("express");
+onst express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
@@ -9,6 +10,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
+/* ===== DB ===== */
 mongoose.connect(process.env.MONGO_URI)
   .then(()=>console.log("DB 연결 성공"));
 
@@ -17,26 +19,6 @@ const User = mongoose.model("User", {
   username: String,
   password: String
 });
-
-const Place = mongoose.model("Place", {
-  name: String,
-  lat: Number,
-  lng: Number,
-  user: String,
-  createdAt: { type: Date, default: Date.now }
-});
-
-/* ===== JWT 인증 ===== */
-function auth(req,res,next){
-  try{
-    const token = req.headers.authorization;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded.username;
-    next();
-  }catch{
-    res.status(401).json({message:"인증 실패"});
-  }
-}
 
 /* ===== 회원가입 ===== */
 app.post("/register", async (req,res)=>{
@@ -49,23 +31,54 @@ app.post("/register", async (req,res)=>{
 app.post("/login", async (req,res)=>{
   const {username,password} = req.body;
   const user = await User.findOne({username,password});
-  if(!user) return res.status(401).json({message:"로그인 실패"});
+
+  if(!user){
+    return res.status(401).json({message:"로그인 실패"});
+  }
 
   const token = jwt.sign({username}, process.env.JWT_SECRET);
   res.json({token});
 });
 
-/* ===== 맛집 저장 ===== */
-app.post("/place", auth, async (req,res)=>{
-  const {name,lat,lng} = req.body;
-  await Place.create({name,lat,lng,user:req.user});
-  res.json({message:"저장 완료"});
+/* ===== 카카오 로그인 시작 ===== */
+app.get("/kakao", (req,res)=>{
+  const url = `https://kauth.kakao.com/oauth/authorize?client_id=${process.env.KAKAO_REST_KEY}&redirect_uri=${process.env.KAKAO_REDIRECT}&response_type=code`;
+  res.redirect(url);
 });
 
-/* ===== 리스트 ===== */
-app.get("/place", auth, async (req,res)=>{
-  const list = await Place.find({user:req.user});
-  res.json(list);
+/* ===== 카카오 콜백 ===== */
+app.get("/kakao/callback", async (req,res)=>{
+  const code = req.query.code;
+
+  try{
+    const tokenRes = await axios.post("https://kauth.kakao.com/oauth/token", null, {
+      params:{
+        grant_type:"authorization_code",
+        client_id:process.env.KAKAO_REST_KEY,
+        redirect_uri:process.env.KAKAO_REDIRECT,
+        code
+      }
+    });
+
+    const access_token = tokenRes.data.access_token;
+
+    const userRes = await axios.get("https://kapi.kakao.com/v2/user/me", {
+      headers:{ Authorization:`Bearer ${access_token}` }
+    });
+
+    const kakaoId = userRes.data.id;
+
+    const token = jwt.sign(
+      {username:"kakao_"+kakaoId},
+      process.env.JWT_SECRET
+    );
+
+    res.redirect(`/?token=${token}`);
+
+  }catch(err){
+    console.log(err.response?.data || err);
+    res.send("카카오 로그인 실패");
+  }
 });
 
 /* ===== 서버 ===== */

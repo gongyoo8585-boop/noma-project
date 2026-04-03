@@ -31,14 +31,21 @@ input,button{padding:8px;margin:3px;}
 
 let token = "";
 
+/* ===== 카카오 토큰 받기 ===== */
+const urlParams = new URLSearchParams(location.search);
+if(urlParams.get("token")){
+  token = urlParams.get("token");
+  alert("카카오 로그인 성공");
+}
+
 /* ===== 회원가입 ===== */
 async function register(){
   await fetch("/register",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
-      username:document.getElementById("id").value,
-      password:document.getElementById("pw").value
+      username:id.value,
+      password:pw.value
     })
   });
   alert("가입 완료");
@@ -50,20 +57,25 @@ async function login(){
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
-      username:document.getElementById("id").value,
-      password:document.getElementById("pw").value
+      username:id.value,
+      password:pw.value
     })
   });
 
   const data = await res.json();
+
+  if(!data.token){
+    alert("로그인 실패");
+    return;
+  }
+
   token = data.token;
   alert("로그인 성공");
-  load();
 }
 
 /* ===== 카카오 로그인 ===== */
 function kakaoLogin(){
-  location.href = "/kakao";
+  location.href="/kakao";
 }
 
 /* ===== 지도 ===== */
@@ -72,39 +84,7 @@ navigator.geolocation.getCurrentPosition(pos=>{
     center: new kakao.maps.LatLng(pos.coords.latitude,pos.coords.longitude),
     level:3
   });
-
-  kakao.maps.event.addListener(map,"click",function(mouseEvent){
-    const latlng = mouseEvent.latLng;
-
-    const name = prompt("맛집 이름?");
-    if(!name) return;
-
-    fetch("/place",{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "Authorization":token
-      },
-      body:JSON.stringify({
-        name,
-        lat:latlng.getLat(),
-        lng:latlng.getLng()
-      })
-    }).then(()=>load());
-  });
 });
-
-/* ===== 리스트 ===== */
-async function load(){
-  const res = await fetch("/place",{
-    headers:{Authorization:token}
-  });
-
-  const data = await res.json();
-
-  document.getElementById("list").innerHTML =
-    data.map(p=>`<div>${p.name}</div>`).join("");
-}
 
 </script>
 
