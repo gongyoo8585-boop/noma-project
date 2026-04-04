@@ -1,47 +1,373 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>카카오 로그인</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>마사지 플랫폼</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #000;
+      color: #d4af37;
+      font-family: Arial, sans-serif;
+    }
+    .topbar {
+      padding: 12px;
+      border-bottom: 1px solid #6b5320;
+      background: #000;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .brand {
+      font-size: 22px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    input, select, textarea {
+      width: 100%;
+      background: #111;
+      color: #fff;
+      border: 1px solid #3d2f12;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    button {
+      background: #d4af37;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-dark {
+      background: #111;
+      color: #d4af37;
+      border: 1px solid #6b5320;
+    }
+    .banner {
+      margin: 10px 12px;
+      background: linear-gradient(135deg, #1a1a1a, #3b2c08);
+      color: #ffd86b;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid #6b5320;
+    }
+    #map {
+      height: 280px;
+      margin: 0 12px 12px;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .section {
+      padding: 0 12px 80px;
+    }
+    .section-title {
+      font-size: 18px;
+      margin: 10px 0;
+    }
+    .card {
+      background: #111;
+      border: 1px solid #2f2410;
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 0 16px rgba(212, 175, 55, 0.08);
+    }
+    .card h3 {
+      margin: 0 0 8px;
+      color: #ffd86b;
+    }
+    .meta {
+      font-size: 13px;
+      color: #d1c08e;
+      margin: 4px 0;
+    }
+    .chip {
+      display: inline-block;
+      font-size: 12px;
+      padding: 5px 8px;
+      margin-right: 5px;
+      margin-top: 5px;
+      border-radius: 999px;
+      background: #231a08;
+      color: #ffd86b;
+      border: 1px solid #5c4719;
+    }
+    .tabs {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      display: flex;
+      background: #000;
+      border-top: 1px solid #6b5320;
+      z-index: 20;
+    }
+    .tabs button {
+      flex: 1;
+      border-radius: 0;
+      background: #000;
+      color: #d4af37;
+      border-right: 1px solid #2f2410;
+    }
+    .hidden { display: none; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 50;
+      padding: 12px;
+    }
+    .modal-content {
+      width: 100%;
+      max-width: 560px;
+      background: #111;
+      border: 1px solid #5c4719;
+      border-radius: 16px;
+      padding: 18px;
+      max-height: 90vh;
+      overflow: auto;
+    }
+    .small { font-size: 12px; color: #b8a96d; }
+  </style>
 </head>
-
 <body>
+  <div class="topbar">
+    <div class="brand">마짱 스타일 마사지 플랫폼</div>
 
-  <h2>카카오 로그인 테스트</h2>
+    <div class="row grid-2">
+      <input id="loginId" placeholder="아이디" />
+      <input id="loginPw" type="password" placeholder="비밀번호" />
+    </div>
 
-  <div id="status">로그인 안됨</div>
+    <div class="row">
+      <button onclick="registerUser()">회원가입</button>
+      <button onclick="loginUser()">로그인</button>
+      <button onclick="kakaoLogin()">카카오 로그인</button>
+      <button class="btn-dark" onclick="logout()">로그아웃</button>
+      <button class="btn-dark" onclick="getMyInfo()">내정보</button>
+    </div>
 
-  <button onclick="login()">카카오 로그인</button>
-  <button onclick="logout()">로그아웃</button>
+    <div class="row">
+      <input id="keyword" placeholder="지역 또는 매장명을 입력해주세요." />
+      <button onclick="runSearch()">검색</button>
+      <button class="btn-dark" onclick="findNearMe()">내 주변</button>
+    </div>
 
+    <div class="row grid-2">
+      <select id="region">
+        <option value="">지역</option>
+        <option>서울</option>
+        <option>경기</option>
+        <option>인천</option>
+        <option>부산</option>
+        <option>대구</option>
+      </select>
+
+      <select id="district">
+        <option value="">구</option>
+        <option>강남구</option>
+        <option>서초구</option>
+        <option>송파구</option>
+        <option>마포구</option>
+        <option>중구</option>
+      </select>
+
+      <select id="serviceType">
+        <option value="">서비스</option>
+        <option>타이</option>
+        <option>아로마</option>
+        <option>스웨디시</option>
+        <option>마사지</option>
+      </select>
+
+      <select id="theme">
+        <option value="">테마</option>
+        <option>주차</option>
+        <option>샤워</option>
+        <option>24시</option>
+        <option>커플실</option>
+      </select>
+
+      <select id="priceMax">
+        <option value="">최대 금액</option>
+        <option value="50000">5만원</option>
+        <option value="100000">10만원</option>
+        <option value="150000">15만원</option>
+        <option value="200000">20만원</option>
+      </select>
+
+      <button onclick="runSearch()">상세검색</button>
+    </div>
+  </div>
+
+  <div class="banner" id="eventBanner">이벤트 로딩중...</div>
+
+  <div id="map"></div>
+
+  <div class="section" id="homeSection">
+    <div class="section-title">추천샵 더보기 / 내주변 추천샵</div>
+    <div id="placeList"></div>
+  </div>
+
+  <div class="section hidden" id="boardSection">
+    <div class="section-title">게시판</div>
+    <div class="card">
+      <input id="postTitle" placeholder="제목" />
+      <textarea id="postContent" placeholder="내용" rows="4"></textarea>
+      <button onclick="createPost()">작성완료</button>
+    </div>
+    <div id="postList"></div>
+  </div>
+
+  <div class="section hidden" id="inquirySection">
+    <div class="section-title">제휴문의</div>
+    <div class="card">
+      <input id="inqCompany" placeholder="업체명" />
+      <input id="inqPhone" placeholder="전화번호" />
+      <textarea id="inqContent" rows="6" placeholder="내용(주소 코스,요금,예약받을 번호, 특이사항 작성)"></textarea>
+      <label class="small">
+        <input type="checkbox" id="inqRobot" />
+        로봇이 아닙니다.
+      </label>
+      <br /><br />
+      <button onclick="submitInquiry()">작성완료</button>
+    </div>
+  </div>
+
+  <div class="section hidden" id="adminSection">
+    <div class="section-title">관리자 페이지</div>
+
+    <div class="card">
+      <h3>업체 등록</h3>
+      <input id="adminName" placeholder="업체명" />
+      <input id="adminAddress" placeholder="주소" />
+      <div class="grid-2">
+        <input id="adminRegion" placeholder="지역" />
+        <input id="adminDistrict" placeholder="구" />
+      </div>
+      <div class="grid-2">
+        <input id="adminServiceType" placeholder="서비스 (타이/아로마)" />
+        <input id="adminTheme" placeholder="테마 (주차/샤워)" />
+      </div>
+      <div class="grid-2">
+        <input id="adminPrice" placeholder="코스 금액" />
+        <input id="adminPhone" placeholder="전화번호" />
+      </div>
+      <input id="adminReservePhone" placeholder="예약받을 번호" />
+      <textarea id="adminDesc" rows="4" placeholder="특이사항 / 설명"></textarea>
+      <div class="grid-2">
+        <input id="adminLat" placeholder="위도" />
+        <input id="adminLng" placeholder="경도" />
+      </div>
+      <input id="adminEventText" placeholder="이벤트 문구" />
+      <button onclick="createPlaceFromAdmin()">업체 등록</button>
+    </div>
+
+    <div class="card">
+      <h3>이벤트 등록</h3>
+      <input id="eventTitle" placeholder="이벤트 제목" />
+      <textarea id="eventContent" rows="3" placeholder="이벤트 내용"></textarea>
+      <button onclick="createEvent()">이벤트 저장</button>
+    </div>
+
+    <div id="adminDashboard"></div>
+  </div>
+
+  <div class="tabs">
+    <button onclick="showTab('home')">홈</button>
+    <button onclick="showTab('board')">게시판</button>
+    <button onclick="showTab('inquiry')">제휴문의</button>
+    <button onclick="showTab('admin')">관리자</button>
+  </div>
+
+  <div class="modal" id="detailModal">
+    <div class="modal-content" id="detailBody"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    function login() {
-      window.location.href = "/kakao";
-    }
+    let token = localStorage.getItem("token") || "";
+    let myRole = localStorage.getItem("role") || "user";
+    let currentLat = 37.5665;
+    let currentLng = 126.9780;
+    let markers = [];
 
-    function logout() {
-      localStorage.removeItem("token");
-      location.reload();
-    }
+    const map = L.map("map").setView([currentLat, currentLng], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
 
-    // 토큰 처리
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        currentLat = pos.coords.latitude;
+        currentLng = pos.coords.longitude;
+        map.setView([currentLat, currentLng], 14);
+        L.circleMarker([currentLat, currentLng]).addTo(map).bindPopup("내 위치");
+        findNearMe();
+      },
+      () => {
+        loadPlaces();
+      }
+    );
 
-    if (token) {
-      localStorage.setItem("token", token);
-      window.history.replaceState({}, document.title, "/");
-    }
+    map.on("click", async (e) => {
+      if (!token) {
+        alert("로그인 후 사용하세요");
+        return;
+      }
 
-    // 상태 표시
-    const savedToken = localStorage.getItem("token");
+      const name = prompt("업체명");
+      if (!name) return;
 
-    if (savedToken) {
-      document.getElementById("status").innerText = "✅ 로그인 성공";
-    } else {
-      document.getElementById("status").innerText = "❌ 로그인 안됨";
-    }
-  </script>
+      const address = prompt("주소") || "";
+      const region = prompt("지역") || "";
+      const district = prompt("구") || "";
+      const serviceType = prompt("서비스 (타이/아로마)") || "";
+      const theme = prompt("테마 (주차/샤워)") || "";
+      const price = prompt("코스 금액") || "0";
+      const phone = prompt("전화번호") || "";
+      const reservePhone = prompt("예약받을 번호") || "";
+      const description = prompt("특이사항") || "";
 
-</body>
-</html>
+      await fetch("/api/places", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token
+        },
+        body: JSON.stringify({
+          name,
+          address,
+          region,
+          district,
+          serviceType,
+          theme,
+          price,
+          phone,
+          reservePhone,
+          description,
+          lat: e.latlng.lat,
+          lng: e.latlng.lng,
+          tags: [serviceType, theme].filter(Boolean)
+        })
+      });
+
+      alert("업체 등록 완료");
+      loadPlaces();
+      if (myRole
