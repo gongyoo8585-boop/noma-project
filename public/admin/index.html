@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NOMA ADMIN LIST</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    :root{
+      --bg:#050505;
+      --panel:#111111;
+      --panel-2:#171717;
+      --line:#2b2b2b;
+      --gold:#d4af37;
+      --text:#ffffff;
+      --muted:#9e9e9e;
+      --danger:#ff5f57;
+      --ok:#57d957;
+    }
+
+    *{ box-sizing:border-box; }
+
+    html,body{
+      margin:0;
+      padding:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Arial, Helvetica, sans-serif;
+    }
+
+    body{ min-height:100vh; }
+
+    .wrap{
+      max-width:1280px;
+      margin:0 auto;
+      padding:16px;
+    }
+
+    .header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:16px;
+      flex-wrap:wrap;
+    }
+
+    .title{
+      margin:0;
+      font-size:28px;
+      font-weight:800;
+      color:var(--gold);
+      letter-spacing:.5px;
+    }
+
+    .header-actions,
+    .toolbar,
+    .chip-row,
+    .recent-search,
+    .recent-view,
+    .modal-actions,
+    .action-row{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    .toolbar{ margin-bottom:12px; }
+    .chip-row{ margin-bottom:12px; }
+    .recent-search{ margin-bottom:14px; }
+    .recent-view{ margin:8px 0 14px; }
+
+    .input,
+    .select,
+    .btn{
+      min-height:44px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      outline:none;
+      font-size:14px;
+    }
+
+    .input,
+    .select{
+      background:var(--panel);
+      color:var(--text);
+      padding:12px;
+    }
+
+    .input{
+      flex:1;
+      min-width:220px;
+      border-color:var(--gold);
+    }
+
+    .select{ min-width:120px; }
+
+    .btn{
+      background:var(--gold);
+      color:#000;
+      font-weight:800;
+      border:none;
+      padding:0 14px;
+      cursor:pointer;
+    }
+
+    .btn.secondary{
+      background:var(--panel);
+      color:var(--gold);
+      border:1px solid var(--gold);
+    }
+
+    .status-row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      flex-wrap:wrap;
+      margin:10px 0 14px;
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      border:1px solid #333;
+      background:var(--panel-2);
+      color:var(--gold);
+      border-radius:999px;
+      padding:8px 12px;
+      font-size:12px;
+      cursor:pointer;
+    }
+
+    .chip.active{
+      background:var(--gold);
+      color:#000;
+      border-color:var(--gold);
+      font-weight:800;
+    }
+
+    #map{
+      width:100%;
+      height:300px;
+      border-radius:16px;
+      overflow:hidden;
+      border:1px solid var(--line);
+      margin-bottom:14px;
+    }
+
+    #loading{
+      display:none;
+      text-align:center;
+      padding:16px;
+      color:var(--gold);
+      font-weight:700;
+    }
+
+    #list{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+      gap:14px;
+      margin-bottom:90px;
+    }
+
+    .card{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:14px;
+      transition:transform .15s ease, border-color .15s ease, background .15s ease;
+      cursor:pointer;
+    }
+
+    .card:hover{
+      transform:translateY(-2px);
+      border-color:var(--gold);
+    }
+
+    .card.active{
+      border:2px solid var(--gold);
+      background:#1a1a1a;
+    }
+
+    .card h3{
+      margin:0 0 8px;
+      color:var(--gold);
+      font-size:18px;
+    }
+
+    .meta{
+      color:var(--muted);
+      font-size:13px;
+      margin-bottom:6px;
+    }
+
+    .price{
+      font-size:17px;
+      font-weight:800;
+      margin:10px 0;
+    }
+
+    .metric{
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      border:1px solid #2d2d2d;
+      background:#181818;
+      border-radius:999px;
+      padding:6px 10px;
+      font-size:12px;
+      color:#ddd;
+    }
+
+    .empty{
+      grid-column:1 / -1;
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:24px;
+      text-align:center;
+      color:var(--muted);
+    }
+
+    .floating-left,
+    .floating-right{
+      position:fixed;
+      bottom:20px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      z-index:999;
+    }
+
+    .floating-left{ left:16px; }
+    .floating-right{ right:16px; }
+
+    .floating-btn{
+      min-width:58px;
+      min-height:44px;
+      border:none;
+      border-radius:12px;
+      background:var(--gold);
+      color:#000;
+      font-weight:800;
+      cursor:pointer;
+      box-shadow:0 8px 24px rgba(0,0,0,.35);
+    }
+
+    .recent-search button{
+      border:1px solid #333;
+      background:var(--panel);
+      color:var(--gold);
+      border-radius:999px;
+      padding:8px 12px;
+      cursor:pointer;
+    }
+
+    .recent-view span{
+      border:1px solid #333;
+      background:var(--panel-2);
+      color:#ddd;
+      border-radius:999px;
+      padding:7px 10px;
+      font-size:12px;
+    }
+
+    .modal{
+      display:none;
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.72);
+      z-index:2000;
+      padding:20px;
+    }
+
+    .modal.open{ display:block; }
+
+    .modal-body{
+      max-width:620px;
+      margin:50px auto 0;
+      background:var(--panel);
+      border:1px solid var(--gold);
+      border-radius:18px;
+      padding:20px;
+    }
+
+    .modal-body h2{
+      margin:0 0 12px;
+      color:var(--gold);
+    }
+
+    .ok{ color:var(--ok); }
+    .danger{ color:var(--danger); }
+
+    @media (max-width:768px){
+      .title{ font-size:24px; }
+      #map{ height:250px; }
+      #list{ grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1 class="title">NOMA ADMIN LIST</h1>
+      <div class="header-actions">
+        <button class="btn secondary" id="goDashboardBtn">대시보드</button>
+        <button class="btn" id="reloadBtn">새로고침</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input id="search" class="input" placeholder="업체명, 지역 검색" />
+      <select id="sortSelect" class="select">
+        <option value="like">인기순</option>
+        <option value="rating">평점순</option>
+        <option value="distance">거리순</option>
+        <option value="view">조회순</option>
+      </select>
+      <button class="btn secondary" id="clearFilterBtn">필터 초기화</button>
+    </div>
+
+    <div id="recentSearchBox" class="recent-search"></div>
+    <div id="recentViewBox" class="recent-view"></div>
+
+    <div class="chip-row">
+      <button class="chip" data-price="">전체</button>
+      <button class="chip" data-price="low">저가</button>
+      <button class="chip" data-price="high">고가</button>
+    </div>
+
+    <div class="status-row">
+      <div id="resultCount">0개 결과</div>
+      <div id="networkStatus" class="ok">🟢 ONLINE</div>
+    </div>
+
+    <div id="map"></div>
+    <div id="loading">🔥 로딩중...</div>
+    <div id="list"></div>
+  </div>
+
+  <div class="floating-left">
+    <button class="floating-btn" id="debugBtn">DBG</button>
+    <button class="floating-btn" id="resetBtn">RST</button>
+  </div>
+
+  <div class="floating-right">
+    <button class="floating-btn" id="topBtn">↑</button>
+  </div>
+
+  <div id="modal" class="modal">
+    <div class="modal-body">
+      <h2 id="modalTitle"></h2>
+      <div id="modalContent"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="closeModalBtn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      if (window.__NOMA_ADMIN_LIST_FINAL__) return;
+      window.__NOMA_ADMIN_LIST_FINAL__ = true;
+
+      const socket = window.io ? io() : null;
+      const token = localStorage.getItem("token") || "";
+
+      const els = {
+        list: document.getElementById("list"),
+        loading: document.getElementById("loading"),
+        search: document.getElementById("search"),
+        sortSelect: document.getElementById("sortSelect"),
+        resultCount: document.getElementById("resultCount"),
+        networkStatus: document.getElementById("networkStatus"),
+        recentSearchBox: document.getElementById("recentSearchBox"),
+        recentViewBox: document.getElementById("recentViewBox"),
+        modal: document.getElementById("modal"),
+        modalTitle: document.getElementById("modalTitle"),
+        modalContent: document.getElementById("modalContent"),
+        closeModalBtn: document.getElementById("closeModalBtn"),
+        reloadBtn: document.getElementById("reloadBtn"),
+        topBtn: document.getElementById("topBtn"),
+        debugBtn: document.getElementById("debugBtn"),
+        resetBtn: document.getElementById("resetBtn"),
+        clearFilterBtn: document.getElementById("clearFilterBtn"),
+        goDashboardBtn: document.getElementById("goDashboardBtn"),
+        chips: [...document.querySelectorAll("[data-price]")]
+      };
+
+      const state = {
+        shops: [],
+        currentItems: [],
+        page: 1,
+        hasMore: true,
+        loading: false,
+        selectedId: localStorage.getItem("selectedShop") || null,
+        currentFilter: {
+          region: null,
+          price: localStorage.getItem("admin_price_filter") || null
+        },
+        currentSort: localStorage.getItem("admin_sort") || "like",
+        lastKeyword: localStorage.getItem("admin_last_keyword") || "",
+        lastLoadTime: 0,
+        cache: [],
+        errorCount: 0,
+        fetchTimer: null,
+        uiTimer: null,
+        heartbeatTimer: null,
+        mapTimer: null,
+        scrollLock: false,
+        actionLock: false
+      };
+
+      if (els.search) els.search.value = state.lastKeyword;
+      if (els.sortSelect) els.sortSelect.value = state.currentSort;
+
+      let map = null;
+      let markers = [];
+      let currentAbortController = null;
+
+      if (document.getElementById("map") && window.L) {
+        map = L.map("map").setView([35.2283, 128.8892], 13);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19
+        }).addTo(map);
+      }
+
+      function safeNum(v, d = 0) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : d;
+      }
+
+      function safeArr(v) {
+        return Array.isArray(v) ? v : [];
+      }
+
+      function escapeHtml(v) {
+        return String(v ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function getPrice(shop) {
+        return safeNum(shop?.priceDiscount || shop?.price || 0);
+      }
+
+      function normalizeShop(shop) {
+        return {
+          ...shop,
+          _id: String(shop?._id || ""),
+          name: String(shop?.name || ""),
+          region: String(shop?.region || ""),
+          ratingAvg: safeNum(shop?.ratingAvg),
+          likeCount: safeNum(shop?.likeCount),
+          viewCount: safeNum(shop?.viewCount),
+          reviewCount: safeNum(shop?.reviewCount),
+          distanceKm: safeNum(shop?.distanceKm, 999),
+          priceDiscount: safeNum(shop?.priceDiscount),
+          lat: shop?.lat == null ? null : safeNum(shop.lat, null),
+          lng: shop?.lng == null ? null : safeNum(shop.lng, null)
+        };
+      }
+
+      function uniqueById(arr) {
+        const mapById = new Map();
+        safeArr(arr).forEach((v) => {
+          if (v && v._id) mapById.set(v._id, normalizeShop(v));
+        });
+        return [...mapById.values()];
+      }
+
+      function setCache(items) {
+        state.cache = safeArr(items);
+        try {
+          localStorage.setItem("admin_list_cache", JSON.stringify(state.cache.slice(0, 200)));
+          localStorage.setItem("admin_list_cache_at", String(Date.now()));
+        } catch {}
+      }
+
+      function getCache() {
+        try {
+          const at = Number(localStorage.getItem("admin_list_cache_at") || 0);
+          const age = Date.now() - at;
+          const cached = JSON.parse(localStorage.getItem("admin_list_cache") || "[]");
+          if (age > 1000 * 60 * 30) return [];
+          return Array.isArray(cached) ? cached : [];
+        } catch {
+          return [];
+        }
+      }
+
+      function saveKeyword(keyword) {
+        state.lastKeyword = keyword || "";
+        localStorage.setItem("admin_last_keyword", state.lastKeyword);
+      }
+
+      function saveRecentSearch(keyword) {
+        if (!keyword) return;
+        let arr = [];
+        try {
+          arr = JSON.parse(localStorage.getItem("admin_recent_search") || "[]");
+        } catch {}
+        arr.unshift(keyword);
+        arr = [...new Set(arr)].slice(0, 10);
+        localStorage.setItem("admin_recent_search", JSON.stringify(arr));
+      }
+
+      function getRecentKeyword() {
+        try {
+          return JSON.parse(localStorage.getItem("admin_recent_search") || "[]");
+        } catch {
+          return [];
+        }
+      }
+
+      function renderRecentSearch() {
+        if (!els.recentSearchBox) return;
+        const arr = getRecentKeyword();
+        els.recentSearchBox.innerHTML = arr
+          .map((v) => `<button type="button" data-recent="${escapeHtml(v)}">${escapeHtml(v)}</button>`)
+          .join("");
+      }
+
+      function searchFromRecent(keyword) {
+        if (!els.search) return;
+        els.search.value = keyword;
+        state.page = 1;
+        state.hasMore = true;
+        state.shops = [];
+        debouncedLoad(true);
+      }
+
+      function saveRecent(shop) {
+        let arr = [];
+        try {
+          arr = JSON.parse(localStorage.getItem("admin_recent_view") || "[]");
+        } catch {}
+        arr.unshift({
+          _id: shop._id,
+          name: shop.name
+        });
+        arr = arr.filter((v, i, self) => v && self.findIndex((x) => x._id === v._id) === i).slice(0, 10);
+        localStorage.setItem("admin_recent_view", JSON.stringify(arr));
+      }
+
+      function renderRecentView() {
+        if (!els.recentViewBox) return;
+        let arr = [];
+        try {
+          arr = JSON.parse(localStorage.getItem("admin_recent_view") || "[]");
+        } catch {}
+        els.recentViewBox.innerHTML = arr
+          .slice(0, 6)
+          .map((v) => `<span>${escapeHtml(v?.name || "")}</span>`)
+          .join("");
+      }
+
+      function saveSelected(id) {
+        state.selectedId = id;
+        localStorage.setItem("selectedShop", id);
+      }
+
+      function formatKm(km) {
+        km = safeNum(km);
+        return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(2)}km`;
+      }
+
+      function showError(msg) {
+        if (!els.list) return;
+        els.list.innerHTML = `<div class="empty danger">${escapeHtml(msg)}</div>`;
+      }
+
+      function showLoading(on) {
+        state.loading = !!on;
+        if (els.loading) els.loading.style.display = on ? "block" : "none";
+      }
+
+      function showResultCount(n) {
+        if (els.resultCount) els.resultCount.innerText = `${safeNum(n)}개 결과`;
+      }
+
+      function updateNetworkUI() {
+        if (!els.networkStatus) return;
+        const online = navigator.onLine;
+        els.networkStatus.textContent = online ? "🟢 ONLINE" : "🔴 OFFLINE";
+        els.networkStatus.className = online ? "ok" : "danger";
+      }
+
+      function saveUIState() {
+        localStorage.setItem("admin_list_ui", JSON.stringify({
+          currentFilter: state.currentFilter,
+          currentSort: state.currentSort
+        }));
+      }
+
+      function restoreUIState() {
+        try {
+          const s = JSON.parse(localStorage.getItem("admin_list_ui") || "{}");
+          if (s.currentFilter) state.currentFilter = s.currentFilter;
+          if (s.currentSort) state.currentSort = s.currentSort;
+        } catch {}
+      }
+
+      function applyFilter(items) {
+        return safeArr(items).filter((shop) => {
+          if (state.currentFilter.region && shop.region !== state.currentFilter.region) return false;
+          if (state.currentFilter.price === "low" && getPrice(shop) > 50000) return false;
+          if (state.currentFilter.price === "high" && getPrice(shop) < 50000) return false;
+          return true;
+        });
+      }
+
+      function applySearch(items) {
+        const keyword = String(els.search?.value || "").trim().toLowerCase();
+        if (!keyword) return items;
+        return safeArr(items).filter((shop) => {
+          return (
+            String(shop.name || "").toLowerCase().includes(keyword) ||
+            String(shop.region || "").toLowerCase().includes(keyword)
+          );
+        });
+      }
+
+      function applySort(items) {
+        const copy = [...safeArr(items)];
+        switch (state.currentSort) {
+          case "distance":
+            return copy.sort((a, b) => safeNum(a.distanceKm, 999) - safeNum(b.distanceKm, 999));
+          case "rating":
+            return copy.sort((a, b) => safeNum(b.ratingAvg) - safeNum(a.ratingAvg));
+          case "view":
+            return copy.sort((a, b) => safeNum(b.viewCount) - safeNum(a.viewCount));
+          default:
+            return copy.sort((a, b) => safeNum(b.likeCount) - safeNum(a.likeCount));
+        }
+      }
+
+      function canLoad() {
+        const now = Date.now();
+        if (now - state.lastLoadTime < 800) return false;
+        state.lastLoadTime = now;
+        return true;
+      }
+
+      function perfStart() {
+        return performance.now();
+      }
+
+      function perfEnd(t) {
+        console.log("LOAD TIME:", (performance.now() - t).toFixed(2) + "ms");
+      }
+
+      function lockAction(ms = 300) {
+        if (state.actionLock) return false;
+        state.actionLock = true;
+        setTimeout(() => {
+          state.actionLock = false;
+        }, ms);
+        return true;
+      }
+
+      function scrollTopSmooth() {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      function forceUseCache() {
+        const cached = getCache();
+        if (cached && cached.length) {
+          state.shops = uniqueById(cached);
+          render(state.shops);
+        }
+      }
+
+      function autoSelect() {
+        if (!state.selectedId) return;
+        const found = state.currentItems.find((v) => v._id === state.selectedId);
+        if (found) selectItem(found, true);
+      }
+
+      async function api(url, opt = {}) {
+        try {
+          if (currentAbortController && opt.cancelPrevious) {
+            currentAbortController.abort();
+          }
+
+          const controller = new AbortController();
+          currentAbortController = controller;
+
+          const headers = {
+            "Content-Type": "application/json",
+            ...(opt.headers || {})
+          };
+          if (token) headers.Authorization = "Bearer " + token;
+
+          const response = await fetch(url, {
+            ...opt,
+            headers,
+            signal: controller.signal
+          });
+
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            state.errorCount++;
+            console.error("API ERROR:", url, data);
+            return { ok: false, items: [] };
+          }
+
+          return data;
+        } catch (e) {
+          if (e.name !== "AbortError") {
+            state.errorCount++;
+            console.error("API FAIL:", url, e);
+          }
+          return { ok: false, items: [] };
+        }
+      }
+
+      async function like(id) {
+        if (!token) return alert("로그인 필요");
+        if (!lockAction()) return;
+        await api(`/api/favorites/${id}`, { method: "POST" });
+        state.page = 1;
+        state.hasMore = true;
+        state.shops = [];
+        await loadPlaces(true);
+      }
+
+      async function reserve(id) {
+        if (!token) return alert("로그인 필요");
+        if (!lockAction(500)) return;
+
+        const time = prompt("예약시간");
+        if (!time) return;
+
+        await api("/api/reservations", {
+          method: "POST",
+          body: JSON.stringify({
+            shopId: id,
+            reserveAt: new Date(time)
+          })
+        });
+
+        alert("예약 완료");
+      }
+
+      async function selectItem(shop, silent) {
+        state.selectedId = shop._id;
+        saveSelected(shop._id);
+
+        if (!silent) {
+          await api(`/api/shops/${shop._id}/click`, {
+            method: "POST"
+          }).catch(() => {});
+        }
+
+        if (map && shop.lat != null && shop.lng != null) {
+          map.setView([shop.lat, shop.lng], 15);
+        }
+      }
+
+      function openModal(title, html) {
+        if (!els.modal || !els.modalTitle || !els.modalContent) return;
+        els.modal.classList.add("open");
+        els.modalTitle.innerText = title;
+        els.modalContent.innerHTML = html;
+      }
+
+      function closeModal() {
+        els.modal?.classList.remove("open");
+      }
+
+      async function openDetail(id) {
+        const d = await api(`/api/shops/${id}`);
+        if (!d.shop) return;
+
+        openModal(
+          d.shop.name,
+          `
+            <h2>${escapeHtml(d.shop.name)}</h2>
+            <div>⭐ ${safeNum(d.shop.ratingAvg)}</div>
+            <div>📍 ${escapeHtml(d.shop.region || "")}</div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn" onclick="window.__adminLike('${id}')">찜</button>
+              <button class="btn secondary" onclick="window.__adminReserve('${id}')">예약</button>
+            </div>
+          `
+        );
+      }
+
+      window.__adminLike = like;
+      window.__adminReserve = reserve;
+
+      function render(items) {
+        if (!els.list) return;
+
+        let finalItems = uniqueById(items);
+        finalItems = applySearch(finalItems);
+        finalItems = applyFilter(finalItems);
+        finalItems = applySort(finalItems);
+        finalItems = finalItems.slice(0, 200);
+
+        state.currentItems = finalItems;
+        setCache(items);
+        els.list.innerHTML = "";
+
+        if (map && markers.length) {
+          markers.forEach((m) => {
+            try { map.removeLayer(m); } catch {}
+          });
+          markers = [];
+        }
+
+        if (!finalItems.length) {
+          els.list.innerHTML = "<div class='empty'>결과 없음</div>";
+          showResultCount(0);
+          return;
+        }
+
+        finalItems.forEach((shop) => {
+          if (map && shop.lat != null && shop.lng != null) {
+            const marker = L.marker([shop.lat, shop.lng]).addTo(map);
+            marker.on("click", () => selectItem(shop));
+            markers.push(marker);
+          }
+
+          const el = document.createElement("div");
+          el.className = "card " + (state.selectedId === shop._id ? "active" : "");
+
+          el.innerHTML = `
+            <h3>${escapeHtml(shop.name || "")}</h3>
+            <div class="meta">📍 ${escapeHtml(shop.region || "")}</div>
+            <div class="meta">📏 ${formatKm(shop.distanceKm)}</div>
+            <div class="price">${getPrice(shop).toLocaleString()}원</div>
+            <div class="action-row" style="margin-bottom:12px;">
+              <span class="metric">❤️ ${shop.likeCount}</span>
+              <span class="metric">⭐ ${shop.ratingAvg}</span>
+              <span class="metric">👁 ${shop.viewCount}</span>
+            </div>
+            <div class="action-row">
+              <button class="btn secondary like">찜</button>
+              <button class="btn reserve">예약</button>
+              <button class="btn secondary detail">상세</button>
+            </div>
+          `;
+
+          el.onclick = () => {
+            saveRecent(shop);
+            selectItem(shop);
+            render(state.shops);
+          };
+
+          el.querySelector(".like").onclick = (e) => {
+            e.stopPropagation();
+            like(shop._id);
+          };
+
+          el.querySelector(".reserve").onclick = (e) => {
+            e.stopPropagation();
+            reserve(shop._id);
+          };
+
+          el.querySelector(".detail").onclick = (e) => {
+            e.stopPropagation();
+            openDetail(shop._id);
+          };
+
+          els.list.appendChild(el);
+        });
+
+        showResultCount(finalItems.length);
+        renderRecentView();
+      }
+
+      async function loadPlaces(reset = false) {
+        if (!canLoad()) return;
+        if (state.loading) return;
+
+        state.loading = true;
+        showLoading(true);
+        const t = perfStart();
+
+        try {
+          if (reset) {
+            state.page = 1;
+            state.hasMore = true;
+            state.shops = [];
+          }
+
+          if (!state.hasMore) return;
+
+          let url = "/api/shops?page=" + state.page;
+          const keyword = String(els.search?.value || "").trim();
+
+          if (keyword) {
+            saveKeyword(keyword);
+            saveRecentSearch(keyword);
+            url += `&keyword=${encodeURIComponent(keyword)}`;
+          }
+
+          const d = await api(url, { cancelPrevious: reset });
+
+          if (!d || !Array.isArray(d.items)) {
+            showError("데이터 불러오기 실패");
+            return;
+          }
+
+          const incoming = d.items.map(normalizeShop);
+
+          if (incoming.length === 0) {
+            state.hasMore = false;
+          } else {
+            state.shops = uniqueById([...state.shops, ...incoming]);
+            state.page += 1;
+          }
+
+          requestAnimationFrame(() => render(state.shops));
+        } finally {
+          state.loading = false;
+          showLoading(false);
+          perfEnd(t);
+        }
+      }
+
+      function debouncedLoad(reset) {
+        clearTimeout(state.fetchTimer);
+        state.fetchTimer = setTimeout(() => {
+          loadPlaces(reset);
+        }, 300);
+      }
+
+      async function retryLoad(times = 2) {
+        for (let i = 0; i < times; i++) {
+          await loadPlaces(true);
+          if (state.currentItems.length) return;
+        }
+      }
+
+      function hardReset() {
+        state.page = 1;
+        state.hasMore = true;
+        state.cache = [];
+        state.errorCount = 0;
+        state.lastLoadTime = 0;
+        state.shops = [];
+        localStorage.removeItem("admin_list_cache");
+        localStorage.removeItem("admin_list_cache_at");
+        loadPlaces(true);
+      }
+
+      function debug() {
+        console.log({
+          state,
+          cacheSize: state.cache.length,
+          currentItems: state.currentItems.length,
+          online: navigator.onLine
+        });
+      }
+
+      function attachMapDebounce() {
+        if (!map) return;
+        map.on("moveend", () => {
+          clearTimeout(state.mapTimer);
+          state.mapTimer = setTimeout(() => {
+            state.page = 1;
+            state.hasMore = true;
+            state.shops = [];
+            loadPlaces(true);
+          }, 600);
+        });
+      }
+
+      els.search?.addEventListener("input", () => {
+        state.page = 1;
+        state.hasMore = true;
+        state.shops = [];
+        debouncedLoad(true);
+        renderRecentSearch();
+      });
+
+      els.sortSelect?.addEventListener("change", (e) => {
+        state.currentSort = e.target.value || "like";
+        localStorage.setItem("admin_sort", state.currentSort);
+        saveUIState();
+        render(state.shops);
+      });
+
+      els.chips.forEach((chip) => {
+        chip.addEventListener("click", () => {
+          state.currentFilter.price = chip.dataset.price || null;
+          localStorage.setItem("admin_price_filter", state.currentFilter.price || "");
+          els.chips.forEach((c) => c.classList.remove("active"));
+          chip.classList.add("active");
+          saveUIState();
+          render(state.shops);
+        });
+      });
+
+      window.addEventListener("scroll", () => {
+        if (state.scrollLock) return;
+        state.scrollLock = true;
+
+        requestAnimationFrame(() => {
+          if (!state.hasMore || state.loading) {
+            state.scrollLock = false;
+            return;
+          }
+
+          if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 120) {
+            loadPlaces(false);
+          }
+          state.scrollLock = false;
+        });
+      });
+
+      window.addEventListener("offline", () => {
+        updateNetworkUI();
+        forceUseCache();
+      });
+
+      window.addEventListener("online", () => {
+        updateNetworkUI();
+        retryLoad(2);
+      });
+
+      if (socket) {
+        socket.on("shop:like", () => debouncedLoad(true));
+        socket.on("shop:review", () => debouncedLoad(true));
+      }
+
+      els.reloadBtn?.addEventListener("click", () => loadPlaces(true));
+      els.topBtn?.addEventListener("click", scrollTopSmooth);
+      els.debugBtn?.addEventListener("click", debug);
+      els.resetBtn?.addEventListener("click", hardReset);
+      els.closeModalBtn?.addEventListener("click", closeModal);
+      els.modal?.addEventListener("click", (e) => {
+        if (e.target === els.modal) closeModal();
+      });
+
+      els.clearFilterBtn?.addEventListener("click", () => {
+        state.currentFilter = { region: null, price: null };
+        localStorage.removeItem("admin_price_filter");
+        els.chips.forEach((c) => c.classList.remove("active"));
+        saveUIState();
+        render(state.shops);
+      });
+
+      els.goDashboardBtn?.addEventListener("click", () => {
+        location.href = "/admin/dashboard.html";
+      });
+
+      document.addEventListener("click", (e) => {
+        const recentBtn = e.target.closest("[data-recent]");
+        if (!recentBtn) return;
+        searchFromRecent(recentBtn.dataset.recent || "");
+      });
+
+      restoreUIState();
+      attachMapDebounce();
+      updateNetworkUI();
+
+      if (state.currentFilter.price != null) {
+        const activeChip = els.chips.find((c) => (c.dataset.price || "") === state.currentFilter.price);
+        activeChip?.classList.add("active");
+      }
+
+      renderRecentSearch();
+      renderRecentView();
+
+      const cached = getCache();
+      if (cached.length) {
+        state.shops = uniqueById(cached);
+        render(state.shops);
+      }
+
+      setTimeout(autoSelect, 300);
+      setTimeout(() => {
+        loadPlaces(true);
+      }, 0);
+
+      clearInterval(state.uiTimer);
+      state.uiTimer = setInterval(() => {
+        showResultCount(state.currentItems.length);
+        renderRecentSearch();
+        renderRecentView();
+        saveUIState();
+
+        if (state.shops.length > 300) {
+          state.shops = state.shops.slice(0, 200);
+        }
+      }, 5000);
+
+      clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = setInterval(() => {
+        if (!document.hidden) {
+          loadPlaces(false);
+        }
+      }, 60000);
+
+      window.NOMA_ADMIN_LIST = {
+        state,
+        reload: () => loadPlaces(true),
+        debug,
+        reset: hardReset
+      };
+
+      console.log("🔥 ADMIN LIST FINAL READY");
+    })();
+  </script>
+</body>
+</html>

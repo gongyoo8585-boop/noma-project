@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>마짱 HEADER FINAL</title>
+
+<style>
+/* =========================
+   🔥 기본
+========================= */
+body { margin:0; font-family:sans-serif; }
+
+/* =========================
+   🔥 HEADER
+========================= */
+.header {
+  display:flex;
+  align-items:center;
+  gap:20px;
+  padding:15px 20px;
+  border-bottom:1px solid #eee;
+}
+
+.logo {
+  font-size:28px;
+  font-weight:900;
+  color:red;
+  cursor:pointer;
+}
+
+/* =========================
+   🔥 MENU
+========================= */
+.menu {
+  display:flex;
+  gap:15px;
+  position:relative;
+}
+
+.menu div {
+  cursor:pointer;
+}
+
+.menu-item {
+  position:relative;
+}
+
+/* =========================
+   🔥 DROPDOWN
+========================= */
+.dropdown {
+  display:none;
+  position:absolute;
+  top:30px;
+  left:0;
+  background:white;
+  border:1px solid #ddd;
+  padding:10px;
+  z-index:100;
+}
+
+.dropdown div {
+  padding:6px 10px;
+}
+
+.dropdown div:hover {
+  background:#f0f0f0;
+}
+
+/* hover 유지 */
+.menu-item:hover .dropdown {
+  display:block;
+}
+
+/* =========================
+   🔥 SEARCH
+========================= */
+.search {
+  padding:8px;
+  width:250px;
+}
+
+.recent-box {
+  position:absolute;
+  top:40px;
+  background:white;
+  border:1px solid #ddd;
+  width:250px;
+  display:none;
+  z-index:200;
+}
+
+.recent-item {
+  padding:6px;
+  cursor:pointer;
+}
+
+.recent-item:hover {
+  background:#eee;
+}
+
+/* =========================
+   🔥 UI
+========================= */
+.header.sticky {
+  position:fixed;
+  top:0;
+  width:100%;
+  background:white;
+  z-index:999;
+}
+
+.menu-item.active {
+  color:red;
+}
+
+/* =========================
+   🔥 LOADING BAR
+========================= */
+.loading-bar{
+  position:fixed;
+  top:0;
+  left:0;
+  height:3px;
+  background:red;
+  width:0%;
+  transition:0.3s;
+}
+</style>
+
+</head>
+
+<body>
+
+<div id="loadingBar" class="loading-bar"></div>
+
+<!-- =========================
+     🔥 HEADER
+========================= -->
+<div class="header">
+
+  <div class="logo" onclick="go('/')">마짱</div>
+
+  <input id="searchInput" class="search" placeholder="지역 또는 매장명을 검색해보세요."/>
+
+  <div class="menu">
+    <div onclick="go('/search')">상세검색</div>
+    <div onclick="go('/inquiry.html')">제휴문의</div>
+    <div onclick="go('/event-board.html')">이벤트</div>
+
+    <div class="menu-item" id="boardMenu">
+      게시판
+      <div class="dropdown" id="boardDropdown">
+        <div onclick="go('/board/shop.html')">샵추천</div>
+        <div onclick="go('/board/region.html')">지역별 샵추천</div>
+        <div onclick="go('/board/review.html')">방문후기</div>
+        <div onclick="go('/board/share.html')">정보공유</div>
+        <div onclick="go('/board/community.html')">커뮤니티</div>
+        <div onclick="go('/board/notice.html')">공지사항</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+
+/* =========================
+   🔥 CORE
+========================= */
+function go(url){
+  showLoadingBar();
+  location.href = url;
+}
+
+/* =========================
+   🔥 DOM
+========================= */
+const boardMenu = document.getElementById("boardMenu");
+const dropdown = document.getElementById("boardDropdown");
+const searchInput = document.getElementById("searchInput");
+
+/* =========================
+   🔥 DROPDOWN (버그 수정)
+========================= */
+let dropdownLock = false;
+
+boardMenu.addEventListener("click",(e)=>{
+  e.stopPropagation();
+  dropdownLock = true;
+
+  dropdown.style.display =
+    dropdown.style.display==="block" ? "none" : "block";
+
+  setTimeout(()=>dropdownLock=false,200);
+});
+
+document.addEventListener("click",()=>{
+  if(!dropdownLock){
+    dropdown.style.display="none";
+  }
+});
+
+/* =========================
+   🔥 SEARCH
+========================= */
+const recentBox = document.createElement("div");
+recentBox.className="recent-box";
+searchInput.parentNode.appendChild(recentBox);
+
+// Enter 검색
+searchInput.addEventListener("keydown",(e)=>{
+  if(e.key==="Enter"){
+    saveSearch(searchInput.value);
+    go(`/search?keyword=${encodeURIComponent(searchInput.value)}`);
+  }
+});
+
+// 검색 저장
+function saveSearch(q){
+  if(!q) return;
+
+  let arr = JSON.parse(localStorage.getItem("recentSearch")||"[]");
+  arr.unshift(q);
+  arr = [...new Set(arr)].slice(0,5);
+
+  localStorage.setItem("recentSearch", JSON.stringify(arr));
+}
+
+// 최근 검색 표시
+searchInput.addEventListener("focus",()=>{
+  const arr = JSON.parse(localStorage.getItem("recentSearch")||"[]");
+  if(!arr.length) return;
+
+  recentBox.innerHTML = arr.map(v=>`
+    <div class="recent-item">${v}</div>
+  `).join("");
+
+  recentBox.style.display="block";
+
+  recentBox.querySelectorAll(".recent-item").forEach(el=>{
+    el.onclick=()=>{
+      go(`/search?keyword=${encodeURIComponent(el.innerText)}`);
+    };
+  });
+});
+
+// blur
+searchInput.addEventListener("blur",()=>{
+  setTimeout(()=>recentBox.style.display="none",200);
+});
+
+/* =========================
+   🔥 UI
+========================= */
+
+// sticky
+window.addEventListener("scroll",()=>{
+  document.querySelector(".header")
+    .classList.toggle("sticky", window.scrollY > 50);
+});
+
+// active 메뉴
+(function(){
+  const path = location.pathname;
+
+  document.querySelectorAll(".menu div").forEach(el=>{
+    const m = el.getAttribute("onclick")?.match(/'(.*?)'/);
+    if(m && path.includes(m[1])){
+      el.classList.add("active");
+    }
+  });
+})();
+
+/* =========================
+   🔥 추가 기능 10개
+========================= */
+
+// 1 로딩바
+function showLoadingBar(){
+  const bar = document.getElementById("loadingBar");
+  bar.style.width="100%";
+  setTimeout(()=>bar.style.width="0%",500);
+}
+
+// 2 검색 길이 제한
+searchInput.addEventListener("input",()=>{
+  if(searchInput.value.length>20){
+    searchInput.value = searchInput.value.slice(0,20);
+  }
+});
+
+// 3 방문 카운트
+let visit = Number(localStorage.getItem("visit")||0)+1;
+localStorage.setItem("visit",visit);
+
+// 4 방문 로그
+console.log("visit:",visit);
+
+// 5 자동 포커스
+window.addEventListener("load",()=>{
+  searchInput.focus();
+});
+
+// 6 최근 검색 삭제
+function clearRecent(){
+  localStorage.removeItem("recentSearch");
+}
+
+// 7 메뉴 클릭 로그
+document.querySelectorAll(".menu div").forEach(el=>{
+  el.addEventListener("click",()=>{
+    console.log("menu:", el.innerText);
+  });
+});
+
+// 8 모바일 대응
+if(window.innerWidth < 768){
+  document.querySelector(".menu").style.flexDirection="column";
+}
+
+// 9 ESC 닫기
+document.addEventListener("keydown",(e)=>{
+  if(e.key==="Escape"){
+    dropdown.style.display="none";
+    recentBox.style.display="none";
+  }
+});
+
+// 10 네트워크 감지
+window.addEventListener("offline",()=>console.log("offline"));
+window.addEventListener("online",()=>console.log("online"));
+
+</script>
+
+</body>
+</html>

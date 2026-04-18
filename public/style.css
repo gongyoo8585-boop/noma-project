@@ -1,376 +1,285 @@
-* {
-  box-sizing: border-box;
+const CFG = window.APP_CONFIG || {};
+const API_BASE_URL = (CFG.API_BASE_URL || "").replace(//$/, "");
+
+const restaurantListEl = document.getElementById("restaurantList");
+const keywordInputEl = document.getElementById("keywordInput");
+const searchBtnEl = document.getElementById("searchBtn");
+const reloadBtnEl = document.getElementById("reloadBtn");
+const resultCountChipEl = document.getElementById("resultCountChip");
+const statusTextEl = document.getElementById("statusText");
+const regionSelectEl = document.getElementById("regionSelect");
+const serviceSelectEl = document.getElementById("serviceSelect");
+const tagSelectEl = document.getElementById("tagSelect");
+const pointTextEl = document.getElementById("pointText");
+const sortSelectEl = document.getElementById("sortSelect");
+
+if (!restaurantListEl) console.error("restaurantListEl 없음");
+
+const socket = window.io ? io() : null;
+
+const state = {
+token: localStorage.getItem("token") || "",
+map: null,
+currentPos: JSON.parse(localStorage.getItem("lastPos") || "null") || {
+lat: 35.2613,
+lng: 128.871
+},
+markers: [],
+shops: [],
+selectedId: localStorage.getItem("selectedShop") || null,
+loading: false,
+lastLoad: 0,
+cache: {},
+page: 1
+};
+
+/* ================= API ================= */
+function api(path, options = {}) {
+const headers = { ...(options.headers || {}) };
+
+if (state.token) headers.Authorization = "Bearer ${state.token}";
+if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+return fetch("${API_BASE_URL}${path}", { ...options, headers })
+.then(async (res) => {
+const data = await res.json().catch(() => ({}));
+if (!res.ok) {
+console.error("API ERROR:", data);
+return { items: [] };
+}
+return data;
+})
+.catch(() => ({ items: [] }));
 }
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #070707;
-  color: #fff;
-  font-family: "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+/* ================= MAP ================= */
+function initMap() {
+if (!window.kakao?.maps) return;
+
+const container = document.getElementById("map");
+if (!container) return;
+
+const center = new kakao.maps.LatLng(state.currentPos.lat, state.currentPos.lng);
+state.map = new kakao.maps.Map(container, { center, level: 5 });
+
+new kakao.maps.Marker({ map: state.map, position: center });
+
+let mapTimer;
+kakao.maps.event.addListener(state.map, "dragend", () => {
+clearTimeout(mapTimer);
+mapTimer = setTimeout(() => {
+const c = state.map.getCenter();
+state.currentPos = { lat: c.getLat(), lng: c.getLng() };
+saveLastPos();
+loadShops();
+}, 300);
+});
 }
 
-button, input {
-  font: inherit;
+function clearMarkers() {
+state.markers.forEach((m) => m.setMap(null));
+state.markers = [];
 }
 
-.hidden {
-  display: none !important;
+function addMarkers(items) {
+if (!state.map) return;
+
+clearMarkers();
+
+items.forEach((shop) => {
+if (!shop.lat || !shop.lng) return;
+
+const marker = new kakao.maps.Marker({
+  map: state.map,
+  position: new kakao.maps.LatLng(shop.lat, shop.lng)
+});
+
+kakao.maps.event.addListener(marker, "click", () => {
+  state.selectedId = shop._id;
+  saveSelected(shop._id);
+  state.map.setCenter(new kakao.maps.LatLng(shop.lat, shop.lng));
+  renderShops(state.shops);
+});
+
+state.markers.push(marker);
+
+});
 }
 
-.page {
-  min-height: 100vh;
-  padding: 16px;
+/* ================= DETAIL ================= */
+async function openDetail(shopId) {
+const data = await api("/api/shops/${shopId}");
+if (!data.shop) return;
+
+saveRecentView(data.shop);
+
+const modal = document.createElement("div");
+modal.className = "modal";
+
+modal.innerHTML = "<div> <h2>${data.shop.name}</h2> <p>⭐ ${data.shop.ratingAvg || 0}</p> <p>💰 ${data.shop.priceDiscount || 0}</p> <button onclick="this.closest('.modal').remove()">닫기</button> </div>";
+
+document.body.appendChild(modal);
 }
 
-.topbar {
-  display: grid;
-  grid-template-columns: 220px 1fr auto;
-  gap: 16px;
-  align-items: center;
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  background: #0f0f10;
-  border: 1px solid #1f1f22;
-  border-radius: 20px;
+/* ================= RENDER ================= */
+function renderShops(items) {
+state.shops = items;
+restaurantListEl.innerHTML = "";
+
+if (!items?.length) {
+restaurantListEl.innerHTML = "<div>데이터 없음</div>";
+return;
 }
 
-.brand {
-  font-size: 20px;
-  font-weight: 800;
+if (resultCountChipEl) {
+resultCountChipEl.innerText = items.length + "개";
 }
 
-.search-area {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+items.forEach((shop) => {
+const el = document.createElement("div");
+el.className = "card " + (state.selectedId === shop._id ? "active" : "");
+
+if ((shop.likeCount || 0) > 50) {
+  el.classList.add("premium");
 }
 
-.search-area input {
-  flex: 1;
-  min-width: 0;
-  height: 46px;
-  background: #17171a;
-  border: 1px solid #28282c;
-  color: #fff;
-  border-radius: 14px;
-  padding: 0 14px;
-  outline: none;
+el.innerHTML = `
+  <div>${shop.name}</div>
+  <div>❤️ ${shop.likeCount || 0}</div>
+  <button class="detail">상세</button>
+  <button class="like">찜</button>
+`;
+
+el.onclick = () => {
+  state.selectedId = shop._id;
+  saveSelected(shop._id);
+  el.scrollIntoView({ behavior: "smooth" });
+  renderShops(items);
+};
+
+el.querySelector(".detail").onclick = (e) => {
+  e.stopPropagation();
+  openDetail(shop._id);
+};
+
+el.querySelector(".like").onclick = (e) => {
+  e.stopPropagation();
+  toggleLike(shop._id);
+};
+
+restaurantListEl.appendChild(el);
+
+});
+
+addMarkers(items);
 }
 
-.auth-area {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+/* ================= LOAD ================= */
+async function loadShops() {
+if (state.loading) return;
+if (Date.now() - state.lastLoad < 500) return;
+
+state.loading = true;
+showSkeleton();
+
+let query = "";
+
+if (keywordInputEl?.value) {
+saveRecentSearch(keywordInputEl.value);
+query += "keyword=${encodeURIComponent(keywordInputEl.value)}&";
 }
 
-.auth-buttons,
-.user-box {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+const data = await api("/api/shops?${query}");
+
+renderShops(data.items || []);
+
+state.loading = false;
+state.lastLoad = Date.now();
 }
 
-.user-box span {
-  color: #f7c948;
-  font-weight: 700;
+/* ================= UTIL ================= */
+
+function saveLastPos() {
+localStorage.setItem("lastPos", JSON.stringify(state.currentPos));
 }
 
-.content {
-  display: grid;
-  gap: 16px;
+function showSkeleton() {
+restaurantListEl.innerHTML = "<div class="card skeleton" style="height:100px"></div> <div class="card skeleton" style="height:100px"></div>";
 }
 
-.card {
-  background: #0f0f10;
-  border: 1px solid #1f1f22;
-  border-radius: 20px;
-  padding: 16px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .25);
+let debounceTimer;
+keywordInputEl?.addEventListener("input", () => {
+clearTimeout(debounceTimer);
+debounceTimer = setTimeout(loadShops, 400);
+});
+
+document.addEventListener("keydown", (e) => {
+if (e.key === "Escape") {
+document.querySelector(".modal")?.remove();
+}
+});
+
+window.addEventListener("offline", () => console.warn("오프라인"));
+window.addEventListener("online", () => loadShops());
+
+function saveRecentSearch(k) {
+let arr = JSON.parse(localStorage.getItem("recentSearch") || "[]");
+arr.unshift(k);
+arr = [...new Set(arr)].slice(0, 10);
+localStorage.setItem("recentSearch", JSON.stringify(arr));
 }
 
-.map-section {
-  overflow: hidden;
+function saveRecentView(shop) {
+let arr = JSON.parse(localStorage.getItem("recentView") || "[]");
+arr.unshift(shop);
+arr = arr.slice(0, 10);
+localStorage.setItem("recentView", JSON.stringify(arr));
 }
 
-.map-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 14px;
+function saveSelected(id) {
+localStorage.setItem("selectedShop", id);
 }
 
-.section-title {
-  font-size: 18px;
-  font-weight: 800;
-  margin-bottom: 6px;
+async function toggleLike(id) {
+await api("/api/favorites/${id}", { method: "POST" });
+loadShops();
 }
 
-.muted {
-  color: #b2b2b7;
-  font-size: 14px;
+window.addEventListener("scroll", () => {
+if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+loadShops();
+}
+});
+
+setInterval(() => {
+if (document.hidden) return;
+loadShops();
+}, 30000);
+
+document.addEventListener("click", (e) => {
+const btn = e.target.closest("button");
+if (!btn) return;
+
+const r = document.createElement("span");
+r.style.cssText =
+"position:absolute;width:20px;height:20px;background:rgba(255,255,255,0.3);border-radius:50%";
+
+btn.appendChild(r);
+setTimeout(() => r.remove(), 300);
+});
+
+if (socket) {
+socket.on("shop:update", loadShops);
+socket.on("shop:like", loadShops);
 }
 
-.chip-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+function debugState() {
+console.log("STATE:", state);
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 12px;
-  background: #17171a;
-  border: 1px solid #2a2a2e;
-  border-radius: 999px;
-  color: #f5c454;
-  font-size: 13px;
-  font-weight: 700;
-}
+/* ================= INIT ================= */
+searchBtnEl?.addEventListener("click", loadShops);
+reloadBtnEl?.addEventListener("click", loadShops);
 
-#map {
-  width: 100%;
-  height: 480px;
-  border-radius: 16px;
-  overflow: hidden;
-}
-
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.list-section {
-  min-height: 300px;
-}
-
-.list {
-  display: grid;
-  gap: 14px;
-}
-
-.place-card {
-  background: #151518;
-  border: 1px solid #242428;
-  border-radius: 18px;
-  padding: 18px;
-}
-
-.place-title {
-  font-size: 17px;
-  font-weight: 800;
-  margin-bottom: 10px;
-  line-height: 1.4;
-}
-
-.meta {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 14px;
-  color: #d7d7db;
-}
-
-.meta-line {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  line-height: 1.45;
-}
-
-.meta-icon {
-  width: 20px;
-  text-align: center;
-  color: #f5b000;
-  flex: 0 0 20px;
-}
-
-.btn-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.btn {
-  border: none;
-  height: 42px;
-  border-radius: 14px;
-  cursor: pointer;
-  font-weight: 700;
-  transition: .2s ease;
-}
-
-.btn:hover {
-  transform: translateY(-1px);
-  opacity: .96;
-}
-
-.btn-primary {
-  background: #f7b500;
-  color: #111;
-}
-
-.btn-dark {
-  background: #232327;
-  color: #fff;
-}
-
-.btn-danger {
-  background: #db3c3c;
-  color: #fff;
-}
-
-.btn-ghost {
-  background: transparent;
-  border: 1px solid #303035;
-  color: #fff;
-}
-
-.full {
-  width: 100%;
-}
-
-.empty-box {
-  min-height: 120px;
-  display: grid;
-  place-items: center;
-  color: #8d8d95;
-  background: #151518;
-  border: 1px dashed #2d2d33;
-  border-radius: 16px;
-}
-
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, .62);
-}
-
-.modal-card {
-  position: relative;
-  z-index: 2;
-  width: min(460px, calc(100vw - 24px));
-  margin: 70px auto 0;
-  background: #111214;
-  border: 1px solid #232328;
-  border-radius: 22px;
-  padding: 20px;
-}
-
-.detail-card {
-  width: min(620px, calc(100vw - 24px));
-}
-
-.close-btn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  border: none;
-  background: #232327;
-  color: #fff;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.tab-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.tab-btn {
-  flex: 1;
-  height: 42px;
-  border-radius: 12px;
-  border: 1px solid #2d2d33;
-  background: #1a1b1f;
-  color: #fff;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.tab-btn.active {
-  background: #f7b500;
-  color: #111;
-  border-color: #f7b500;
-}
-
-.form-box {
-  display: grid;
-  gap: 12px;
-}
-
-.form-box h3 {
-  margin: 4px 0 8px;
-}
-
-.form-box input {
-  width: 100%;
-  height: 46px;
-  border-radius: 12px;
-  border: 1px solid #2b2b31;
-  background: #17171a;
-  color: #fff;
-  padding: 0 14px;
-  outline: none;
-}
-
-.detail-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.detail-title {
-  font-size: 24px;
-  font-weight: 900;
-  line-height: 1.35;
-  margin-bottom: 4px;
-}
-
-.detail-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.kakao-link {
-  color: #ffd24d;
-  text-decoration: none;
-  font-weight: 700;
-}
-
-@media (max-width: 1024px) {
-  .topbar {
-    grid-template-columns: 1fr;
-  }
-
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .search-area {
-    flex-wrap: wrap;
-  }
-
-  .btn-row,
-  .detail-actions {
-    grid-template-columns: 1fr;
-  }
-
-  #map {
-    height: 360px;
-  }
-}
+initMap();
+loadShops();

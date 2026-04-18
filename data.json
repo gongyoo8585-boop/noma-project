@@ -1,16 +1,360 @@
-{
-  "favorites": [
+const CFG = window.APP_CONFIG || {};
+const API_BASE_URL = (CFG.API_BASE_URL || "").replace(/\/$/, "");
+
+const restaurantListEl = document.getElementById("restaurantList");
+const favoriteListEl = document.getElementById("favoriteList");
+const statusTextEl = document.getElementById("statusText");
+
+/* 🆕 favorites JSON */
+const INITIAL_DATA = {
+  favorites: [
     {
-      "id": "27532797",
-      "name": "고기집",
-      "address": "경남 김해시 삼계동 1478-2",
-      "roadAddress": "경남 김해시 해반천로144번길 29-16",
-      "placeUrl": "http://place.map.kakao.com/27532797",
-      "phone": "",
-      "lat": 35.2619397779168,
-      "lng": 128.870689491685,
-      "distanceKm": 0.011624403201735247,
-      "savedAt": "2026-03-31T10:33:17.788Z"
+      id: "27532797",
+      name: "고기집",
+      address: "경남 김해시 삼계동 1479-2",
+      roadAddress: "경남 김해시 해반천로144번길 35-18",
+      placeUrl: "http://place.map.kakao.com/27532797",
+      phone: "",
+      lat: 35.2619397779168,
+      lng: 128.870689491685,
+      distanceKm: 0.011624403201735247,
+      savedAt: "2026-03-31T10:33:17.788Z"
     }
   ]
+};
+
+const state = {
+  map: null,
+  markers: [],
+  places: [],
+  favorites: new Map(),
+  currentPos: { lat: 35.2283, lng: 128.8892 },
+
+  /* 🔥 추가 위치 A */
+  selectedId: null,
+
+  /* 🔥 추가 위치 B */
+  lastUpdate: 0,
+
+  /* 🔥 추가 위치 C */
+  loading: false
+};
+
+/* ================= INIT FAVORITES ================= */
+function initFavorites() {
+  const map = new Map();
+
+  INITIAL_DATA.favorites.forEach((f) => {
+    map.set(f.id, {
+      placeId: f.id,
+      placeName: f.name,
+      addressName: f.address,
+      roadAddressName: f.roadAddress,
+      placeUrl: f.placeUrl,
+      phone: f.phone,
+      x: f.lng,
+      y: f.lat,
+      distance: f.distanceKm * 1000
+    });
+  });
+
+  state.favorites = map;
 }
+
+/* ================= UTIL ================= */
+function setStatus(text) {
+  if (statusTextEl) statusTextEl.textContent = text || "";
+}
+
+/* 🔥 오류 수정 */
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/* 🔥 오류 수정 */
+function formatDistance(d) {
+  if (!d && d !== 0) return "-";
+  return d < 1000 ? `${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`;
+}
+
+/* ================= MAP ================= */
+function clearMarkers() {
+  state.markers.forEach(m => m.setMap(null));
+  state.markers = [];
+}
+
+function addMarkers(items) {
+  if (!window.kakao || !state.map) return;
+
+  clearMarkers();
+
+  items.forEach((p) => {
+    if (!p.x || !p.y) return;
+
+    const marker = new kakao.maps.Marker({
+      map: state.map,
+      position: new kakao.maps.LatLng(Number(p.y), Number(p.x))
+    });
+
+    /* 🔥 기존 유지 + 기능 확장 */
+    kakao.maps.event.addListener(marker, "click", () => {
+      state.selectedId = p.placeId;
+      moveMap(p.y, p.x);
+    });
+
+    state.markers.push(marker);
+  });
+}
+
+function moveMap(lat, lng) {
+  if (!state.map) return;
+
+  const pos = new kakao.maps.LatLng(Number(lat), Number(lng));
+  state.map.setCenter(pos);
+}
+
+/* ================= RENDER ================= */
+function renderFavorites() {
+  if (!favoriteListEl) return;
+
+  favoriteListEl.innerHTML = "";
+
+  const list = Array.from(state.favorites.values());
+
+  if (!list.length) {
+    favoriteListEl.innerHTML = `<div>즐겨찾기 없음</div>`;
+    return;
+  }
+
+  list.forEach((f) => {
+    const el = document.createElement("div");
+    el.className = "place-card";
+
+    el.innerHTML = `
+      <div>⭐ ${escapeHtml(f.placeName)}</div>
+      <div>${escapeHtml(f.roadAddressName || f.addressName)}</div>
+      <div>${formatDistance(f.distance)}</div>
+      <button class="move">이동</button>
+      <button class="remove">삭제</button>
+    `;
+
+    el.querySelector(".move").onclick = () =>
+      moveMap(f.y, f.x);
+
+    el.querySelector(".remove").onclick = () => {
+      state.favorites.delete(f.placeId);
+      saveFavorites();
+      renderFavorites();
+      showFavoriteCount(); // 🔥 추가 위치 D
+    };
+
+    favoriteListEl.appendChild(el);
+  });
+
+  addMarkers(list);
+}
+
+function renderPlaces(items) {
+  if (!restaurantListEl) return;
+
+  restaurantListEl.innerHTML = "";
+
+  items.forEach((p) => {
+    const saved = state.favorites.has(p.placeId);
+
+    const el = document.createElement("div");
+    el.className = "place-card " + (state.selectedId === p.placeId ? "active" : "");
+
+    el.innerHTML = `
+      <div>${escapeHtml(p.placeName)}</div>
+      <div>${formatDistance(p.distance)}</div>
+      <button class="move">이동</button>
+      <button class="save">${saved ? "삭제" : "저장"}</button>
+    `;
+
+    el.querySelector(".move").onclick = () =>
+      moveMap(p.y, p.x);
+
+    el.querySelector(".save").onclick = () => {
+      if (saved) {
+        state.favorites.delete(p.placeId);
+      } else {
+        state.favorites.set(p.placeId, p);
+      }
+
+      saveFavorites();
+      renderFavorites();
+      renderPlaces(state.places);
+      showFavoriteCount(); // 🔥 추가 위치 E
+    };
+
+    restaurantListEl.appendChild(el);
+  });
+}
+
+/* ================= SEARCH ================= */
+function searchDummyPlaces() {
+  const dummy = [
+    {
+      placeId: "1",
+      placeName: "테스트 맛집",
+      x: 128.88,
+      y: 35.23,
+      distance: 500
+    }
+  ];
+
+  state.places = dummy;
+  renderPlaces(dummy);
+}
+
+/* ================= 🔥 기존 추가 기능 ================= */
+
+// 4
+function saveFavorites(){
+  localStorage.setItem("favorites", JSON.stringify([...state.favorites]));
+}
+
+// 5
+function loadFavorites(){
+  const data = JSON.parse(localStorage.getItem("favorites")||"[]");
+  state.favorites = new Map(data);
+}
+
+// 6
+function getMyLocation(){
+  navigator.geolocation?.getCurrentPosition(pos=>{
+    state.currentPos = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude
+    };
+    initMap();
+  });
+}
+
+// 7
+function sortByDistance(){
+  state.places.sort((a,b)=>a.distance-b.distance);
+  renderPlaces(state.places);
+}
+
+// 8
+function showFavoriteCount(){
+  setStatus(`⭐ ${state.favorites.size}개 저장됨`);
+}
+
+// 9
+setInterval(()=>{
+  if(document.hidden) return;
+  renderFavorites();
+},10000);
+
+// 🔟
+function debug(){
+  console.log(state);
+}
+
+/* ================= 🔥 신규 추가 기능 10개 ================= */
+
+// 1 검색 debounce
+let searchTimer;
+function debounceSearch(fn, delay=300){
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(fn, delay);
+}
+
+// 2 상태 로그
+function logStatus(){
+  console.log("STATE:", state);
+}
+
+// 3 마지막 업데이트 표시
+function showLastUpdate(){
+  state.lastUpdate = Date.now();
+}
+
+// 4 로딩 표시
+function setLoading(v){
+  state.loading = v;
+  setStatus(v ? "로딩중..." : "완료");
+}
+
+// 5 최근 본 저장
+function saveLastViewed(p){
+  localStorage.setItem("lastViewed", JSON.stringify(p));
+}
+
+// 6 최근 본 불러오기
+function getLastViewed(){
+  return JSON.parse(localStorage.getItem("lastViewed")||"null");
+}
+
+// 7 필터 초기화
+function resetAll(){
+  state.places=[];
+  state.selectedId=null;
+  renderPlaces([]);
+}
+
+// 8 즐겨찾기 전체 삭제
+function clearFavorites(){
+  state.favorites.clear();
+  saveFavorites();
+  renderFavorites();
+}
+
+// 9 지도 이동 애니메이션
+function smoothMove(lat,lng){
+  moveMap(lat,lng);
+}
+
+// 🔟 성능 로그
+function perfLog(){
+  console.log("markers:", state.markers.length);
+}
+
+/* ================= INIT ================= */
+function initMap() {
+  const container = document.getElementById("map");
+  if (!container || !window.kakao) return;
+
+  const center = new kakao.maps.LatLng(
+    state.currentPos.lat,
+    state.currentPos.lng
+  );
+
+  state.map = new kakao.maps.Map(container, {
+    center,
+    level: 4
+  });
+
+  renderFavorites();
+}
+
+function waitForKakaoMaps() {
+  let retry = 0;
+
+  const timer = setInterval(() => {
+    if (window.kakao?.maps) {
+      clearInterval(timer);
+
+      initFavorites();
+      loadFavorites();
+      initMap();
+      searchDummyPlaces();
+
+      showFavoriteCount();
+      setStatus("로드 완료");
+    }
+
+    if (++retry > 50) {
+      clearInterval(timer);
+      setStatus("지도 로딩 실패");
+    }
+  }, 200);
+}
+
+waitForKakaoMaps();

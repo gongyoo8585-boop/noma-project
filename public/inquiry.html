@@ -1,0 +1,459 @@
+<!DOCTYPE html><html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>제휴 문의</title><style>
+body { font-family:sans-serif; padding:30px; background:#f5f5f5 }
+.box { max-width:500px; margin:auto; background:white; padding:20px; border-radius:10px }
+input, textarea { width:100%; padding:10px; margin-top:10px }
+button { margin-top:15px; padding:10px; background:red; color:white; border:none }
+
+button:disabled { opacity:0.5; cursor:not-allowed; }
+.loader { display:none; text-align:center; margin-top:10px; }
+.status { margin-top:10px; font-size:14px; }
+.time { font-size:12px; color:#999; margin-top:5px }
+
+.retry { margin-top:10px; display:none; background:#333; }
+.error-box { margin-top:10px; color:red; font-size:13px; }
+.counter { font-size:12px; text-align:right; color:#666; }
+
+input:focus, textarea:focus {
+  outline:2px solid red;
+}
+
+.success {
+  display:none;
+  color:green;
+  margin-top:10px;
+}
+</style></head><body><div class="box">
+<h2>제휴 문의</h2><input id="name" placeholder="업체명">
+<input id="phone" placeholder="전화번호">
+<textarea id="content" placeholder="내용"></textarea><div id="counter" class="counter">0 / 500</div><button id="submitBtn" onclick="send()">문의 보내기</button>
+
+<div id="loader" class="loader">전송중...</div>
+<div id="status" class="status"></div>
+<div id="time" class="time"></div>
+<div id="errorBox" class="error-box"></div>
+<div id="success" class="success">✔ 완료</div><button id="retryBtn" class="retry" onclick="send()">다시 시도</button>
+
+</div><script src="/socket.io/socket.io.js"></script><script>
+
+/* ================= 기본 ================= */
+const nameEl = document.getElementById("name");
+const phoneEl = document.getElementById("phone");
+const contentEl = document.getElementById("content");
+
+const btn = document.getElementById("submitBtn");
+const loader = document.getElementById("loader");
+const status = document.getElementById("status");
+const timeEl = document.getElementById("time");
+const retryBtn = document.getElementById("retryBtn");
+
+const counterEl = document.getElementById("counter");
+const errorBox = document.getElementById("errorBox");
+const successEl = document.getElementById("success");
+
+const socket = window.io ? io() : null;
+
+/* ================= 자동 복구 ================= */
+window.addEventListener("load", ()=>{
+  nameEl.value = localStorage.getItem("inq_name") || "";
+  phoneEl.value = localStorage.getItem("inq_phone") || "";
+  contentEl.value = localStorage.getItem("inq_content") || "";
+  updateCounter();
+});
+
+/* ================= 자동 저장 ================= */
+[nameEl, phoneEl, contentEl].forEach(el=>{
+  el.addEventListener("keyup", ()=>{
+    localStorage.setItem("inq_name", nameEl.value);
+    localStorage.setItem("inq_phone", phoneEl.value);
+    localStorage.setItem("inq_content", contentEl.value);
+    updateCounter();
+  });
+});
+
+/* ================= 전화 포맷 ================= */
+phoneEl.addEventListener("input", ()=>{
+  let v = phoneEl.value.replace(/[^0-9]/g,"");
+  if(v.length > 3 && v.length <= 7) v = v.replace(/(\d{3})(\d+)/,"$1-$2");
+  if(v.length > 7) v = v.replace(/(\d{3})(\d{4})(\d+)/,"$1-$2-$3");
+  phoneEl.value = v;
+});
+
+/* ================= 기능 ================= */
+
+// 1 글자수
+function updateCounter(){
+  const len = contentEl.value.length;
+  counterEl.innerText = `${len} / 500`;
+}
+
+// 2 제한
+contentEl.addEventListener("input", ()=>{
+  if(contentEl.value.length > 500){
+    contentEl.value = contentEl.value.slice(0,500);
+  }
+});
+
+// 3 에러
+function showError(msg){
+  errorBox.innerText = msg;
+}
+
+// 4 초기화
+function clearError(){
+  errorBox.innerText = "";
+}
+
+// 5 UI lock
+function lockUI(on){
+  btn.disabled = on;
+}
+
+// 6 로딩
+function setLoading(on){
+  loader.style.display = on ? "block" : "none";
+}
+
+// 7 시간 저장
+function saveTime(){
+  localStorage.setItem("lastInquiryTime", Date.now());
+}
+
+// 8 중복 방지
+function canSend(){
+  const last = Number(localStorage.getItem("lastInquiryTime")||0);
+  return Date.now() - last > 3000;
+}
+
+// 9 성공 효과
+function successEffect(){
+  successEl.style.display="block";
+  setTimeout(()=>successEl.style.display="none",1000);
+}
+
+// 10 전화 검증
+function isValidPhone(p){
+  return p.replace(/[^0-9]/g,"").length >= 10;
+}
+
+// 11 trim
+function trimAll(){
+  nameEl.value = nameEl.value.trim();
+  phoneEl.value = phoneEl.value.trim();
+  contentEl.value = contentEl.value.trim();
+}
+
+// 12 네트워크 체크
+function isOnline(){
+  return navigator.onLine;
+}
+
+// 13 강조
+function highlight(el){
+  el.style.border="2px solid red";
+  setTimeout(()=>el.style.border="",1000);
+}
+
+// 14 버튼 텍스트
+function setBtn(t){
+  btn.innerText = t;
+}
+
+// 15 로그
+function log(msg){
+  console.log("INQUIRY:", msg);
+}
+
+// 16 자동 재시도
+function retryAuto(){
+  setTimeout(()=>send(),2000);
+}
+
+// 17 입력 포커스 이동
+nameEl.onkeydown=e=>{ if(e.key==="Enter") phoneEl.focus(); };
+phoneEl.onkeydown=e=>{ if(e.key==="Enter") contentEl.focus(); };
+
+// 18 Enter submit
+document.addEventListener("keydown", e=>{
+  if(e.key==="Enter" && document.activeElement!==contentEl){
+    e.preventDefault();
+    send();
+  }
+});
+
+// 19 오프라인 감지
+window.addEventListener("offline", ()=>showError("오프라인 상태"));
+window.addEventListener("online", ()=>clearError());
+
+// 20 socket 로그
+if(socket){
+  socket.on("inquiry:new", ()=>console.log("관리자 알림 완료"));
+}
+
+/* ================= SEND ================= */
+let sending=false;
+
+async function send(){
+
+  if(sending) return;
+
+  if(!isOnline()) return showError("오프라인");
+
+  if(!canSend()) return showError("잠시 후 다시");
+
+  trimAll();
+
+  const name = nameEl.value;
+  const phone = phoneEl.value;
+  const content = contentEl.value;
+
+  if(!name){ highlight(nameEl); return showError("업체명"); }
+  if(!isValidPhone(phone)){ highlight(phoneEl); return showError("전화번호"); }
+  if(!content){ highlight(contentEl); return showError("내용"); }
+
+  clearError();
+
+  sending=true;
+  lockUI(true);
+  setLoading(true);
+  setBtn("전송중...");
+  retryBtn.style.display="none";
+
+  try{
+
+    const res = await fetch("/api/inquiry",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({
+        name,
+        phone: phone.replace(/[^0-9]/g,""),
+        content
+      })
+    });
+
+    const data = await res.json().catch(()=>({}));
+
+    if(data.ok){
+
+      status.innerText="✅ 완료";
+      status.style.color="green";
+
+      timeEl.innerText = new Date().toLocaleString();
+
+      saveTime();
+      successEffect();
+
+      localStorage.clear();
+
+      nameEl.value="";
+      phoneEl.value="";
+      contentEl.value="";
+      updateCounter();
+
+      log("success");
+
+    }else{
+      throw new Error(data.message || "실패");
+    }
+
+  }catch(e){
+
+    status.innerText="❌ 실패";
+    status.style.color="red";
+
+    retryBtn.style.display="block";
+    showError(e.message);
+
+    retryAuto();
+    log("fail");
+  }
+
+  sending=false;
+  lockUI(false);
+  setLoading(false);
+  setBtn("문의 보내기");
+}
+
+<script>
+
+/* =====================================================
+🔥 FINAL ADD-ONLY EXTENSION v8 (절대 기존 코드 수정 없음)
+👉 위치: 맨 아래
+===================================================== */
+
+/* =========================
+1. phone 오류 핫픽스 (콜 → phone)
+========================= */
+function __fixValidationBug(){
+  const _send = send;
+  send = async function(){
+    try{
+      if(typeof phoneEl === "undefined") return _send();
+
+      // 잘못된 변수 "콜" 방어
+      window.콜 = phoneEl.value;
+
+    }catch{}
+    return _send();
+  };
+}
+__fixValidationBug();
+
+/* =========================
+2. 요청 중복 방지 키
+========================= */
+let __REQ_LOCK = false;
+
+/* =========================
+3. 안전 send 래퍼
+========================= */
+function safeSend(){
+  if(__REQ_LOCK) return;
+  __REQ_LOCK = true;
+
+  Promise.resolve(send())
+    .finally(()=>__REQ_LOCK=false);
+}
+
+/* =========================
+4. 자동 저장 복구 강화
+========================= */
+function restoreDraftSafe(){
+  try{
+    nameEl.value = localStorage.getItem("inq_name") || "";
+    phoneEl.value = localStorage.getItem("inq_phone") || "";
+    contentEl.value = localStorage.getItem("inq_content") || "";
+  }catch{}
+}
+restoreDraftSafe();
+
+/* =========================
+5. 입력 유효성 실시간 체크
+========================= */
+function liveValidate(){
+  if(!nameEl.value) nameEl.style.border="2px solid red";
+  else nameEl.style.border="";
+
+  if(!isValidPhone(phoneEl.value)) phoneEl.style.border="2px solid red";
+  else phoneEl.style.border="";
+
+  if(!contentEl.value) contentEl.style.border="2px solid red";
+  else contentEl.style.border="";
+}
+
+[nameEl, phoneEl, contentEl].forEach(el=>{
+  el.addEventListener("blur", liveValidate);
+});
+
+/* =========================
+6. 전송 성공 로그 저장
+========================= */
+function logSuccess(){
+  let logs = JSON.parse(localStorage.getItem("inq_logs")||"[]");
+  logs.unshift({time:Date.now(), ok:true});
+  logs = logs.slice(0,20);
+  localStorage.setItem("inq_logs",JSON.stringify(logs));
+}
+
+/* =========================
+7. 실패 로그 저장
+========================= */
+function logFail(msg){
+  let logs = JSON.parse(localStorage.getItem("inq_logs")||"[]");
+  logs.unshift({time:Date.now(), ok:false, msg});
+  logs = logs.slice(0,20);
+  localStorage.setItem("inq_logs",JSON.stringify(logs));
+}
+
+/* =========================
+8. 네트워크 상태 UI 표시
+========================= */
+function updateNetworkUI(){
+  status.innerText = navigator.onLine ? "🟢 온라인" : "🔴 오프라인";
+}
+window.addEventListener("online", updateNetworkUI);
+window.addEventListener("offline", updateNetworkUI);
+
+/* =========================
+9. 입력 자동 포커스
+========================= */
+function autoFocus(){
+  if(!nameEl.value) return nameEl.focus();
+  if(!phoneEl.value) return phoneEl.focus();
+  if(!contentEl.value) return contentEl.focus();
+}
+setTimeout(autoFocus,300);
+
+/* =========================
+10. 전송 시간 표시 개선
+========================= */
+function showPreciseTime(){
+  timeEl.innerText = new Date().toISOString();
+}
+
+/* =========================
+11. 입력 길이 시각 강조
+========================= */
+contentEl.addEventListener("input",()=>{
+  const len = contentEl.value.length;
+
+  if(len > 450){
+    counterEl.style.color="red";
+  }else{
+    counterEl.style.color="#666";
+  }
+});
+
+/* =========================
+12. 스팸 클릭 방지
+========================= */
+let __LAST_CLICK = 0;
+document.addEventListener("click",(e)=>{
+  const now = Date.now();
+  if(now - __LAST_CLICK < 200){
+    e.stopImmediatePropagation();
+  }
+  __LAST_CLICK = now;
+});
+
+/* =========================
+13. 전체 리셋 기능
+========================= */
+function resetFormAll(){
+  nameEl.value="";
+  phoneEl.value="";
+  contentEl.value="";
+  localStorage.removeItem("inq_name");
+  localStorage.removeItem("inq_phone");
+  localStorage.removeItem("inq_content");
+  clearError();
+  updateCounter();
+}
+
+/* =========================
+🔥 기존 코드에 영향 없는 후킹
+========================= */
+
+// 성공/실패 로그 후킹
+const __origSend = send;
+send = async function(){
+  try{
+    const r = await __origSend();
+    logSuccess();
+    showPreciseTime();
+    return r;
+  }catch(e){
+    logFail(e?.message);
+    throw e;
+  }
+};
+
+// 버튼 안전 호출
+btn.onclick = safeSend;
+
+</script>
+
+</script></body>
+</html>

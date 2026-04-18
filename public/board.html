@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>게시판</h2>
+
+<input id="title">
+<textarea id="content"></textarea>
+<button onclick="write()">작성</button>
+
+<input id="search" placeholder="검색">
+<button onclick="load()">검색</button>
+
+<select id="sort">
+  <option value="latest">최신순</option>
+  <option value="like">좋아요순</option>
+</select>
+
+<div id="loading" style="display:none">로딩중...</div>
+<div id="status"></div>
+
+<div id="list"></div>
+
+<script>
+
+/* ================= 상태 ================= */
+let LOADING = false;
+let CACHE = [];
+let selectedPost = null;
+let retryCount = 0;
+
+/* ================= DOM ================= */
+const titleEl = document.getElementById("title");
+const contentEl = document.getElementById("content");
+const listEl = document.getElementById("list");
+const loadingEl = document.getElementById("loading");
+const searchEl = document.getElementById("search");
+const sortEl = document.getElementById("sort");
+const statusEl = document.getElementById("status");
+
+const socket = window.io ? io() : null;
+
+/* ================= 유틸 ================= */
+
+function escapeHtml(v){
+  return String(v||"")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;");
+}
+
+function setStatus(msg){
+  if(statusEl) statusEl.innerText = msg;
+}
+
+function showLoading(on){
+  loadingEl.style.display = on ? "block" : "none";
+}
+
+/* ================= write ================= */
+
+async function write(){
+
+  if(!titleEl.value.trim() || !contentEl.value.trim()){
+    return alert("내용 입력");
+  }
+
+  showLoading(true);
+
+  try{
+    const res = await fetch("/api/posts",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({
+        title:titleEl.value,
+        content:contentEl.value
+      })
+    });
+
+    if(!res.ok) throw new Error();
+
+    titleEl.value="";
+    contentEl.value="";
+
+    setStatus("작성 완료");
+
+    load();
+
+  }catch(e){
+    alert("작성 실패");
+  }
+
+  showLoading(false);
+}
+
+/* ================= load ================= */
+
+async function load(){
+
+  if(LOADING) return;
+  LOADING = true;
+
+  showLoading(true);
+
+  try{
+
+    let url = "/api/posts?";
+
+    if(searchEl.value){
+      url += "q=" + encodeURIComponent(searchEl.value) + "&";
+    }
+
+    if(sortEl.value){
+      url += "sort=" + sortEl.value;
+    }
+
+    const res = await fetch(url);
+    const d = await res.json();
+
+    if(!res.ok) throw new Error();
+
+    CACHE = d.items || [];
+
+    listEl.innerHTML="";
+
+    if(!CACHE.length){
+      listEl.innerHTML="<div>게시글 없음</div>";
+      return;
+    }
+
+    setStatus("총 "+CACHE.length+"개");
+
+    CACHE.forEach(p=>{
+
+      const div = document.createElement("div");
+
+      if(selectedPost === p._id){
+        div.style.background="#eee";
+      }
+
+      const date = p.createdAt
+        ? new Date(p.createdAt).toLocaleString()
+        : "";
+
+      div.innerHTML = `
+        <div style="border:1px solid #ccc;margin:10px;padding:10px">
+
+          <b>${escapeHtml(p.title)}</b><br>
+          ${escapeHtml(p.content)}<br>
+
+          <small>${date}</small><br>
+
+          👍 ${p.likeCount || 0}
+          <button onclick="like('${p._id}', this)">좋아요</button>
+
+          <button onclick="removePost('${p._id}')">삭제</button>
+
+          <button onclick="editPost('${p._id}')">수정</button>
+
+          <div id="c-${p._id}"></div>
+
+          <input placeholder="댓글" id="ci-${p._id}">
+          <button onclick="comment('${p._id}')">댓글</button>
+
+        </div>
+      `;
+
+      div.onclick = ()=>{
+        selectedPost = p._id;
+        localStorage.setItem("selectedPost", p._id);
+      };
+
+      listEl.appendChild(div);
+
+      loadComments(p._id);
+    });
+
+  }catch(e){
+
+    if(retryCount < 2){
+      retryCount++;
+      setTimeout(load,500);
+    }else{
+      listEl.innerHTML="오류";
+    }
+
+  } finally {
+    LOADING = false;
+    showLoading(false);
+  }
+}
+
+/* ================= like ================= */
+
+async function like(id, btn){
+
+  if(btn) btn.disabled = true;
+
+  const post = CACHE.find(p=>p._id===id);
+  if(post) post.likeCount++;
+
+  renderCache();
+
+  await fetch("/api/posts/"+id+"/like",{ method:"POST" });
+}
+
+/* ================= delete ================= */
+
+async function removePost(id){
+  if(!confirm("삭제할까?")) return;
+
+  await fetch("/api/posts/"+id,{ method:"DELETE" });
+
+  setStatus("삭제 완료");
+  load();
+}
+
+/* ================= edit ================= */
+
+async function editPost(id){
+  const title = prompt("제목 수정");
+  const content = prompt("내용 수정");
+
+  if(!title || !content) return;
+
+  await fetch("/api/posts/"+id,{
+    method:"PUT",
+    headers:{ "Content-Type":"application/json" },
+    body:JSON.stringify({ title, content })
+  });
+
+  setStatus("수정 완료");
+  load();
+}
+
+/* ================= comment ================= */
+
+async function comment(postId){
+  const input = document.getElementById("ci-"+postId);
+  const text = input.value.trim();
+
+  if(!text) return;
+
+  await fetch("/api/comments",{
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body:JSON.stringify({
+      postId,
+      content:text
+    })
+  });
+
+  input.value="";
+  loadComments(postId);
+}
+
+/* ================= loadComments ================= */
+
+async function loadComments(postId){
+
+  try{
+    const d = await fetch("/api/comments?postId="+postId)
+      .then(r=>r.json());
+
+    const el = document.getElementById("c-"+postId);
+
+    if(!el) return;
+
+    el.innerHTML = (d.items || [])
+      .map(c=>`<div>💬 ${escapeHtml(c.content)}</div>`)
+      .join("");
+
+  }catch(e){}
+}
+
+/* ================= render cache ================= */
+
+function renderCache(){
+  listEl.innerHTML="";
+  CACHE.forEach(p=>{
+    const div=document.createElement("div");
+    div.innerHTML=`<div>${p.title} 👍${p.likeCount}</div>`;
+    listEl.appendChild(div);
+  });
+}
+
+/* ================= 추가 기능 ================= */
+
+// debounce 검색
+let debounceTimer;
+searchEl.addEventListener("input",()=>{
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(load,300);
+});
+
+// 자동 새로고침
+setInterval(()=>{
+  if(document.hidden) return;
+  load();
+},10000);
+
+// Enter 검색
+searchEl.addEventListener("keydown",(e)=>{
+  if(e.key==="Enter") load();
+});
+
+// 네트워크 상태
+window.addEventListener("offline",()=>setStatus("오프라인"));
+window.addEventListener("online",()=>load());
+
+// 최근 검색
+searchEl.addEventListener("change",()=>{
+  localStorage.setItem("lastSearch",searchEl.value);
+});
+
+window.addEventListener("load",()=>{
+  searchEl.value = localStorage.getItem("lastSearch") || "";
+  selectedPost = localStorage.getItem("selectedPost");
+});
+
+// 버튼 클릭 효과
+document.addEventListener("click",(e)=>{
+  const btn = e.target.closest("button");
+  if(btn){
+    btn.style.transform="scale(0.95)";
+    setTimeout(()=>btn.style.transform="",100);
+  }
+});
+
+// debug
+function debug(){
+  console.log({CACHE, selectedPost});
+}
+
+/* ================= socket ================= */
+
+if(socket){
+  socket.on("post:new", load);
+  socket.on("post:like", load);
+  socket.on("comment:add", load);
+}
+
+/* ================= INIT ================= */
+
+load();
+
+</script>
+
+</body>
+</html>

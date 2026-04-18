@@ -1,0 +1,125 @@
+version: "3.9"
+
+# =====================================================
+# 🔥 NETWORK
+# =====================================================
+networks:
+  app-network:
+    driver: bridge
+
+# =====================================================
+# 🔥 VOLUMES (데이터 영속성)
+# =====================================================
+volumes:
+  mongo-data:
+  redis-data:
+
+# =====================================================
+# 🔥 SERVICES
+# =====================================================
+services:
+
+  # ===================================================
+  # 🔥 API SERVER
+  # ===================================================
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: massage-api
+    restart: always
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MONGO_URI: mongodb://mongo:27017/massage
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: super_secret_change_this
+      APP_VERSION: "1.0.0"
+
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===================================================
+  # 🔥 MONGODB
+  # ===================================================
+  mongo:
+    image: mongo:6
+    container_name: massage-mongo
+    restart: always
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongo-data:/data/db
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===================================================
+  # 🔥 REDIS (캐시 / 확장 대비)
+  # ===================================================
+  redis:
+    image: redis:7-alpine
+    container_name: massage-redis
+    restart: always
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    command: redis-server --appendonly yes
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===================================================
+  # 🔥 OPTIONAL: MONGO EXPRESS (관리툴)
+  # ===================================================
+  mongo-express:
+    image: mongo-express
+    container_name: massage-mongo-admin
+    restart: always
+
+    ports:
+      - "8081:8081"
+
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_BASICAUTH: "false"
+
+    depends_on:
+      - mongo
+
+    networks:
+      - app-network

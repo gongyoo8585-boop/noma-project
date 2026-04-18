@@ -1,404 +1,368 @@
+"use strict";
+
 require("dotenv").config();
 
 const express = require("express");
 const mongoose = require("mongoose");
-const jwt = require("jsonwebtoken");
+const http = require("http");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const rateLimit = require("express-rate-limit");
 const bcrypt = require("bcryptjs");
-const path = require("path");
+const jwt = require("jsonwebtoken");
+const { Server } = require("socket.io");
 
-const app = express();
-
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, "public")));
-
-const PORT = process.env.PORT || 10000;
-const JWT_SECRET = process.env.JWT_SECRET || "1234";
-const KAKAO_CLIENT_ID = process.env.KAKAO_CLIENT_ID || "";
-const KAKAO_REDIRECT_URI = process.env.KAKAO_REDIRECT_URI || "";
-const ADMIN_KAKAO_ID = process.env.ADMIN_KAKAO_ID || "";
-
-/* =========================
-   DB
-========================= */
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("DB 연결 성공"))
-  .catch((err) => console.log("DB 연결 실패:", err.message));
-
-/* =========================
-   Models
-========================= */
-const userSchema = new mongoose.Schema(
-  {
-    loginId: { type: String, unique: true, sparse: true },
-    password: String,
-    kakaoId: { type: String, unique: true, sparse: true },
-    nickname: String,
-    role: { type: String, default: "user" },
-    likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Place" }]
-  },
-  { timestamps: true }
-);
-
-const placeSchema = new mongoose.Schema(
-  {
-    name: String,
-    address: String,
-    region: String,
-    district: String,
-    serviceType: String,
-    theme: String,
-    price: Number,
-    phone: String,
-    reservePhone: String,
-    description: String,
-    lat: Number,
-    lng: Number,
-    eventText: { type: String, default: "" },
-    tags: [String],
-    approved: { type: Boolean, default: false },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    ratingAvg: { type: Number, default: 0 },
-    reviewCount: { type: Number, default: 0 }
-  },
-  { timestamps: true }
-);
-
-const inquirySchema = new mongoose.Schema(
-  {
-    company: String,
-    phone: String,
-    content: String,
-    checkedRobot: Boolean
-  },
-  { timestamps: true }
-);
-
-const postSchema = new mongoose.Schema(
-  {
-    title: String,
-    content: String,
-    authorNickname: String,
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
-  },
-  { timestamps: true }
-);
-
-const reviewSchema = new mongoose.Schema(
-  {
-    placeId: { type: mongoose.Schema.Types.ObjectId, ref: "Place" },
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    nickname: String,
-    rating: Number,
-    content: String
-  },
-  { timestamps: true }
-);
-
-const eventSchema = new mongoose.Schema(
-  {
-    title: String,
-    content: String,
-    active: { type: Boolean, default: true }
-  },
-  { timestamps: true }
-);
-
-const User = mongoose.model("User", userSchema);
-const Place = mongoose.model("Place", placeSchema);
-const Inquiry = mongoose.model("Inquiry", inquirySchema);
-const Post = mongoose.model("Post", postSchema);
-const Review = mongoose.model("Review", reviewSchema);
-const Event = mongoose.model("Event", eventSchema);
-
-/* =========================
-   Utils
-========================= */
-function signUser(user) {
-  return jwt.sign(
-    {
-      id: String(user._id),
-      role: user.role,
-      kakaoId: user.kakaoId || "",
-      loginId: user.loginId || ""
-    },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+/* =====================================================
+🔥 SAFE REQUIRE
+===================================================== */
+function safeRequire(modulePath, fallback = null) {
+  try {
+    return require(modulePath);
+  } catch (err) {
+    console.warn("[SAFE REQUIRE FAIL]", modulePath, "-", err.message);
+    return fallback;
+  }
 }
 
+/* =====================================================
+🔥 DB BOOTSTRAP
+===================================================== */
+const dbModule =
+  safeRequire("./config/database", null) ||
+  safeRequire("./db", null);
+
+/* =====================================================
+🔥 MODELS
+===================================================== */
+const User = safeRequire("./models/User", null);
+const Shop = safeRequire("./models/Shop", null);
+const Reservation = safeRequire("./models/Reservation", null);
+const Inquiry = safeRequire("./models/Inquiry", null);
+
+/* =====================================================
+🔥 ROUTES
+===================================================== */
+const favoritesRouter = safeRequire("./routes/favorites", null);
+const usersRouter = safeRequire("./routes/users", null);
+const adminRouter = safeRequire("./routes/admin", null);
+
+/* =====================================================
+🔥 APP / SERVER
+===================================================== */
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: true,
+    credentials: true
+  }
+});
+
+app.set("io", io);
+
+const JWT_SECRET = process.env.JWT_SECRET || "secret";
+const PORT = Number(process.env.PORT || 10000);
+
+/* =====================================================
+🔥 GLOBAL STATE
+===================================================== */
+let ERROR_COUNT = 0;
+const CACHE = new Map();
+const FAST_IP_MAP = new Map();
+
+/* =====================================================
+🔥 UTILS
+===================================================== */
+const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
+function isObjectId(v) {
+  return /^[0-9a-fA-F]{24}$/.test(String(v || ""));
+}
+
+function ok(res, data = {}) {
+  return res.json({ ok: true, ...data });
+}
+
+function fail(res, status = 400, msg = "ERROR", extra = {}) {
+  return res.status(status).json({ ok: false, msg, ...extra });
+}
+
+function getCache(key) {
+  const item = CACHE.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expire) {
+    CACHE.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function setCache(key, data, ttl = 5000) {
+  CACHE.set(key, {
+    data,
+    expire: Date.now() + ttl
+  });
+}
+
+/* =====================================================
+🔥 MIDDLEWARE
+===================================================== */
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(morgan("dev"));
+app.use(cors({ origin: true, credentials: true }));
+app.use(cookieParser());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+/* =====================================================
+🔥 RATE LIMIT
+===================================================== */
+app.use("/api", rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
+
+/* =====================================================
+🔥 FAST LIMIT
+===================================================== */
+app.use("/api", (req, res, next) => {
+  const ip = req.ip || req.headers["x-forwarded-for"] || "x";
+  const now = Date.now();
+  const prev = FAST_IP_MAP.get(ip) || 0;
+
+  if (now - prev < 30) {
+    return fail(res, 429, "too fast");
+  }
+
+  FAST_IP_MAP.set(ip, now);
+  next();
+});
+
+/* =====================================================
+🔥 SOCKET
+===================================================== */
+io.on("connection", (socket) => {
+  socket.on("ping", () => socket.emit("pong"));
+});
+
+/* =====================================================
+🔥 AUTH
+===================================================== */
 function auth(req, res, next) {
   try {
-    const header = req.headers.authorization || "";
-    const token = header.replace("Bearer ", "").trim();
+    const raw = String(req.headers.authorization || "");
+    const token = raw.startsWith("Bearer ") ? raw.slice(7) : raw;
+
     if (!token) {
-      return res.status(401).json({ ok: false, message: "로그인 필요" });
+      return fail(res, 401, "UNAUTHORIZED");
     }
+
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.id;
-    req.role = decoded.role;
+    req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ ok: false, message: "토큰 오류" });
+    return fail(res, 401, "UNAUTHORIZED");
   }
 }
 
-function adminOnly(req, res, next) {
-  if (req.role !== "admin") {
-    return res.status(403).json({ ok: false, message: "관리자만 가능" });
+/* =====================================================
+🔥 ROUTER 연결
+===================================================== */
+if (usersRouter) app.use("/api/users", usersRouter);
+if (adminRouter) app.use("/api/admin", adminRouter);
+if (favoritesRouter) app.use("/api/favorites", favoritesRouter);
+
+/* =====================================================
+🔥 AUTO CACHE
+===================================================== */
+app.use("/api", (req, res, next) => {
+  if (req.method !== "GET") return next();
+
+  const key = req.originalUrl;
+  const cached = getCache(key);
+
+  if (cached) {
+    return res.json({
+      ...(typeof cached === "object" && cached !== null ? cached : { data: cached }),
+      cache: true
+    });
   }
+
+  const originalJson = res.json.bind(res);
+
+  res.json = (data) => {
+    try {
+      if (!res.headersSent && res.statusCode < 400) {
+        setCache(key, data);
+      }
+    } catch (e) {}
+    return originalJson(data);
+  };
+
   next();
-}
-
-function toRad(v) {
-  return (v * Math.PI) / 180;
-}
-
-function getDistanceKm(lat1, lng1, lat2, lng2) {
-  const R = 6371;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-
-  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-}
-
-/* =========================
-   Auth - 일반 회원가입 / 로그인
-========================= */
-app.post("/api/register", async (req, res) => {
-  try {
-    const { id, password } = req.body;
-
-    if (!id || !password) {
-      return res.status(400).json({ ok: false, message: "아이디와 비밀번호를 입력하세요" });
-    }
-
-    const exists = await User.findOne({ loginId: id });
-    if (exists) {
-      return res.status(400).json({ ok: false, message: "이미 존재하는 아이디입니다" });
-    }
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      loginId: id,
-      password: hashed,
-      nickname: id,
-      role: "user",
-      likes: []
-    });
-
-    const token = signUser(user);
-
-    res.json({
-      ok: true,
-      message: "회원가입 성공",
-      token,
-      user: {
-        id: user._id,
-        nickname: user.nickname,
-        role: user.role
-      }
-    });
-  } catch (err) {
-    console.log("회원가입 오류:", err.message);
-    res.status(500).json({ ok: false, message: "회원가입 오류" });
-  }
 });
 
-app.post("/api/login", async (req, res) => {
-  try {
-    const { id, password } = req.body;
-
-    const user = await User.findOne({ loginId: id });
-    if (!user) {
-      return res.status(400).json({ ok: false, message: "아이디 또는 비밀번호 오류" });
-    }
-
-    const same = await bcrypt.compare(password, user.password || "");
-    if (!same) {
-      return res.status(400).json({ ok: false, message: "아이디 또는 비밀번호 오류" });
-    }
-
-    const token = signUser(user);
-
-    res.json({
-      ok: true,
-      message: "로그인 성공",
-      token,
-      user: {
-        id: user._id,
-        nickname: user.nickname,
-        role: user.role
-      }
-    });
-  } catch (err) {
-    console.log("로그인 오류:", err.message);
-    res.status(500).json({ ok: false, message: "로그인 오류" });
-  }
-});
-
-/* =========================
-   Auth - 카카오 로그인
-========================= */
-app.get("/auth/kakao", (req, res) => {
-  const url =
-    "https://kauth.kakao.com/oauth/authorize" +
-    `?client_id=${encodeURIComponent(KAKAO_CLIENT_ID)}` +
-    `&redirect_uri=${encodeURIComponent(KAKAO_REDIRECT_URI)}` +
-    "&response_type=code";
-
-  res.redirect(url);
-});
-
-app.get("/auth/kakao/callback", async (req, res) => {
-  try {
-    const code = req.query.code;
-
-    const tokenRes = await fetch("https://kauth.kakao.com/oauth/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
-      },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: KAKAO_CLIENT_ID,
-        redirect_uri: KAKAO_REDIRECT_URI,
-        code
-      })
-    });
-
-    const tokenData = await tokenRes.json();
-
-    if (!tokenData.access_token) {
-      console.log("카카오 토큰 응답:", tokenData);
-      return res.send(`
-        <script>
-          alert("카카오 토큰 발급 실패");
-          location.href="/";
-        </script>
-      `);
-    }
-
-    const userRes = await fetch("https://kapi.kakao.com/v2/user/me", {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`
-      }
-    });
-
-    const userData = await userRes.json();
-    const kakaoId = String(userData.id);
-    const nickname =
-      userData.properties?.nickname ||
-      userData.kakao_account?.profile?.nickname ||
-      "카카오사용자";
-
-    let user = await User.findOne({ kakaoId });
-
-    if (!user) {
-      user = await User.create({
-        kakaoId,
-        nickname,
-        role: ADMIN_KAKAO_ID && ADMIN_KAKAO_ID === kakaoId ? "admin" : "user",
-        likes: []
-      });
-    }
-
-    if (ADMIN_KAKAO_ID && ADMIN_KAKAO_ID === kakaoId && user.role !== "admin") {
-      user.role = "admin";
-      await user.save();
-    }
-
-    const token = signUser(user);
-
-    res.redirect(
-      `/?token=${encodeURIComponent(token)}&nickname=${encodeURIComponent(
-        user.nickname
-      )}&role=${encodeURIComponent(user.role)}`
-    );
-  } catch (err) {
-    console.log("카카오 로그인 오류:", err.message);
-    res.send(`
-      <script>
-        alert("카카오 로그인 오류");
-        location.href="/";
-      </script>
-    `);
-  }
-});
-
-app.get("/api/me", auth, async (req, res) => {
-  const user = await User.findById(req.userId).lean();
-  if (!user) {
-    return res.status(404).json({ ok: false, message: "사용자 없음" });
-  }
-
-  res.json({
-    ok: true,
-    user: {
-      id: user._id,
-      nickname: user.nickname,
-      role: user.role,
-      likes: user.likes || []
-    }
+/* =====================================================
+🔥 ROOT
+===================================================== */
+app.get("/", (req, res) => {
+  ok(res, {
+    message: "NOMA SERVER RUNNING",
+    port: PORT,
+    uptime: process.uptime()
   });
 });
 
-/* =========================
-   Places
-========================= */
-app.get("/api/places", async (req, res) => {
-  const items = await Place.find({ approved: true }).sort({ createdAt: -1 }).lean();
-  res.json({ ok: true, items });
-});
+/* =====================================================
+🔥 AUTH LOGIN
+===================================================== */
+app.post("/api/auth/login", asyncHandler(async (req, res) => {
+  if (!User) return fail(res, 500, "MODEL");
 
-app.get("/api/places/search", async (req, res) => {
-  const {
-    q = "",
-    region = "",
-    district = "",
-    serviceType = "",
-    theme = "",
-    priceMax = ""
-  } = req.query;
+  const { id, password } = req.body || {};
+  if (!id || !password) return fail(res, 400, "INVALID_INPUT");
 
-  const filter = { approved: true };
+  let user = await User.findOne({ id });
 
-  if (q) {
-    filter.$or = [
-      { name: new RegExp(q, "i") },
-      { address: new RegExp(q, "i") },
-      { region: new RegExp(q, "i") },
-      { district: new RegExp(q, "i") }
-    ];
+  if (!user) {
+    const hash = await bcrypt.hash(password, 10);
+    user = await User.create({ id, password: hash });
   }
 
-  if (region) filter.region = region;
-  if (district) filter.district = district;
-  if (serviceType) filter.serviceType = serviceType;
-  if (theme) filter.theme = theme;
-  if (priceMax) filter.price = { $lte: Number(priceMax) };
+  const okPw = await bcrypt.compare(password, user.password);
+  if (!okPw) return fail(res, 403, "INVALID_PASSWORD");
 
-  const items = await Place.find(filter).sort({ createdAt: -1 }).lean();
-  res.json({ ok: true, items });
+  const token = jwt.sign(
+    { id: user.id, role: user.role || "user" },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  return ok(res, { token });
+}));
+
+/* =====================================================
+🔥 SHOP
+===================================================== */
+app.get("/api/shops", asyncHandler(async (req, res) => {
+  if (!Shop) return fail(res, 500, "MODEL");
+
+  const items = await Shop.find().limit(50);
+  return ok(res, { items });
+}));
+
+/* =====================================================
+🔥 RESERVATION
+===================================================== */
+app.post("/api/reservations", auth, asyncHandler(async (req, res) => {
+  if (!Reservation) return fail(res, 500, "MODEL");
+
+  const { shopId } = req.body || {};
+  if (!isObjectId(shopId)) return fail(res, 400, "INVALID_SHOP_ID");
+
+  const exists = await Reservation.findOne({
+    userId: req.user.id,
+    shopId,
+    status: "pending"
+  });
+
+  if (exists) return fail(res, 400, "already");
+
+  const reservation = await Reservation.create({
+    userId: req.user.id,
+    shopId,
+    status: "pending"
+  });
+
+  return ok(res, { reservation });
+}));
+
+/* =====================================================
+🔥 ADMIN
+===================================================== */
+app.get("/api/admin/stats", asyncHandler(async (req, res) => {
+  if (!User || !Shop || !Reservation) return fail(res, 500, "MODEL");
+
+  const [users, shops, reservations] = await Promise.all([
+    User.countDocuments(),
+    Shop.countDocuments(),
+    Reservation.countDocuments()
+  ]);
+
+  return ok(res, { users, shops, reservations });
+}));
+
+/* =====================================================
+🔥 INQUIRY
+===================================================== */
+app.get("/api/inquiries", asyncHandler(async (req, res) => {
+  if (!Inquiry) return fail(res, 500, "MODEL");
+
+  const items = await Inquiry.find().limit(50);
+  return ok(res, { items });
+}));
+
+/* =====================================================
+🔥 HEALTH
+===================================================== */
+app.get("/api/health", (req, res) => {
+  ok(res, {
+    db: mongoose.connection.readyState,
+    uptime: process.uptime(),
+    errors: ERROR_COUNT
+  });
 });
 
-app.get("/api/places/near", async (req, res) => {
-  const lat = Number(req.query.lat);
-  const lng = Number(req.query.lng);
+/* =====================================================
+🔥 404
+===================================================== */
+app.use((req, res) => {
+  return fail(res, 404, "NOT_FOUND");
+});
 
-  const items = await Place.find({ approved: true }).lean();
+/* =====================================================
+🔥 ERROR
+===================================================== */
+app.use((err, req, res, next) => {
+  ERROR_COUNT++;
+  console.error("[SERVER ERROR]", err);
+  return fail(res, 500, err.message || "INTERNAL_SERVER_ERROR");
+});
 
-  const sorted = items
-    .map((item) => ({
-      ...item,
-      distanceKm: getDistanceKm(lat, lng, item.lat, item.lng)
-    }))
-    .sort((a,
+/* =====================================================
+🔥 INTERVAL 보호
+===================================================== */
+setInterval(() => {
+  try {
+    if (CACHE.size > 1000) CACHE.clear();
+    if (FAST_IP_MAP.size > 10000) FAST_IP_MAP.clear();
+  } catch (e) {}
+}, 60000);
+
+/* =====================================================
+🔥 START
+===================================================== */
+async function bootstrap() {
+  try {
+    if (dbModule && typeof dbModule.connectDB === "function") {
+      await dbModule.connectDB();
+      console.log("DB 연결 성공");
+    } else {
+      console.log("DB 모듈 없음 또는 connectDB 없음 - 계속 진행");
+    }
+
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log("🚀 SERVER START:", PORT);
+    });
+  } catch (err) {
+    console.error("서버 실행 실패:", err);
+    process.exit(1);
+  }
+}
+
+bootstrap();

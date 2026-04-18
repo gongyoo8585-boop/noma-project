@@ -1,13 +1,166 @@
 services:
-  - type: web
-    name: majang-final
-    env: node
-    buildCommand: npm install
-    startCommand: node server.js
-    envVars:
-      - key: MONGO_URI
-        sync: false
-      - key: JWT_SECRET
-        sync: false
-      - key: NODE_ENV
-        value: production
+
+- type: web
+  name: majang-final
+  env: node
+  
+  =========================
+  
+  🔥 기존 유지 + 오류 수정
+  
+  =========================
+  
+  buildCommand: npm install --legacy-peer-deps
+  
+  🔥 start 안정화 (fallback 확장)
+  
+  startCommand: npm run start || node server.js || node index.js
+  
+  healthCheckPath: /
+  
+  autoDeploy: true
+  plan: free
+  region: singapore
+  
+  disk:
+  name: data
+  mountPath: /data
+  sizeGB: 1
+  
+  🔥 graceful shutdown 추가
+  
+  gracefulShutdownTimeoutSeconds: 30
+  
+  🔥 인스턴스 설정
+  
+  numInstances: 1
+  
+  envVars:
+  
+  =========================
+  
+  기존 유지
+  
+  =========================
+  
+  - key: MONGO_URI
+    sync: false
+  
+  - key: JWT_SECRET
+    sync: false
+  
+  - key: NODE_ENV
+    value: production
+  
+  - key: PORT
+    value: 10000
+  
+  - key: APP_BASE_URL
+    value: https://majang-final.onrender.com
+  
+  - key: KAKAO_CLIENT_ID
+    sync: false
+  
+  - key: KAKAO_REDIRECT_URI
+    sync: false
+  
+  - key: CORS_ORIGIN
+    value: "*"
+  
+  - key: MAX_FILE_SIZE_MB
+    value: 5
+  
+  - key: LOG_LEVEL
+    value: info
+  
+  =========================
+  
+  기존 추가 유지
+  
+  =========================
+  
+  - key: MONGO_POOL_SIZE
+    value: 10
+  
+  - key: API_TIMEOUT_MS
+    value: 10000
+  
+  - key: RATE_LIMIT_MAX
+    value: 600
+  
+  - key: RATE_LIMIT_WINDOW_MS
+    value: 900000
+  
+  - key: CACHE_TTL
+    value: 60
+  
+  - key: UPLOAD_DIR
+    value: /data/uploads
+  
+  - key: JWT_EXPIRES_IN
+    value: 7d
+  
+  - key: ADMIN_EMAIL
+    value: admin@noma.com
+  
+  - key: ENABLE_NOTIFICATION
+    value: true
+  
+  - key: DEBUG_MODE
+    value: false
+  
+  =========================
+  
+  🔥 추가 기능 10개 (운영 안정화)
+  
+  =========================
+  
+  1️⃣ 서버 타임존
+  
+  - key: TZ
+    value: Asia/Seoul
+  
+  2️⃣ Node 메모리 제한
+  
+  - key: NODE_OPTIONS
+    value: --max-old-space-size=512
+  
+  3️⃣ 에러 로그만 출력 옵션
+  
+  - key: LOG_ERROR_ONLY
+    value: false
+  
+  4️⃣ API 재시도 횟수
+  
+  - key: API_RETRY_COUNT
+    value: 2
+  
+  5️⃣ Mongo 재연결 활성화
+  
+  - key: MONGO_RETRY
+    value: true
+  
+  6️⃣ Mongo 재시도 횟수
+  
+  - key: MONGO_RETRY_COUNT
+    value: 5
+  
+  7️⃣ CORS 보안 강화 옵션
+  
+  - key: CORS_STRICT
+    value: false
+  
+  8️⃣ 관리자 접근 로그
+  
+  - key: ADMIN_LOG
+    value: true
+  
+  9️⃣ 업로드 파일 개수 제한
+  
+  - key: MAX_UPLOAD_FILES
+    value: 10
+  
+  🔟 헬스체크 내부 타임아웃
+  
+  - key: HEALTH_TIMEOUT_MS
+    value: 3000
