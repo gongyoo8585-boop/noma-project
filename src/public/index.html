@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>NOMA 플랫폼</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #0f172a;
+      color: #fff;
+      text-align: center;
+    }
+
+    .container {
+      padding: 40px;
+      max-width: 900px;
+      margin: auto;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 12px 20px;
+      margin: 6px;
+      font-size: 14px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .login { background: #22c55e; }
+    .kakao { background: #fee500; color: #000; }
+    .danger { background: #ef4444; }
+    .api { background: #3b82f6; }
+
+    input {
+      padding: 10px;
+      margin: 5px;
+      border-radius: 6px;
+      border: none;
+      width: 120px;
+    }
+
+    pre {
+      margin-top: 20px;
+      padding: 20px;
+      background: #111;
+      color: #0f0;
+      text-align: left;
+      overflow-x: auto;
+      min-height: 150px;
+    }
+
+    .token {
+      margin-top: 10px;
+      font-size: 12px;
+      word-break: break-all;
+      color: #94a3b8;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #38bdf8;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>🔥 NOMA 플랫폼</h1>
+
+    <div>
+      <input id="id" placeholder="id" value="test" />
+      <input id="pw" placeholder="pw" value="1234" />
+    </div>
+
+    <div>
+      <button class="login" onclick="login()">로그인</button>
+      <button class="kakao" onclick="kakao()">카카오 로그인</button>
+      <button class="danger" onclick="logout()">로그아웃</button>
+    </div>
+
+    <div>
+      <button class="api" onclick="health()">서버 상태</button>
+      <button class="api" onclick="stats()">관리자 통계</button>
+    </div>
+
+    <div class="status" id="status">READY</div>
+    <div class="token" id="tokenBox"></div>
+
+    <pre id="output">READY</pre>
+  </div>
+
+  <script>
+    const API = location.origin;
+    let TOKEN = localStorage.getItem("token") || "";
+
+    updateToken();
+
+    function updateToken() {
+      document.getElementById("tokenBox").innerText =
+        TOKEN ? "TOKEN: " + TOKEN : "로그인 안됨";
+    }
+
+    function setStatus(msg) {
+      document.getElementById("status").innerText = msg;
+    }
+
+    async function request(url, options = {}) {
+      const start = Date.now();
+
+      if (!options.headers) options.headers = {};
+      if (TOKEN) {
+        options.headers.Authorization = "Bearer " + TOKEN;
+      }
+
+      try {
+        const res = await fetch(API + url, options);
+        const data = await res.json();
+
+        const time = Date.now() - start;
+        setStatus("응답시간: " + time + "ms");
+
+        show(data);
+        return data;
+      } catch (e) {
+        setStatus("에러 발생");
+        show({ error: e.message });
+      }
+    }
+
+    async function login() {
+      const id = document.getElementById("id").value;
+      const pw = document.getElementById("pw").value;
+
+      const data = await request("/api/auth/login", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ id, password: pw })
+      });
+
+      if (data && data.token) {
+        TOKEN = data.token;
+        localStorage.setItem("token", TOKEN);
+        updateToken();
+      }
+    }
+
+    function kakao() {
+      location.href = API + "/auth/kakao";
+    }
+
+    function logout() {
+      TOKEN = "";
+      localStorage.removeItem("token");
+      updateToken();
+      show({ msg: "로그아웃 완료" });
+    }
+
+    async function health() {
+      await request("/api/health");
+    }
+
+    async function stats() {
+      await request("/api/admin/stats");
+    }
+
+    function show(data) {
+      document.getElementById("output").innerText =
+        JSON.stringify(data, null, 2);
+    }
+
+    // 카카오 로그인 후 token 처리
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token");
+
+    if (token) {
+      TOKEN = token;
+      localStorage.setItem("token", token);
+      updateToken();
+      show({ msg: "카카오 로그인 성공", token });
+      history.replaceState({}, "", "/");
+    }
+
+    // 자동 서버 체크
+    setInterval(() => {
+      fetch(API + "/api/health")
