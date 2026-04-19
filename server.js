@@ -12,220 +12,213 @@ const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 const { Server } = require("socket.io");
 
 /* =====================================================
-🔥 SAFE REQUIRE
+SAFE REQUIRE
 ===================================================== */
-function safeRequire(modulePath, fallback = null) {
-  try {
-    return require(modulePath);
-  } catch (err) {
-    console.warn("[SAFE REQUIRE FAIL]", modulePath, "-", err.message);
-    return fallback;
-  }
+function safeRequire(path) {
+  try { return require(path); } catch { return null; }
 }
 
 /* =====================================================
-🔥 DB BOOTSTRAP
+DB
 ===================================================== */
-const dbModule =
-  safeRequire("./config/database", null) ||
-  safeRequire("./db", null);
+const dbModule = safeRequire("./config/database") || safeRequire("./db");
 
 /* =====================================================
-🔥 MODELS
+MODELS
 ===================================================== */
-const User = safeRequire("./models/User", null);
-const Shop = safeRequire("./models/Shop", null);
-const Reservation = safeRequire("./models/Reservation", null);
-const Inquiry = safeRequire("./models/Inquiry", null);
+const User = safeRequire("./models/User");
+const Shop = safeRequire("./models/Shop");
+const Reservation = safeRequire("./models/Reservation");
+const Inquiry = safeRequire("./models/Inquiry");
 
 /* =====================================================
-🔥 ROUTES
-===================================================== */
-const favoritesRouter = safeRequire("./routes/favorites", null);
-const usersRouter = safeRequire("./routes/users", null);
-const adminRouter = safeRequire("./routes/admin", null);
-
-/* =====================================================
-🔥 APP / SERVER
+APP
 ===================================================== */
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: true,
-    credentials: true
-  }
-});
+const io = new Server(server, { cors: { origin: true } });
 
-app.set("io", io);
-
-const JWT_SECRET = process.env.JWT_SECRET || "secret";
-const PORT = Number(process.env.PORT || 10000);
+const PORT = process.env.PORT || 10000;
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /* =====================================================
-🔥 GLOBAL STATE
+MIDDLEWARE
 ===================================================== */
-let ERROR_COUNT = 0;
-const CACHE = new Map();
-const FAST_IP_MAP = new Map();
-
-/* =====================================================
-🔥 UTILS
-===================================================== */
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
-
-function isObjectId(v) {
-  return /^[0-9a-fA-F]{24}$/.test(String(v || ""));
-}
-
-function ok(res, data = {}) {
-  return res.json({ ok: true, ...data });
-}
-
-function fail(res, status = 400, msg = "ERROR", extra = {}) {
-  return res.status(status).json({ ok: false, msg, ...extra });
-}
-
-function getCache(key) {
-  const item = CACHE.get(key);
-  if (!item) return null;
-  if (Date.now() > item.expire) {
-    CACHE.delete(key);
-    return null;
-  }
-  return item.data;
-}
-
-function setCache(key, data, ttl = 5000) {
-  CACHE.set(key, {
-    data,
-    expire: Date.now() + ttl
-  });
-}
-
-/* =====================================================
-🔥 MIDDLEWARE
-===================================================== */
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(helmet());
 app.use(morgan("dev"));
 app.use(cors({ origin: true, credentials: true }));
 app.use(cookieParser());
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 /* =====================================================
-🔥 RATE LIMIT
+RATE LIMIT
 ===================================================== */
-app.use("/api", rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false
-}));
+app.use("/api", rateLimit({ windowMs: 15 * 60 * 1000, max: 300 }));
 
 /* =====================================================
-🔥 FAST LIMIT
+UTIL
 ===================================================== */
-app.use("/api", (req, res, next) => {
-  const ip = req.ip || req.headers["x-forwarded-for"] || "x";
-  const now = Date.now();
-  const prev = FAST_IP_MAP.get(ip) || 0;
-
-  if (now - prev < 30) {
-    return fail(res, 429, "too fast");
-  }
-
-  FAST_IP_MAP.set(ip, now);
-  next();
-});
+const ok = (res, data = {}) => res.json({ ok: true, ...data });
+const fail = (res, s = 400, m = "ERROR") =>
+  res.status(s).json({ ok: false, msg: m });
 
 /* =====================================================
-🔥 SOCKET
-===================================================== */
-io.on("connection", (socket) => {
-  socket.on("ping", () => socket.emit("pong"));
-});
-
-/* =====================================================
-🔥 AUTH
+AUTH
 ===================================================== */
 function auth(req, res, next) {
   try {
-    const raw = String(req.headers.authorization || "");
-    const token = raw.startsWith("Bearer ") ? raw.slice(7) : raw;
-
-    if (!token) {
-      return fail(res, 401, "UNAUTHORIZED");
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const token = (req.headers.authorization || "").replace("Bearer ", "");
+    if (!token) return fail(res, 401, "NO_TOKEN");
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (err) {
-    return fail(res, 401, "UNAUTHORIZED");
+  } catch {
+    return fail(res, 401, "INVALID_TOKEN");
   }
 }
 
 /* =====================================================
-🔥 ROUTER 연결
+🔥 UI (웹페이지)
 ===================================================== */
-if (usersRouter) app.use("/api/users", usersRouter);
-if (adminRouter) app.use("/api/admin", adminRouter);
-if (favoritesRouter) app.use("/api/favorites", favoritesRouter);
+app.get("/home", (req, res) => {
+  res.send(`
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>NOMA</title>
+    <style>
+      body { font-family: Arial; text-align: center; padding: 50px; }
+      button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+      pre { background:#111;color:#0f0;padding:20px;text-align:left; }
+    </style>
+  </head>
+  <body>
+    <h1>🔥 NOMA 플랫폼</h1>
 
-/* =====================================================
-🔥 AUTO CACHE
-===================================================== */
-app.use("/api", (req, res, next) => {
-  if (req.method !== "GET") return next();
+    <button onclick="login()">일반 로그인</button>
+    <button onclick="kakao()">카카오 로그인</button>
+    <button onclick="shops()">매장 조회</button>
+    <button onclick="health()">서버 상태</button>
 
-  const key = req.originalUrl;
-  const cached = getCache(key);
+    <pre id="out"></pre>
 
-  if (cached) {
-    return res.json({
-      ...(typeof cached === "object" && cached !== null ? cached : { data: cached }),
-      cache: true
-    });
-  }
-
-  const originalJson = res.json.bind(res);
-
-  res.json = (data) => {
-    try {
-      if (!res.headersSent && res.statusCode < 400) {
-        setCache(key, data);
+    <script>
+      async function login(){
+        const r = await fetch('/api/auth/login',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id:'test',password:'1234'})
+        });
+        show(await r.json());
       }
-    } catch (e) {}
-    return originalJson(data);
-  };
 
-  next();
+      function kakao(){
+        location.href='/auth/kakao';
+      }
+
+      async function shops(){
+        const r = await fetch('/api/shops');
+        show(await r.json());
+      }
+
+      async function health(){
+        const r = await fetch('/api/health');
+        show(await r.json());
+      }
+
+      function show(d){
+        document.getElementById('out').innerText = JSON.stringify(d,null,2);
+      }
+    </script>
+  </body>
+  </html>
+  `);
 });
 
 /* =====================================================
-🔥 ROOT
+ROOT
 ===================================================== */
 app.get("/", (req, res) => {
   ok(res, {
     message: "NOMA SERVER RUNNING",
-    port: PORT,
     uptime: process.uptime()
   });
 });
 
 /* =====================================================
-🔥 AUTH LOGIN
+KAKAO LOGIN
 ===================================================== */
-app.post("/api/auth/login", asyncHandler(async (req, res) => {
-  if (!User) return fail(res, 500, "MODEL");
+function getRedirectUri() {
+  return process.env.NODE_ENV === "production"
+    ? "https://noma-project-1.onrender.com/auth/kakao/callback"
+    : process.env.KAKAO_REDIRECT_URI;
+}
 
-  const { id, password } = req.body || {};
-  if (!id || !password) return fail(res, 400, "INVALID_INPUT");
+app.get("/auth/kakao", (req, res) => {
+  const url =
+    `https://kauth.kakao.com/oauth/authorize` +
+    `?client_id=${process.env.KAKAO_CLIENT_ID}` +
+    `&redirect_uri=${getRedirectUri()}` +
+    `&response_type=code`;
+
+  res.redirect(url);
+});
+
+app.get("/auth/kakao/callback", async (req, res) => {
+  try {
+    const { code } = req.query;
+
+    const tokenRes = await axios.post(
+      "https://kauth.kakao.com/oauth/token",
+      null,
+      {
+        params: {
+          grant_type: "authorization_code",
+          client_id: process.env.KAKAO_CLIENT_ID,
+          redirect_uri: getRedirectUri(),
+          code,
+        },
+      }
+    );
+
+    const access_token = tokenRes.data.access_token;
+
+    const userRes = await axios.get(
+      "https://kapi.kakao.com/v2/user/me",
+      { headers: { Authorization: \`Bearer \${access_token}\` } }
+    );
+
+    const kakaoId = userRes.data.id;
+
+    let user = User && await User.findOne({ kakaoId });
+
+    if (!user && User) {
+      user = await User.create({
+        kakaoId,
+        id: "kakao_" + kakaoId,
+      });
+    }
+
+    const token = jwt.sign({ id: user?.id || kakaoId }, JWT_SECRET);
+
+    return ok(res, { token });
+
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    return fail(res, 500, "KAKAO_ERROR");
+  }
+});
+
+/* =====================================================
+LOGIN
+===================================================== */
+app.post("/api/auth/login", async (req, res) => {
+  if (!User) return fail(res, 500);
+
+  const { id, password } = req.body;
 
   let user = await User.findOne({ id });
 
@@ -235,134 +228,76 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
   }
 
   const okPw = await bcrypt.compare(password, user.password);
-  if (!okPw) return fail(res, 403, "INVALID_PASSWORD");
+  if (!okPw) return fail(res, 403);
 
-  const token = jwt.sign(
-    { id: user.id, role: user.role || "user" },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const token = jwt.sign({ id: user.id }, JWT_SECRET);
 
-  return ok(res, { token });
-}));
+  ok(res, { token });
+});
 
 /* =====================================================
-🔥 SHOP
+SHOP
 ===================================================== */
-app.get("/api/shops", asyncHandler(async (req, res) => {
-  if (!Shop) return fail(res, 500, "MODEL");
-
+app.get("/api/shops", async (req, res) => {
+  if (!Shop) return fail(res, 500);
   const items = await Shop.find().limit(50);
-  return ok(res, { items });
-}));
+  ok(res, { items });
+});
 
 /* =====================================================
-🔥 RESERVATION
+RESERVATION
 ===================================================== */
-app.post("/api/reservations", auth, asyncHandler(async (req, res) => {
-  if (!Reservation) return fail(res, 500, "MODEL");
+app.post("/api/reservations", auth, async (req, res) => {
+  if (!Reservation) return fail(res, 500);
 
-  const { shopId } = req.body || {};
-  if (!isObjectId(shopId)) return fail(res, 400, "INVALID_SHOP_ID");
-
-  const exists = await Reservation.findOne({
+  const r = await Reservation.create({
     userId: req.user.id,
-    shopId,
+    shopId: req.body.shopId,
     status: "pending"
   });
 
-  if (exists) return fail(res, 400, "already");
-
-  const reservation = await Reservation.create({
-    userId: req.user.id,
-    shopId,
-    status: "pending"
-  });
-
-  return ok(res, { reservation });
-}));
+  ok(res, { r });
+});
 
 /* =====================================================
-🔥 ADMIN
+ADMIN
 ===================================================== */
-app.get("/api/admin/stats", asyncHandler(async (req, res) => {
-  if (!User || !Shop || !Reservation) return fail(res, 500, "MODEL");
+app.get("/api/admin/stats", async (req, res) => {
+  const users = User ? await User.countDocuments() : 0;
+  const shops = Shop ? await Shop.countDocuments() : 0;
+  const reservations = Reservation ? await Reservation.countDocuments() : 0;
 
-  const [users, shops, reservations] = await Promise.all([
-    User.countDocuments(),
-    Shop.countDocuments(),
-    Reservation.countDocuments()
-  ]);
-
-  return ok(res, { users, shops, reservations });
-}));
+  ok(res, { users, shops, reservations });
+});
 
 /* =====================================================
-🔥 INQUIRY
-===================================================== */
-app.get("/api/inquiries", asyncHandler(async (req, res) => {
-  if (!Inquiry) return fail(res, 500, "MODEL");
-
-  const items = await Inquiry.find().limit(50);
-  return ok(res, { items });
-}));
-
-/* =====================================================
-🔥 HEALTH
+HEALTH
 ===================================================== */
 app.get("/api/health", (req, res) => {
-  ok(res, {
-    db: mongoose.connection.readyState,
-    uptime: process.uptime(),
-    errors: ERROR_COUNT
-  });
+  ok(res, { db: mongoose.connection.readyState });
 });
 
 /* =====================================================
-🔥 404
+404
 ===================================================== */
-app.use((req, res) => {
-  return fail(res, 404, "NOT_FOUND");
-});
+app.use((req, res) => fail(res, 404, "NOT_FOUND"));
 
 /* =====================================================
-🔥 ERROR
+START
 ===================================================== */
-app.use((err, req, res, next) => {
-  ERROR_COUNT++;
-  console.error("[SERVER ERROR]", err);
-  return fail(res, 500, err.message || "INTERNAL_SERVER_ERROR");
-});
-
-/* =====================================================
-🔥 INTERVAL 보호
-===================================================== */
-setInterval(() => {
+async function start() {
   try {
-    if (CACHE.size > 1000) CACHE.clear();
-    if (FAST_IP_MAP.size > 10000) FAST_IP_MAP.clear();
-  } catch (e) {}
-}, 60000);
-
-/* =====================================================
-🔥 START
-===================================================== */
-async function bootstrap() {
-  try {
-    if (dbModule && typeof dbModule.connectDB === "function") {
+    if (dbModule?.connectDB) {
       await dbModule.connectDB();
-      console.log("DB 연결 성공");
-    } else {
-      console.log("DB 모듈 없음 또는 connectDB 없음 - 계속 진행");
+      console.log("DB CONNECTED");
     }
 
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log("🚀 SERVER START:", PORT);
+    server.listen(PORT, () => {
+      console.log("🚀 SERVER START", PORT);
     });
-  } catch (err) {
-    console.error("서버 실행 실패:", err);
-    process.exit(1);
+  } catch (e) {
+    console.error(e);
   }
 }
 
-bootstrap();
+start();
