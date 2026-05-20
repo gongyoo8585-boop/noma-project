@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>마사지 플랫폼</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      background: #f5f6f8;
+      color: #222;
+    }
+
+    header {
+      background: #111;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 {
+      font-size: 20px;
+    }
+
+    header nav a {
+      color: #fff;
+      margin-left: 16px;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 0 16px;
+    }
+
+    .search-box {
+      background: #fff;
+      padding: 16px;
+      border-radius: 10px;
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .search-box input,
+    .search-box select {
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      flex: 1;
+    }
+
+    .search-box button {
+      padding: 10px 20px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .section {
+      margin-bottom: 30px;
+    }
+
+    .section h2 {
+      margin-bottom: 12px;
+      font-size: 18px;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+
+    .card h3 {
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+
+    .card p {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 6px;
+    }
+
+    .card button {
+      margin-top: 8px;
+      padding: 8px;
+      width: 100%;
+      border: none;
+      background: #111;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 12px;
+      color: #888;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>마사지 플랫폼</h1>
+    <nav>
+      <a href="#">홈</a>
+      <a href="#">예약</a>
+      <a href="#">마이페이지</a>
+      <a href="#">관리자</a>
+    </nav>
+  </header>
+
+  <div class="container">
+
+    <!-- 검색 -->
+    <div class="search-box">
+      <input type="text" id="keyword" placeholder="지역 / 매장 검색"/>
+      <select id="region">
+        <option value="">전체 지역</option>
+        <option value="seoul">서울</option>
+        <option value="busan">부산</option>
+      </select>
+      <button onclick="search()">검색</button>
+    </div>
+
+    <!-- 추천 -->
+    <div class="section">
+      <h2>🔥 추천 매장</h2>
+      <div class="card-grid" id="recommended"></div>
+    </div>
+
+    <!-- 인기 -->
+    <div class="section">
+      <h2>⭐ 인기 매장</h2>
+      <div class="card-grid" id="popular"></div>
+    </div>
+
+    <!-- 전체 -->
+    <div class="section">
+      <h2>📍 전체 매장</h2>
+      <div class="card-grid" id="shops"></div>
+    </div>
+
+  </div>
+
+  <footer>
+    © 2026 Massage Platform
+  </footer>
+
+  <script>
+    const API = "/api/public";
+
+    async function fetchData(url) {
+      try {
+        const res = await fetch(url);
+        return await res.json();
+      } catch (e) {
+        console.error(e);
+        return { ok: false };
+      }
+    }
+
+    function renderList(el, list = []) {
+      el.innerHTML = "";
+
+      list.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "card";
+
+        div.innerHTML = `
+          <h3>${item.name || "매장명 없음"}</h3>
+          <p>지역: ${item.region || "-"}</p>
+          <p>평점: ${item.rating || 0}</p>
+          <button onclick="reserve('${item._id}')">예약하기</button>
+        `;
+
+        el.appendChild(div);
+      });
+    }
+
+    async function loadHome() {
+      const rec = await fetchData(API + "/shops/recommended");
+      const pop = await fetchData(API + "/shops/popular");
+      const all = await fetchData(API + "/shops");
+
+      renderList(document.getElementById("recommended"), rec.data || rec);
+      renderList(document.getElementById("popular"), pop.data || pop);
+      renderList(document.getElementById("shops"), all.data || all);
+    }
+
+    async function search() {
+      const keyword = document.getElementById("keyword").value;
+      const region = document.getElementById("region").value;
+
+      const res = await fetchData(
+        API + "/search?keyword=" + encodeURIComponent(keyword) + "&region=" + region
+      );
+
+      renderList(document.getElementById("shops"), res.data || []);
+    }
+
+    function reserve(id) {
+      alert("예약 페이지로 이동: " + id);
+      // 실제 연결 시:
+      // location.href = "/reservation.html?id=" + id;
+    }
+
+    loadHome();
+  </script>
+
+</body>
+</html>

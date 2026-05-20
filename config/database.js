@@ -13,6 +13,14 @@ const mongoose = require("mongoose");
 const ENV = require("./env");
 
 /* =====================================================
+🔥 MONGOOSE BUFFER TIMEOUT FIX
+===================================================== */
+mongoose.set("bufferCommands", false);
+
+/* 🔥 최소 수정 추가 */
+mongoose.set("strictQuery", false);
+
+/* =====================================================
 🔥 GLOBAL STATE
 ===================================================== */
 const DB_STATE = {
@@ -30,14 +38,30 @@ const DB_STATE = {
 /* =====================================================
 🔥 CONFIG
 ===================================================== */
-const MONGO_URI = String(ENV.MONGO_URI || "").trim();
+function getMongoUri() {
+  return String(
+    ENV.MONGO_URI ||
+      process.env.MONGO_URI ||
+      process.env.MONGO_URI_DEV ||
+      process.env.DATABASE_URL ||
+      process.env.MONGO_URL ||
+      ""
+  ).trim();
+}
 
 const OPTIONS = {
   maxPoolSize: 10,
-  minPoolSize: 2,
-  serverSelectionTimeoutMS: 5000,
+  minPoolSize: 1,
+  serverSelectionTimeoutMS: 10000,
   socketTimeoutMS: 45000,
-  family: 4
+  connectTimeoutMS: 10000,
+  family: 4,
+  autoIndex: true,
+  bufferCommands: false,
+  dbName:
+    ENV.DB_NAME ||
+    process.env.DB_NAME ||
+    "mazzang"
 };
 
 const READY_STATE = {
@@ -76,11 +100,19 @@ function validateMongoUri(uri) {
   }
 
   if (!/^mongodb(\+srv)?:\/\//.test(uri)) {
-    throw new Error("MONGO_URI 형식이 올바르지 않습니다. mongodb:// 또는 mongodb+srv:// 로 시작해야 합니다.");
+    throw new Error(
+      "MONGO_URI 형식이 올바르지 않습니다. mongodb:// 또는 mongodb+srv:// 로 시작해야 합니다."
+    );
   }
 
-  if (uri.includes("<USER>") || uri.includes("<PASSWORD>") || uri.includes("<db_password>")) {
-    throw new Error("MONGO_URI에 placeholder가 남아 있습니다. 실제 계정 정보로 바꿔야 합니다.");
+  if (
+    uri.includes("<USER>") ||
+    uri.includes("<PASSWORD>") ||
+    uri.includes("<db_password>")
+  ) {
+    throw new Error(
+      "MONGO_URI에 placeholder가 남아 있습니다. 실제 계정 정보로 바꿔야 합니다."
+    );
   }
 
   return true;
@@ -89,6 +121,27 @@ function validateMongoUri(uri) {
 function syncStateFromMongoose() {
   DB_STATE.connected = isActuallyConnected();
   DB_STATE.connecting = isActuallyConnecting();
+}
+
+/* 🔥 최소 추가 */
+async function waitForConnection(timeout = 15000) {
+  const started = Date.now();
+
+  while (Date.now() - started < timeout) {
+    syncStateFromMongoose();
+
+    if (DB_STATE.connected || isActuallyConnected()) {
+      return true;
+    }
+
+    if (!DB_STATE.connecting && !isActuallyConnecting()) {
+      await connectDB();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  return false;
 }
 
 /* =====================================================
@@ -107,13 +160,22 @@ function scheduleRetry() {
   if (isActuallyConnected() || isActuallyConnecting() || DB_STATE.connecting) return;
 
   const delay = Math.min(10000, Math.max(1000, DB_STATE.retryCount * 1000));
+
   DB_STATE.lastRetryAt = now();
 
   console.warn(`🔄 DB RETRY IN ${delay}ms`);
 
   DB_STATE.retryTimer = setTimeout(async () => {
     DB_STATE.retryTimer = null;
-    await connectDB();
+
+    try {
+      await connectDB();
+    } catch (e) {
+      console.error(
+        "❌ RETRY CONNECT ERROR:",
+        e.message
+      );
+    }
   }, delay);
 }
 
@@ -122,29 +184,40 @@ function scheduleRetry() {
 ===================================================== */
 async function connectDB() {
   try {
-    const uri = sanitizeMongoUri(MONGO_URI);
+    const uri = sanitizeMongoUri(getMongoUri());
+
     validateMongoUri(uri);
 
     syncStateFromMongoose();
 
     if (DB_STATE.shuttingDown) {
-      return;
+      return mongoose.connection;
     }
 
     if (DB_STATE.connected || isActuallyConnected()) {
       DB_STATE.connected = true;
       DB_STATE.connecting = false;
-      return;
+
+      return mongoose.connection;
     }
 
     if (DB_STATE.connecting || isActuallyConnecting()) {
-      return;
+      return mongoose.connection;
     }
 
     DB_STATE.connecting = true;
+
     clearRetryTimer();
 
+    console.log(
+      "🟡 Mongo URI Loaded:",
+      uri.includes("mongodb+srv") ? "mongodb+srv" : uri
+    );
+
     await mongoose.connect(uri, OPTIONS);
+
+    /* 🔥 최소 추가 */
+    await mongoose.connection.asPromise();
 
     DB_STATE.connected = true;
     DB_STATE.connecting = false;
@@ -153,6 +226,9 @@ async function connectDB() {
     DB_STATE.lastErrorMessage = "";
 
     console.log("🔥 MongoDB CONNECTED");
+
+    return mongoose.connection;
+
   } catch (err) {
     DB_STATE.errors++;
     DB_STATE.connected = false;
@@ -163,6 +239,8 @@ async function connectDB() {
     console.error("❌ DB CONNECTION FAILED:", DB_STATE.lastErrorMessage);
 
     scheduleRetry();
+
+    return null;
   }
 }
 
@@ -174,7 +252,9 @@ mongoose.connection.on("connected", () => {
   DB_STATE.connecting = false;
   DB_STATE.lastConnectedAt = now();
   DB_STATE.retryCount = 0;
+
   clearRetryTimer();
+
   console.log("🟢 DB EVENT: connected");
 });
 
@@ -183,12 +263,14 @@ mongoose.connection.on("error", (err) => {
   DB_STATE.connected = false;
   DB_STATE.connecting = false;
   DB_STATE.lastErrorMessage = err?.message || "UNKNOWN DB ERROR";
+
   console.error("🔴 DB ERROR:", DB_STATE.lastErrorMessage);
 });
 
 mongoose.connection.on("disconnected", () => {
   DB_STATE.connected = false;
   DB_STATE.connecting = false;
+
   console.warn("🟡 DB DISCONNECTED");
 
   if (!DB_STATE.shuttingDown) {
@@ -201,7 +283,9 @@ mongoose.connection.on("reconnected", () => {
   DB_STATE.connecting = false;
   DB_STATE.lastConnectedAt = now();
   DB_STATE.retryCount = 0;
+
   clearRetryTimer();
+
   console.log("🔵 DB RECONNECTED");
 });
 
@@ -227,11 +311,40 @@ function getDBHealth() {
 }
 
 /* =====================================================
+🔥 COMPAT EXPORTS
+===================================================== */
+function isDBConnected() {
+  return isActuallyConnected();
+}
+
+function getDBStatus() {
+  return READY_STATE[getReadyState()] || "unknown";
+}
+
+function getDBUptime() {
+  return DB_STATE.lastConnectedAt ? now() - DB_STATE.lastConnectedAt : 0;
+}
+
+/* 🔥 최소 추가 */
+async function ensureDBConnection() {
+  syncStateFromMongoose();
+
+  if (DB_STATE.connected || isActuallyConnected()) {
+    return true;
+  }
+
+  await connectDB();
+
+  return waitForConnection();
+}
+
+/* =====================================================
 🔥 GRACEFUL SHUTDOWN
 ===================================================== */
 async function closeDB() {
   try {
     DB_STATE.shuttingDown = true;
+
     clearRetryTimer();
 
     if (getReadyState() === 0) {
@@ -240,10 +353,12 @@ async function closeDB() {
     }
 
     await mongoose.connection.close(false);
+
     DB_STATE.connected = false;
     DB_STATE.connecting = false;
 
     console.log("🛑 DB CONNECTION CLOSED");
+
   } catch (e) {
     console.error("DB CLOSE ERROR:", e.message);
   }
@@ -280,7 +395,11 @@ if (!global.__DB_MONITOR__) {
 module.exports = {
   connectDB,
   closeDB,
-  getDBHealth
+  getDBHealth,
+  isDBConnected,
+  getDBStatus,
+  getDBUptime,
+  ensureDBConnection
 };
 
 console.log("🔥 DATABASE CONFIG READY");

@@ -1,0 +1,63 @@
+[2026-01-01T00:00:00.000Z] INFO ACCESS {"method":"GET","url":"/","status":200,"ip":"127.0.0.1","ua":"init"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL ACCESS DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 BASIC ACCESS LOG
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO ACCESS {"method":"GET","url":"/api/health","status":200,"duration":15,"ip":"127.0.0.1"}
+[2026-01-01T10:00:01.000Z] INFO ACCESS {"method":"POST","url":"/api/user/login","status":200,"duration":120,"ip":"127.0.0.1"}
+[2026-01-01T10:00:02.000Z] INFO ACCESS {"method":"GET","url":"/api/user/me","status":200,"duration":45,"ip":"127.0.0.1"}
+
+# =====================================================
+# 🔥 ERROR ACCESS
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] WARN ACCESS {"method":"GET","url":"/api/unknown","status":404,"ip":"127.0.0.1"}
+[2026-01-01T10:01:10.000Z] ERROR ACCESS {"method":"POST","url":"/api/payment","status":500,"ip":"127.0.0.1"}
+
+# =====================================================
+# 🔥 AUTH ACCESS
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] INFO ACCESS {"method":"POST","url":"/api/user/login","status":200,"userId":"u_001","ip":"127.0.0.1"}
+[2026-01-01T10:02:10.000Z] WARN ACCESS {"method":"POST","url":"/api/user/login","status":401,"ip":"127.0.0.1"}
+
+# =====================================================
+# 🔥 ADMIN ACCESS
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] INFO ACCESS {"method":"GET","url":"/api/admin/users","status":200,"adminId":"admin_01"}
+[2026-01-01T10:03:10.000Z] WARN ACCESS {"method":"POST","url":"/api/admin/block","status":403,"ip":"127.0.0.1"}
+
+# =====================================================
+# 🔥 WEBSOCKET ACCESS
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] INFO ACCESS {"type":"WS_CONNECT","path":"/ws/user","ip":"127.0.0.1"}
+[2026-01-01T10:04:10.000Z] INFO ACCESS {"type":"WS_DISCONNECT","userId":"u_001"}
+
+# =====================================================
+# 🔥 PERFORMANCE
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] WARN ACCESS {"method":"GET","url":"/api/reservation","duration":1200,"status":200}
+[2026-01-01T10:05:10.000Z] WARN ACCESS {"method":"POST","url":"/api/payment","duration":2000,"status":200}
+
+# =====================================================
+# 🔥 RATE LIMIT
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] WARN ACCESS {"ip":"127.0.0.1","reason":"RATE_LIMIT","count":301}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO ACCESS {"method":"GET","url":"/"}\n`;
+# fs.appendFileSync("logs/access.log", log);
+# =====================================================

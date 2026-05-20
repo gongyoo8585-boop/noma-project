@@ -1,0 +1,771 @@
+/* =========================================================
+   NORA GLOBAL THEME
+   /client/src/styles/theme.css
+========================================================= */
+
+/* =========================================================
+   ROOT
+========================================================= */
+
+:root {
+  --background-primary: #000000;
+  --background-secondary: #050505;
+  --background-tertiary: #0a0a0a;
+
+  --surface-primary: rgba(12, 12, 12, 0.96);
+  --surface-secondary: rgba(18, 18, 18, 0.96);
+  --surface-glass: rgba(0, 0, 0, 0.78);
+
+  --text-primary: #ffffff;
+  --text-secondary: #d9d9d9;
+  --text-muted: #8b8b8b;
+
+  --gold-white: #fff8d6;
+  --gold-light: #f8e7a3;
+  --gold-main: #f3d36b;
+  --gold-deep: #d4af37;
+  --gold-dark: #b8860b;
+  --gold-bronze: #8c6a08;
+
+  --neon-pink: #ff006f;
+  --neon-pink-light: #ff4fa3;
+  --neon-pink-dark: #c4003a;
+
+  --danger-main: #ff2d55;
+  --danger-dark: #c4003a;
+
+  --success-main: #22c55e;
+
+  --border-gold: rgba(243, 211, 107, 0.92);
+  --border-gold-soft: rgba(243, 211, 107, 0.42);
+  --border-pink: rgba(255, 0, 111, 0.9);
+
+  --shadow-gold:
+    0 0 8px rgba(243, 211, 107, 0.75),
+    0 0 22px rgba(212, 175, 55, 0.42);
+
+  --shadow-gold-heavy:
+    0 0 12px rgba(255, 248, 214, 0.45),
+    0 0 26px rgba(243, 211, 107, 0.85),
+    0 0 52px rgba(212, 175, 55, 0.42);
+
+  --shadow-pink:
+    0 0 8px rgba(255, 0, 111, 0.68),
+    0 0 22px rgba(255, 0, 111, 0.34);
+
+  --shadow-pink-heavy:
+    0 0 12px rgba(255, 79, 163, 0.72),
+    0 0 28px rgba(255, 0, 111, 0.82),
+    0 0 58px rgba(255, 0, 111, 0.42);
+
+  --glow-card:
+    0 0 0 1px rgba(243, 211, 107, 0.08),
+    0 0 14px rgba(243, 211, 107, 0.22),
+    0 12px 34px rgba(0, 0, 0, 0.82);
+
+  --glow-card-hover:
+    0 0 0 1px rgba(255, 248, 214, 0.16),
+    0 0 20px rgba(243, 211, 107, 0.46),
+    0 0 36px rgba(255, 0, 111, 0.18),
+    0 16px 42px rgba(0, 0, 0, 0.88);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+
+  --transition-fast: 0.18s ease;
+  --transition-normal: 0.25s ease;
+}
+
+/* =========================================================
+   RESET
+========================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+
+  background:
+    radial-gradient(
+      circle at top,
+      rgba(243, 211, 107, 0.08) 0%,
+      transparent 28%
+    ),
+    linear-gradient(
+      180deg,
+      #060606 0%,
+      #020202 50%,
+      #000000 100%
+    );
+
+  color: #ffffff;
+
+  font-family:
+    "Pretendard",
+    "Noto Sans KR",
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+
+  overflow: hidden;
+}
+
+/* =========================================================
+   BODY
+========================================================= */
+
+body {
+  position: relative;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* =========================================================
+   TYPOGRAPHY
+========================================================= */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+label,
+small,
+strong,
+a,
+button,
+input,
+textarea,
+select {
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =========================================================
+   APP BACKGROUND
+========================================================= */
+
+.theme-background {
+  position: relative;
+
+  background:
+    radial-gradient(
+      circle at top,
+      rgba(243, 211, 107, 0.08) 0%,
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at right,
+      rgba(184, 134, 11, 0.08) 0%,
+      transparent 24%
+    ),
+    linear-gradient(
+      180deg,
+      #050505 0%,
+      #020202 50%,
+      #000000 100%
+    );
+}
+
+/* =========================================================
+   GOLD TEXT
+========================================================= */
+
+.theme-gold-text {
+  background:
+    linear-gradient(
+      135deg,
+      #fff8d6 0%,
+      #f8e7a3 12%,
+      #f3d36b 30%,
+      #d4af37 54%,
+      #b8860b 74%,
+      #fff8d6 100%
+    );
+
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  text-shadow:
+    0 0 3px rgba(255, 248, 214, 0.92),
+    0 0 10px rgba(243, 211, 107, 0.85),
+    0 0 24px rgba(212, 175, 55, 0.62);
+}
+
+.theme-pink-text {
+  color: var(--neon-pink);
+  text-shadow:
+    0 0 6px rgba(255, 0, 111, 0.88),
+    0 0 18px rgba(255, 0, 111, 0.55);
+}
+
+.theme-white-neon-text {
+  color: #ffffff;
+  text-shadow:
+    0 0 4px rgba(255, 255, 255, 0.72),
+    0 0 14px rgba(255, 0, 111, 0.62),
+    0 0 28px rgba(255, 0, 111, 0.36);
+}
+
+/* =========================================================
+   GOLD BORDER
+========================================================= */
+
+.theme-gold-border {
+  position: relative;
+
+  border: 1px solid rgba(243, 211, 107, 0.94);
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.72),
+    0 0 22px rgba(212, 175, 55, 0.34),
+    inset 0 0 10px rgba(255, 248, 214, 0.04);
+}
+
+.theme-gold-border::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  border: 1px solid rgba(255, 248, 214, 0.14);
+
+  pointer-events: none;
+}
+
+.theme-neon-border {
+  border: 1px solid rgba(255, 0, 111, 0.88);
+  box-shadow:
+    0 0 8px rgba(255, 0, 111, 0.68),
+    0 0 22px rgba(255, 0, 111, 0.32);
+}
+
+/* =========================================================
+   GOLD PANEL
+========================================================= */
+
+.theme-gold-panel {
+  position: relative;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(24, 18, 5, 0.96) 0%,
+      rgba(10, 8, 2, 0.98) 52%,
+      rgba(0, 0, 0, 1) 100%
+    );
+
+  border: 1px solid rgba(243, 211, 107, 0.94);
+
+  box-shadow:
+    0 0 10px rgba(243, 211, 107, 0.74),
+    0 0 24px rgba(212, 175, 55, 0.36),
+    inset 0 0 12px rgba(255, 248, 214, 0.05);
+
+  overflow: hidden;
+}
+
+.theme-gold-panel::after {
+  content: "";
+
+  position: absolute;
+
+  top: -80%;
+  left: -40%;
+
+  width: 180%;
+  height: 180%;
+
+  background:
+    linear-gradient(
+      120deg,
+      transparent 22%,
+      rgba(255, 248, 214, 0.03) 32%,
+      rgba(243, 211, 107, 0.1) 38%,
+      rgba(255, 248, 214, 0.03) 44%,
+      transparent 60%
+    );
+
+  transform: rotate(12deg);
+
+  animation: themeGoldFlow 7s linear infinite;
+
+  pointer-events: none;
+}
+
+/* =========================================================
+   BUTTON
+========================================================= */
+
+.theme-gold-button {
+  position: relative;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid rgba(243, 211, 107, 0.96);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(34, 26, 7, 0.98) 0%,
+      rgba(16, 12, 4, 1) 100%
+    );
+
+  color: var(--gold-main);
+
+  font-weight: 700;
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.75),
+    inset 0 0 10px rgba(255, 248, 214, 0.05);
+
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    filter var(--transition-fast);
+}
+
+.theme-gold-button:hover {
+  border-color: rgba(255, 248, 214, 0.96);
+
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 0 10px rgba(255, 248, 214, 0.52),
+    0 0 24px rgba(243, 211, 107, 0.92),
+    0 0 42px rgba(212, 175, 55, 0.42);
+}
+
+.theme-gold-button:active {
+  transform: scale(0.98);
+}
+
+.theme-pink-button {
+  position: relative;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid rgba(255, 0, 111, 0.9);
+
+  background:
+    linear-gradient(
+      180deg,
+      #ff006f 0%,
+      #d60052 100%
+    );
+
+  color: #ffffff;
+  font-weight: 900;
+
+  box-shadow:
+    0 0 10px rgba(255, 0, 111, 0.5),
+    0 0 24px rgba(255, 0, 111, 0.22);
+
+  transition:
+    transform var(--transition-fast),
+    filter var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.theme-pink-button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+
+  box-shadow:
+    0 0 14px rgba(255, 79, 163, 0.72),
+    0 0 34px rgba(255, 0, 111, 0.44);
+}
+
+.theme-pink-button:active {
+  transform: scale(0.98);
+}
+
+/* =========================================================
+   INPUT
+========================================================= */
+
+.theme-input {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(14, 12, 4, 0.98) 0%,
+      rgba(5, 5, 5, 1) 100%
+    );
+
+  border: 1px solid rgba(243, 211, 107, 0.9);
+
+  color: #ffffff;
+
+  box-shadow:
+    inset 0 0 8px rgba(255, 248, 214, 0.04),
+    0 0 8px rgba(243, 211, 107, 0.3);
+
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.theme-input::placeholder {
+  color: rgba(248, 231, 163, 0.58);
+}
+
+.theme-input:focus {
+  outline: none;
+
+  border-color: rgba(255, 248, 214, 0.96);
+
+  box-shadow:
+    0 0 10px rgba(255, 248, 214, 0.45),
+    0 0 24px rgba(243, 211, 107, 0.75),
+    inset 0 0 10px rgba(255, 248, 214, 0.05);
+}
+
+/* =========================================================
+   CARD
+========================================================= */
+
+.theme-card {
+  position: relative;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(18, 14, 4, 0.98) 0%,
+      rgba(6, 6, 6, 1) 100%
+    );
+
+  border: 1px solid rgba(243, 211, 107, 0.92);
+
+  overflow: hidden;
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.72),
+    0 0 22px rgba(212, 175, 55, 0.34),
+    inset 0 0 10px rgba(255, 248, 214, 0.04);
+
+  transition:
+    transform var(--transition-normal),
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal),
+    filter var(--transition-normal);
+}
+
+.theme-card:hover {
+  transform: translateY(-3px);
+
+  border-color: rgba(255, 248, 214, 0.98);
+
+  box-shadow:
+    0 0 10px rgba(255, 248, 214, 0.48),
+    0 0 24px rgba(243, 211, 107, 0.95),
+    0 0 48px rgba(212, 175, 55, 0.42);
+}
+
+.theme-black-card {
+  position: relative;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(10, 10, 10, 0.98) 0%,
+      rgba(0, 0, 0, 1) 100%
+    );
+
+  border: 1px solid var(--border-gold-soft);
+  box-shadow: var(--glow-card);
+
+  overflow: hidden;
+}
+
+.theme-black-card:hover {
+  border-color: var(--border-gold);
+  box-shadow: var(--glow-card-hover);
+}
+
+/* =========================================================
+   GOLD IMAGE
+========================================================= */
+
+.theme-gold-image {
+  position: relative;
+
+  border: 1px solid rgba(243, 211, 107, 0.96);
+
+  overflow: hidden;
+
+  box-shadow:
+    0 0 10px rgba(243, 211, 107, 0.72),
+    0 0 24px rgba(212, 175, 55, 0.36);
+}
+
+.theme-gold-image::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  border: 1px solid rgba(255, 248, 214, 0.2);
+
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* =========================================================
+   DIVIDER
+========================================================= */
+
+.theme-divider {
+  width: 100%;
+  height: 1px;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 248, 214, 0.95),
+      rgba(243, 211, 107, 1),
+      rgba(184, 134, 11, 0.95),
+      transparent
+    );
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.72),
+    0 0 18px rgba(212, 175, 55, 0.38);
+}
+
+/* =========================================================
+   SCROLLBAR
+========================================================= */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-main) rgba(0, 0, 0, 0.88);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.88);
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+
+  background:
+    linear-gradient(
+      180deg,
+      #fff8d6 0%,
+      #f3d36b 24%,
+      #d4af37 52%,
+      #b8860b 76%,
+      #fff8d6 100%
+    );
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.72),
+    0 0 18px rgba(212, 175, 55, 0.42);
+}
+
+*::-webkit-scrollbar-corner {
+  background: #000000;
+}
+
+.theme-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.theme-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.theme-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+
+  background:
+    linear-gradient(
+      180deg,
+      #fff8d6 0%,
+      #f3d36b 24%,
+      #d4af37 52%,
+      #b8860b 76%,
+      #fff8d6 100%
+    );
+
+  box-shadow:
+    0 0 8px rgba(243, 211, 107, 0.72),
+    0 0 18px rgba(212, 175, 55, 0.42);
+}
+
+/* =========================================================
+   LOADING
+========================================================= */
+
+.theme-loading {
+  width: 48px;
+  height: 48px;
+
+  border-radius: 999px;
+
+  border:
+    2px solid rgba(243, 211, 107, 0.18);
+
+  border-top-color: rgba(243, 211, 107, 1);
+
+  box-shadow:
+    0 0 12px rgba(243, 211, 107, 0.72);
+
+  animation: themeSpin 0.9s linear infinite;
+}
+
+/* =========================================================
+   COMMON GLOW
+========================================================= */
+
+.theme-glow-gold {
+  box-shadow: var(--shadow-gold);
+}
+
+.theme-glow-gold-heavy {
+  box-shadow: var(--shadow-gold-heavy);
+}
+
+.theme-glow-pink {
+  box-shadow: var(--shadow-pink);
+}
+
+.theme-glow-pink-heavy {
+  box-shadow: var(--shadow-pink-heavy);
+}
+
+.theme-neon-logo {
+  color: #ffffff;
+  text-shadow:
+    0 0 4px #ffffff,
+    0 0 10px rgba(255, 0, 111, 0.95),
+    0 0 22px rgba(255, 0, 111, 0.78),
+    0 0 42px rgba(255, 0, 111, 0.48);
+}
+
+.theme-map-dark-filter {
+  filter:
+    brightness(0.72)
+    contrast(1.08)
+    saturate(0.9);
+}
+
+/* =========================================================
+   ANIMATION
+========================================================= */
+
+@keyframes themeGoldFlow {
+  0% {
+    transform:
+      translateX(-120%)
+      rotate(12deg);
+  }
+
+  100% {
+    transform:
+      translateX(120%)
+      rotate(12deg);
+  }
+}
+
+@keyframes themeSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes themePulseGold {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(243, 211, 107, 0.58),
+      0 0 20px rgba(212, 175, 55, 0.28);
+  }
+
+  50% {
+    box-shadow:
+      0 0 14px rgba(255, 248, 214, 0.72),
+      0 0 34px rgba(243, 211, 107, 0.62),
+      0 0 58px rgba(212, 175, 55, 0.34);
+  }
+}
+
+@keyframes themePulsePink {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(255, 0, 111, 0.58),
+      0 0 22px rgba(255, 0, 111, 0.30);
+  }
+
+  50% {
+    box-shadow:
+      0 0 14px rgba(255, 79, 163, 0.76),
+      0 0 36px rgba(255, 0, 111, 0.62),
+      0 0 64px rgba(255, 0, 111, 0.34);
+  }
+}
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 1200px) {
+  html,
+  body,
+  #root {
+    min-width: 1400px;
+  }
+}

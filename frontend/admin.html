@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>관리자 대시보드</title>
+
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; font-family:sans-serif; }
+
+    body {
+      background:#f4f6f8;
+      color:#222;
+    }
+
+    header {
+      background:#111;
+      color:#fff;
+      padding:16px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }
+
+    header h1 { font-size:18px; }
+
+    .container {
+      max-width:1200px;
+      margin:20px auto;
+      padding:0 16px;
+    }
+
+    .grid {
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(200px,1fr));
+      gap:16px;
+      margin-bottom:20px;
+    }
+
+    .card {
+      background:#fff;
+      padding:16px;
+      border-radius:10px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.05);
+    }
+
+    .card h2 {
+      font-size:14px;
+      color:#666;
+      margin-bottom:8px;
+    }
+
+    .card p {
+      font-size:20px;
+      font-weight:bold;
+    }
+
+    .section {
+      background:#fff;
+      padding:16px;
+      border-radius:10px;
+      margin-bottom:20px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.05);
+    }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+
+    th, td {
+      padding:10px;
+      border-bottom:1px solid #eee;
+      text-align:left;
+    }
+
+    th { background:#fafafa; }
+
+    button {
+      padding:6px 10px;
+      border:none;
+      border-radius:6px;
+      cursor:pointer;
+    }
+
+    .btn-danger { background:#ff3b30; color:#fff; }
+    .btn-primary { background:#007aff; color:#fff; }
+
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>관리자 대시보드</h1>
+  <button onclick="logout()">로그아웃</button>
+</header>
+
+<div class="container">
+
+  <!-- 통계 -->
+  <div class="grid">
+    <div class="card">
+      <h2>유저</h2>
+      <p id="users">0</p>
+    </div>
+    <div class="card">
+      <h2>예약</h2>
+      <p id="reservations">0</p>
+    </div>
+    <div class="card">
+      <h2>결제</h2>
+      <p id="payments">0</p>
+    </div>
+  </div>
+
+  <!-- 유저 -->
+  <div class="section">
+    <h2>유저 목록</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Email</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="userTable"></tbody>
+    </table>
+  </div>
+
+  <!-- 예약 -->
+  <div class="section">
+    <h2>예약 목록</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Shop</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="reservationTable"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+const API = "/api/admin";
+
+/* =========================
+🔥 공통 API
+========================= */
+async function fetchAPI(url, options = {}) {
+  try {
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...options
+    });
+    return await res.json();
+  } catch (e) {
+    console.error(e);
+    return { ok:false };
+  }
+}
+
+/* =========================
+🔥 통계
+========================= */
+async function loadStats() {
+  const res = await fetchAPI(API + "/dashboard");
+
+  if (!res.ok) return;
+
+  const s = res.stats || {};
+
+  document.getElementById("users").innerText = s.users || 0;
+  document.getElementById("reservations").innerText = s.reservations || 0;
+  document.getElementById("payments").innerText = s.payments || 0;
+}
+
+/* =========================
+🔥 유저 리스트
+========================= */
+async function loadUsers() {
+  const res = await fetchAPI(API + "/users");
+
+  if (!res.ok) return;
+
+  const el = document.getElementById("userTable");
+  el.innerHTML = "";
+
+  (res.list || []).forEach(u => {
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${u._id}</td>
+      <td>${u.email || ""}</td>
+      <td>
+        <button class="btn-danger" onclick="deleteUser('${u._id}')">삭제</button>
+      </td>
+    `;
+
+    el.appendChild(tr);
+  });
+}
+
+/* =========================
+🔥 예약 리스트
+========================= */
+async function loadReservations() {
+  const res = await fetchAPI(API + "/reservations");
+
+  if (!res.ok) return;
+
+  const el = document.getElementById("reservationTable");
+  el.innerHTML = "";
+
+  (res.list || []).forEach(r => {
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${r._id}</td>
+      <td>${r.shopId}</td>
+      <td>${r.status}</td>
+      <td>
+        <button class="btn-danger" onclick="cancelReservation('${r._id}')">취소</button>
+      </td>
+    `;
+
+    el.appendChild(tr);
+  });
+}
+
+/* =========================
+🔥 유저 삭제
+========================= */
+async function deleteUser(id) {
+  if (!confirm("삭제하시겠습니까?")) return;
+
+  const res = await fetchAPI(API + "/user/" + id, {
+    method:"DELETE"
+  });
+
+  if (res.ok) {
+    alert("삭제 완료");
+    loadUsers();
+  } else {
+    alert("실패");
+  }
+}
+
+/* =========================
+🔥 예약 취소
+========================= */
+async function cancelReservation(id) {
+  const res = await fetchAPI("/api/reservation/" + id + "/cancel", {
+    method:"POST"
+  });
+
+  if (res.ok) {
+    alert("취소 완료");
+    loadReservations();
+  } else {
+    alert("실패");
+  }
+}
+
+/* =========================
+🔥 로그아웃
+========================= */
+async function logout() {
+  await fetchAPI("/api/user/logout", { method:"POST" });
+  location.href = "/";
+}
+
+/* =========================
+🔥 INIT
+========================= */
+loadStats();
+loadUsers();
+loadReservations();
+</script>
+
+</body>
+</html>

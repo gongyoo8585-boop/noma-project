@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>NOMA 플랫폼</title>
+  <title>NOMA (DEV UI)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <style>
@@ -22,6 +22,7 @@
 
     h1 {
       margin-bottom: 20px;
+      color: #38bdf8;
     }
 
     button {
@@ -54,47 +55,50 @@
       text-align: left;
       overflow-x: auto;
       min-height: 150px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status {
+      margin-top: 10px;
+      color: #38bdf8;
     }
 
     .token {
       margin-top: 10px;
       font-size: 12px;
-      word-break: break-all;
       color: #94a3b8;
-    }
-
-    .status {
-      margin-top: 10px;
-      font-size: 13px;
-      color: #38bdf8;
+      word-break: break-all;
     }
   </style>
 </head>
 
 <body>
   <div class="container">
-    <h1>🔥 NOMA 플랫폼</h1>
+    <h1>🧪 NOMA DEV UI (src/public)</h1>
 
     <div>
-      <input id="id" placeholder="id" value="test" />
-      <input id="pw" placeholder="pw" value="1234" />
+      <input id="id" value="test" />
+      <input id="pw" value="1234" />
     </div>
 
     <div>
       <button class="login" onclick="login()">로그인</button>
-      <button class="kakao" onclick="kakao()">카카오 로그인</button>
+      <button class="kakao" onclick="kakao()">카카오</button>
       <button class="danger" onclick="logout()">로그아웃</button>
     </div>
 
     <div>
-      <button class="api" onclick="health()">서버 상태</button>
-      <button class="api" onclick="stats()">관리자 통계</button>
+      <button class="api" onclick="health()">헬스</button>
+      <button class="api" onclick="shops()">매장</button>
+      <button class="api" onclick="stats()">통계</button>
+      <button class="api" onclick="system()">시스템</button>
     </div>
 
     <div class="status" id="status">READY</div>
-    <div class="token" id="tokenBox"></div>
+    <div class="token" id="token"></div>
 
-    <pre id="output">READY</pre>
+    <pre id="out">READY</pre>
   </div>
 
   <script>
@@ -104,33 +108,37 @@
     updateToken();
 
     function updateToken() {
-      document.getElementById("tokenBox").innerText =
+      document.getElementById("token").innerText =
         TOKEN ? "TOKEN: " + TOKEN : "로그인 안됨";
     }
 
-    function setStatus(msg) {
-      document.getElementById("status").innerText = msg;
+    function show(d) {
+      document.getElementById("out").innerText =
+        JSON.stringify(d, null, 2);
     }
 
-    async function request(url, options = {}) {
+    function setStatus(t) {
+      document.getElementById("status").innerText = t;
+    }
+
+    async function request(url, opt = {}) {
       const start = Date.now();
 
-      if (!options.headers) options.headers = {};
+      if (!opt.headers) opt.headers = {};
       if (TOKEN) {
-        options.headers.Authorization = "Bearer " + TOKEN;
+        opt.headers.Authorization = "Bearer " + TOKEN;
       }
 
       try {
-        const res = await fetch(API + url, options);
+        const res = await fetch(API + url, opt);
         const data = await res.json();
 
-        const time = Date.now() - start;
-        setStatus("응답시간: " + time + "ms");
-
+        setStatus("응답: " + (Date.now() - start) + "ms");
         show(data);
         return data;
+
       } catch (e) {
-        setStatus("에러 발생");
+        setStatus("에러");
         show({ error: e.message });
       }
     }
@@ -139,14 +147,14 @@
       const id = document.getElementById("id").value;
       const pw = document.getElementById("pw").value;
 
-      const data = await request("/api/auth/login", {
+      const d = await request("/api/auth/login", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, password: pw })
       });
 
-      if (data && data.token) {
-        TOKEN = data.token;
+      if (d?.token) {
+        TOKEN = d.token;
         localStorage.setItem("token", TOKEN);
         updateToken();
       }
@@ -160,23 +168,26 @@
       TOKEN = "";
       localStorage.removeItem("token");
       updateToken();
-      show({ msg: "로그아웃 완료" });
+      show({ msg: "로그아웃" });
     }
 
     async function health() {
       await request("/api/health");
     }
 
+    async function shops() {
+      await request("/api/shops");
+    }
+
     async function stats() {
       await request("/api/admin/stats");
     }
 
-    function show(data) {
-      document.getElementById("output").innerText =
-        JSON.stringify(data, null, 2);
+    async function system() {
+      await request("/api/system/status");
     }
 
-    // 카카오 로그인 후 token 처리
+    // 카카오 로그인 후 토큰 처리
     const params = new URLSearchParams(location.search);
     const token = params.get("token");
 
@@ -188,6 +199,16 @@
       history.replaceState({}, "", "/");
     }
 
-    // 자동 서버 체크
-    setInterval(() => {
-      fetch(API + "/api/health")
+    // 자동 헬스 체크
+    setInterval(async () => {
+      try {
+        const r = await fetch(API + "/api/health");
+        if (!r.ok) throw new Error();
+        setStatus("서버 정상");
+      } catch {
+        setStatus("서버 다운");
+      }
+    }, 10000);
+  </script>
+</body>
+</html>

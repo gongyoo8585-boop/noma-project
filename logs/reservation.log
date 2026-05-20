@@ -1,0 +1,84 @@
+[2026-01-01T00:00:00.000Z] INFO RESERVATION_SYSTEM_INIT {"service":"reservation","status":"ready"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL RESERVATION_EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 CREATE
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO RESERVATION_CREATE {"reservationId":"r_001","userId":"u_001","branchId":"b_001","time":"14:00","people":2}
+[2026-01-01T10:00:01.000Z] INFO RESERVATION_PENDING {"reservationId":"r_001","status":"pending"}
+
+# =====================================================
+# 🔥 CONFIRM
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] INFO RESERVATION_CONFIRMED {"reservationId":"r_001","userId":"u_001","status":"confirmed"}
+[2026-01-01T10:01:01.000Z] INFO RESERVATION_ASSIGNED {"reservationId":"r_001","staffId":"s_001"}
+
+# =====================================================
+# 🔥 UPDATE
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] INFO RESERVATION_UPDATE {"reservationId":"r_001","changes":["time","people"]}
+[2026-01-01T10:02:01.000Z] INFO RESERVATION_RESCHEDULE {"reservationId":"r_001","oldTime":"14:00","newTime":"15:00"}
+
+# =====================================================
+# 🔥 CANCEL
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] WARN RESERVATION_CANCEL {"reservationId":"r_002","userId":"u_002","reason":"USER_REQUEST"}
+[2026-01-01T10:03:01.000Z] INFO RESERVATION_CANCELLED {"reservationId":"r_002","status":"cancelled"}
+
+# =====================================================
+# 🔥 NO SHOW
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] WARN RESERVATION_NO_SHOW {"reservationId":"r_003","userId":"u_003"}
+[2026-01-01T10:04:01.000Z] INFO RESERVATION_PENALTY {"reservationId":"r_003","penalty":"applied"}
+
+# =====================================================
+# 🔥 SLOT / CAPACITY
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] INFO SLOT_RESERVED {"slot":"14:00","branchId":"b_001","remaining":2}
+[2026-01-01T10:05:01.000Z] WARN SLOT_FULL {"slot":"15:00","branchId":"b_001"}
+
+# =====================================================
+# 🔥 ERROR
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] ERROR RESERVATION_FAIL {"reservationId":"r_004","reason":"SLOT_FULL"}
+[2026-01-01T10:06:01.000Z] ERROR RESERVATION_NOT_FOUND {"reservationId":"r_999"}
+
+# =====================================================
+# 🔥 BULK / SYNC
+# =====================================================
+
+[2026-01-01T10:07:00.000Z] INFO RESERVATION_BULK_UPDATE {"count":20}
+[2026-01-01T10:07:01.000Z] INFO RESERVATION_SYNC {"status":"completed"}
+
+# =====================================================
+# 🔥 ANALYTICS
+# =====================================================
+
+[2026-01-01T10:08:00.000Z] INFO RESERVATION_METRIC {"dailyCount":120}
+[2026-01-01T10:08:01.000Z] INFO RESERVATION_CONVERSION {"rate":"85%"}
+
+# =====================================================
+# 🔥 ADMIN ACTION
+# =====================================================
+
+[2026-01-01T10:09:00.000Z] WARN ADMIN_FORCE_CANCEL {"adminId":"admin_01","reservationId":"r_005"}
+[2026-01-01T10:09:01.000Z] INFO ADMIN_RESERVATION_EDIT {"adminId":"admin_01","reservationId":"r_006"}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO RESERVATION_EVENT {"reservationId":"r_xxx"}\n`;
+# fs.appendFileSync("logs/reservation.log", log);
+# =====================================================

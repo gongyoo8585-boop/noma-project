@@ -371,7 +371,7 @@
     let last = null;
     for (let i = 0; i <= retry; i++) {
       last = await api(path, options);
-      if (last?.ok) return last;
+      if (last && last.ok !== false) return last;
     }
     return last || { ok: false };
   }
@@ -1203,6 +1203,235 @@
     }
   }
 
+  /* =====================================================
+  🔥 SAFE STABILITY PATCH (KEEP ALL FEATURES)
+  👉 기존 기능 유지 + 오류만 수정
+  ===================================================== */
+  (function () {
+    "use strict";
+
+    if (window.__NOMA_ADMIN_PATCH__) return;
+    window.__NOMA_ADMIN_PATCH__ = true;
+
+    /* =========================
+    1. REQUEST DEDUPE (경로별 중복 방지)
+    ========================= */
+    const API_PENDING = new Map();
+    const ORIGINAL_API = api;
+
+    api = async function (path, opt = {}) {
+      const method = (opt.method || "GET").toUpperCase();
+      const bodyKey = typeof opt.body === "string" ? opt.body : JSON.stringify(opt.body || {});
+      const dedupeKey = `${method}::${path}::${bodyKey}`;
+
+      if (API_PENDING.has(dedupeKey)) {
+        return API_PENDING.get(dedupeKey);
+      }
+
+      const p = ORIGINAL_API(path, opt)
+        .catch((e) => {
+          console.error("PATCH API ERROR:", e);
+          return { ok: false };
+        })
+        .finally(() => {
+          API_PENDING.delete(dedupeKey);
+        });
+
+      API_PENDING.set(dedupeKey, p);
+      return p;
+    };
+
+    /* =========================
+    2. CACHE TTL
+    ========================= */
+    const CACHE_TTL = 1000 * 60 * 3;
+    const CACHE_TIME = {};
+
+    function setCacheSafe(key, data) {
+      state.cache[key] = data;
+      CACHE_TIME[key] = Date.now();
+    }
+
+    function getCacheSafe(key) {
+      const t = CACHE_TIME[key];
+      if (!t) return null;
+      if (Date.now() - t > CACHE_TTL) return null;
+      return state.cache[key];
+    }
+
+    /* =========================
+    3. LOAD WRAP (기존 기능 유지)
+    ========================= */
+    const _loadDashboard = loadDashboard;
+    loadDashboard = async function (force = false) {
+      const cached = getCacheSafe("dashboard");
+      if (cached && !force) {
+        state.stats = cached.stats || {};
+        state.liveStats = cached.liveStats || {};
+        return cached.payload || cached;
+      }
+
+      const res = await _loadDashboard(force);
+      setCacheSafe("dashboard", {
+        stats: state.stats,
+        liveStats: state.liveStats,
+        payload: res
+      });
+      return res;
+    };
+
+    const _loadUsers = loadUsers;
+    loadUsers = async function (force = false) {
+      const cached = getCacheSafe("users");
+      if (cached && !force && !state.searchUser) {
+        state.users = cached;
+        return cached;
+      }
+
+      const res = await _loadUsers(force);
+      setCacheSafe("users", Array.isArray(state.users) ? [...state.users] : []);
+      return res;
+    };
+
+    const _loadShops = loadShops;
+    loadShops = async function (force = false) {
+      const cached = getCacheSafe("shops");
+      if (cached && !force && !state.searchShop) {
+        state.shops = cached;
+        return cached;
+      }
+
+      const res = await _loadShops(force);
+      setCacheSafe("shops", Array.isArray(state.shops) ? [...state.shops] : []);
+      return res;
+    };
+
+    const _loadReservations = loadReservations;
+    loadReservations = async function (force = false) {
+      const cached = getCacheSafe("reservations");
+      if (cached && !force && !state.reservationStatus) {
+        state.reservations = cached;
+        return cached;
+      }
+
+      const res = await _loadReservations(force);
+      setCacheSafe("reservations", Array.isArray(state.reservations) ? [...state.reservations] : []);
+      return res;
+    };
+
+    const _loadLogs = loadLogs;
+    loadLogs = async function (force = false) {
+      const cached = getCacheSafe("logs");
+      if (cached && !force) {
+        state.logs = cached;
+        return cached;
+      }
+
+      const res = await _loadLogs(force);
+      setCacheSafe("logs", Array.isArray(state.logs) ? [...state.logs] : []);
+      return res;
+    };
+
+    /* =========================
+    4. SAFE RENDER
+    ========================= */
+    const ORIGINAL_RENDER = render;
+    let RENDER_SCHEDULED = false;
+
+    render = function () {
+      if (RENDER_SCHEDULED) return;
+
+      RENDER_SCHEDULED = true;
+
+      requestAnimationFrame(() => {
+        try {
+          ORIGINAL_RENDER();
+        } catch (e) {
+          console.error("RENDER CRASH:", e);
+        } finally {
+          RENDER_SCHEDULED = false;
+        }
+      });
+    };
+
+    /* =========================
+    5. MEMORY TRIM
+    ========================= */
+    const PATCH_MEMORY_INTERVAL = setInterval(() => {
+      if (state.users.length > 2000) state.users = state.users.slice(0, 1000);
+      if (state.shops.length > 2000) state.shops = state.shops.slice(0, 1000);
+      if (state.reservations.length > 2000) state.reservations = state.reservations.slice(0, 1000);
+      if (state.logs.length > 3000) state.logs = state.logs.slice(0, 1500);
+    }, 15000);
+
+    /* =========================
+    6. SAFE AUTO REFRESH
+    ========================= */
+    let AUTO_LOCK = false;
+
+    const PATCH_AUTO_INTERVAL = setInterval(() => {
+      if (AUTO_LOCK) return;
+      if (!state.autoRefresh) return;
+      if (document.hidden) return;
+
+      AUTO_LOCK = true;
+
+      reloadCurrentTab(false)
+        .catch((e) => {
+          console.error("AUTO REFRESH FAIL:", e);
+        })
+        .finally(() => {
+          setTimeout(() => {
+            AUTO_LOCK = false;
+          }, 1500);
+        });
+    }, 20000);
+
+    /* =========================
+    7. ERROR RECOVERY
+    ========================= */
+    window.addEventListener("error", () => {
+      if (state.metrics.apiFail > 10) {
+        console.warn("SAFE RECOVERY MODE");
+        const dashboardCache = getCacheSafe("dashboard");
+        if (dashboardCache) {
+          state.stats = dashboardCache.stats || {};
+          state.liveStats = dashboardCache.liveStats || {};
+          render();
+        }
+      }
+    });
+
+    /* =========================
+    8. NETWORK RECOVERY
+    ========================= */
+    window.addEventListener("online", () => {
+      reloadCurrentTab(true);
+    });
+
+    /* =========================
+    9. DEBUG TOOL
+    ========================= */
+    window.NOMA_ADMIN_DEBUG = {
+      state,
+      reload: () => reloadCurrentTab(true),
+      clearCache: () => {
+        state.cache = {
+          dashboard: null,
+          users: null,
+          shops: null,
+          reservations: null,
+          logs: null
+        };
+        Object.keys(CACHE_TIME).forEach((k) => delete CACHE_TIME[k]);
+      },
+      apiPending: () => API_PENDING.size,
+      patchIntervals: () => [PATCH_MEMORY_INTERVAL, PATCH_AUTO_INTERVAL]
+    };
+
+    console.log("🔥 SAFE PATCH APPLIED");
+  })();
+
   /* =========================
      INIT
   ========================= */
@@ -1259,241 +1488,5 @@
   window.addEventListener("online", () => showBanner("네트워크가 복구되었습니다."));
   window.addEventListener("offline", () => showBanner("오프라인 상태입니다.", true));
 
-/* =====================================================
-🔥 SAFE STABILITY PATCH
-===================================================== */
-(function () {
-  // (PATCH 코드 그대로)
-})();
-
-/* 👉 PATCH 적용 후 실행 */
-init();
-/* =====================================================
-🔥 SAFE STABILITY PATCH (KEEP ALL FEATURES)
-👉 기존 기능 유지 + 오류만 수정
-===================================================== */
-
-(function () {
-  "use strict";
-
-  if (window.__NOMA_ADMIN_PATCH__) return;
-  window.__NOMA_ADMIN_PATCH__ = true;
-
-  /* =========================
-  1. REQUEST DEDUPE (경로별 중복 방지)
-  ========================= */
-  const API_PENDING = new Map();
-  const ORIGINAL_API = api;
-
-  api = async function (path, opt = {}) {
-    const method = (opt.method || "GET").toUpperCase();
-    const bodyKey = typeof opt.body === "string" ? opt.body : JSON.stringify(opt.body || {});
-    const dedupeKey = `${method}::${path}::${bodyKey}`;
-
-    if (API_PENDING.has(dedupeKey)) {
-      return API_PENDING.get(dedupeKey);
-    }
-
-    const p = ORIGINAL_API(path, opt)
-      .catch((e) => {
-        console.error("PATCH API ERROR:", e);
-        return { ok: false };
-      })
-      .finally(() => {
-        API_PENDING.delete(dedupeKey);
-      });
-
-    API_PENDING.set(dedupeKey, p);
-    return p;
-  };
-
-  /* =========================
-  2. CACHE TTL
-  ========================= */
-  const CACHE_TTL = 1000 * 60 * 3;
-  const CACHE_TIME = {};
-
-  function setCacheSafe(key, data) {
-    state.cache[key] = data;
-    CACHE_TIME[key] = Date.now();
-  }
-
-  function getCacheSafe(key) {
-    const t = CACHE_TIME[key];
-    if (!t) return null;
-    if (Date.now() - t > CACHE_TTL) return null;
-    return state.cache[key];
-  }
-
-  /* =========================
-  3. LOAD WRAP (기존 기능 유지)
-  ========================= */
-  const _loadDashboard = loadDashboard;
-  loadDashboard = async function (force = false) {
-    const cached = getCacheSafe("dashboard");
-    if (cached && !force) {
-      state.stats = cached.stats || {};
-      state.liveStats = cached.liveStats || {};
-      return cached;
-    }
-
-    const res = await _loadDashboard(force);
-    setCacheSafe("dashboard", {
-      stats: state.stats,
-      liveStats: state.liveStats,
-      payload: res
-    });
-    return res;
-  };
-
-  const _loadUsers = loadUsers;
-  loadUsers = async function (force = false) {
-    const cached = getCacheSafe("users");
-    if (cached && !force && !state.searchUser) {
-      state.users = cached;
-      return cached;
-    }
-
-    const res = await _loadUsers(force);
-    setCacheSafe("users", Array.isArray(state.users) ? [...state.users] : []);
-    return res;
-  };
-
-  const _loadShops = loadShops;
-  loadShops = async function (force = false) {
-    const cached = getCacheSafe("shops");
-    if (cached && !force && !state.searchShop) {
-      state.shops = cached;
-      return cached;
-    }
-
-    const res = await _loadShops(force);
-    setCacheSafe("shops", Array.isArray(state.shops) ? [...state.shops] : []);
-    return res;
-  };
-
-  const _loadReservations = loadReservations;
-  loadReservations = async function (force = false) {
-    const cached = getCacheSafe("reservations");
-    if (cached && !force && !state.reservationStatus) {
-      state.reservations = cached;
-      return cached;
-    }
-
-    const res = await _loadReservations(force);
-    setCacheSafe("reservations", Array.isArray(state.reservations) ? [...state.reservations] : []);
-    return res;
-  };
-
-  const _loadLogs = loadLogs;
-  loadLogs = async function (force = false) {
-    const cached = getCacheSafe("logs");
-    if (cached && !force) {
-      state.logs = cached;
-      return cached;
-    }
-
-    const res = await _loadLogs(force);
-    setCacheSafe("logs", Array.isArray(state.logs) ? [...state.logs] : []);
-    return res;
-  };
-
-  /* =========================
-  4. SAFE RENDER
-  ========================= */
-  const ORIGINAL_RENDER = render;
-  let RENDER_SCHEDULED = false;
-
-  render = function () {
-    if (RENDER_SCHEDULED) return;
-
-    RENDER_SCHEDULED = true;
-
-    requestAnimationFrame(() => {
-      try {
-        ORIGINAL_RENDER();
-      } catch (e) {
-        console.error("RENDER CRASH:", e);
-      } finally {
-        RENDER_SCHEDULED = false;
-      }
-    });
-  };
-
-  /* =========================
-  5. MEMORY TRIM
-  ========================= */
-  const PATCH_MEMORY_INTERVAL = setInterval(() => {
-    if (state.users.length > 2000) state.users = state.users.slice(0, 1000);
-    if (state.shops.length > 2000) state.shops = state.shops.slice(0, 1000);
-    if (state.reservations.length > 2000) state.reservations = state.reservations.slice(0, 1000);
-    if (state.logs.length > 3000) state.logs = state.logs.slice(0, 1500);
-  }, 15000);
-
-  /* =========================
-  6. SAFE AUTO REFRESH
-  ========================= */
-  let AUTO_LOCK = false;
-
-  const PATCH_AUTO_INTERVAL = setInterval(() => {
-    if (AUTO_LOCK) return;
-    if (!state.autoRefresh) return;
-    if (document.hidden) return;
-
-    AUTO_LOCK = true;
-
-    reloadCurrentTab(false)
-      .catch((e) => {
-        console.error("AUTO REFRESH FAIL:", e);
-      })
-      .finally(() => {
-        setTimeout(() => {
-          AUTO_LOCK = false;
-        }, 1500);
-      });
-  }, 20000);
-
-  /* =========================
-  7. ERROR RECOVERY
-  ========================= */
-  window.addEventListener("error", () => {
-    if (state.metrics.apiFail > 10) {
-      console.warn("SAFE RECOVERY MODE");
-      const dashboardCache = getCacheSafe("dashboard");
-      if (dashboardCache) {
-        state.stats = dashboardCache.stats || {};
-        state.liveStats = dashboardCache.liveStats || {};
-        render();
-      }
-    }
-  });
-
-  /* =========================
-  8. NETWORK RECOVERY
-  ========================= */
-  window.addEventListener("online", () => {
-    reloadCurrentTab(true);
-  });
-
-  /* =========================
-  9. DEBUG TOOL
-  ========================= */
-  window.NOMA_ADMIN_DEBUG = {
-    state,
-    reload: () => reloadCurrentTab(true),
-    clearCache: () => {
-      state.cache = {
-        dashboard: null,
-        users: null,
-        shops: null,
-        reservations: null,
-        logs: null
-      };
-      Object.keys(CACHE_TIME).forEach((k) => delete CACHE_TIME[k]);
-    },
-    apiPending: () => API_PENDING.size,
-    patchIntervals: () => [PATCH_MEMORY_INTERVAL, PATCH_AUTO_INTERVAL]
-  };
-
-  console.log("🔥 SAFE PATCH APPLIED");
+  init();
 })();

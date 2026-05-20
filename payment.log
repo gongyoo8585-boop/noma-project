@@ -1,0 +1,27 @@
+[2026-01-01T00:00:00.000Z] INFO  PAYMENT_SYSTEM_INIT
+[2026-01-01T00:00:01.000Z] INFO  PAYMENT_SERVICE_READY
+
+# =========================================
+# FORMAT
+# [ISO_TIMESTAMP] LEVEL EVENT DATA(JSON)
+# =========================================
+
+# SAMPLE LOGS
+
+[2026-01-01T10:00:00.000Z] INFO  PAYMENT_CREATE {"paymentId":"pay_001","userId":"u_001","amount":50000}
+[2026-01-01T10:00:01.200Z] INFO  PAYMENT_SUCCESS {"paymentId":"pay_001","status":"paid"}
+
+[2026-01-01T11:00:00.000Z] WARN  PAYMENT_RETRY {"paymentId":"pay_002","retry":1}
+[2026-01-01T11:00:02.500Z] ERROR PAYMENT_FAIL {"paymentId":"pay_002","reason":"CARD_DECLINED"}
+
+[2026-01-01T12:00:00.000Z] INFO  PAYMENT_REFUND {"paymentId":"pay_001","amount":50000}
+[2026-01-01T12:00:01.100Z] INFO  PAYMENT_REFUND_SUCCESS {"paymentId":"pay_001"}
+
+# =========================================
+# REAL-TIME LOG WRITE EXAMPLE (APPEND)
+# =========================================
+# fs.appendFileSync("payment.log", logLine)
+#
+# logLine example:
+# [2026-01-01T13:00:00.000Z] INFO PAYMENT_CREATE {"paymentId":"pay_003"}
+# =========================================

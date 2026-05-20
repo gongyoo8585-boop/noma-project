@@ -1,0 +1,89 @@
+[2026-01-01T00:00:00.000Z] INFO DATA_INIT {"service":"data-layer","status":"ready"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL DATA_EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 CREATE EVENTS
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO DATA_CREATE {"model":"User","id":"u_001"}
+[2026-01-01T10:00:01.000Z] INFO DATA_CREATE {"model":"Reservation","id":"r_001"}
+[2026-01-01T10:00:02.000Z] INFO DATA_CREATE {"model":"Payment","id":"p_001","amount":50000}
+
+# =====================================================
+# 🔥 UPDATE EVENTS
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] INFO DATA_UPDATE {"model":"User","id":"u_001","fields":["name","phone"]}
+[2026-01-01T10:01:01.000Z] INFO DATA_UPDATE {"model":"Reservation","id":"r_001","status":"confirmed"}
+[2026-01-01T10:01:02.000Z] INFO DATA_UPDATE {"model":"Payment","id":"p_001","status":"paid"}
+
+# =====================================================
+# 🔥 DELETE EVENTS
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] WARN DATA_DELETE {"model":"User","id":"u_002","soft":true}
+[2026-01-01T10:02:01.000Z] WARN DATA_DELETE {"model":"Reservation","id":"r_002","soft":true}
+
+# =====================================================
+# 🔥 BULK OPERATIONS
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] INFO DATA_BULK_CREATE {"model":"Slot","count":50}
+[2026-01-01T10:03:05.000Z] INFO DATA_BULK_UPDATE {"model":"Reservation","count":10}
+
+# =====================================================
+# 🔥 CACHE EVENTS
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] DEBUG CACHE_SET {"key":"user:u_001"}
+[2026-01-01T10:04:01.000Z] DEBUG CACHE_HIT {"key":"user:u_001"}
+[2026-01-01T10:04:02.000Z] DEBUG CACHE_MISS {"key":"reservation:list"}
+
+# =====================================================
+# 🔥 SYNC EVENTS
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] INFO DATA_SYNC_START {"module":"reservation"}
+[2026-01-01T10:05:01.000Z] INFO DATA_SYNC_DONE {"module":"reservation","count":25}
+
+# =====================================================
+# 🔥 ANALYTICS EVENTS
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] INFO ANALYTICS_EVENT {"event":"user_signup","userId":"u_003"}
+[2026-01-01T10:06:01.000Z] INFO ANALYTICS_EVENT {"event":"reservation_create","userId":"u_001"}
+[2026-01-01T10:06:02.000Z] INFO ANALYTICS_EVENT {"event":"payment_success","userId":"u_001"}
+
+# =====================================================
+# 🔥 INCONSISTENCY / WARNING
+# =====================================================
+
+[2026-01-01T10:07:00.000Z] WARN DATA_INCONSISTENT {"model":"Reservation","id":"r_003"}
+[2026-01-01T10:07:01.000Z] WARN DATA_MISMATCH {"model":"Payment","id":"p_002","expected":"paid","actual":"pending"}
+
+# =====================================================
+# 🔥 ERROR EVENTS
+# =====================================================
+
+[2026-01-01T10:08:00.000Z] ERROR DATA_SAVE_FAIL {"model":"User","error":"validation error"}
+[2026-01-01T10:08:01.000Z] ERROR DATA_LOAD_FAIL {"model":"Reservation","error":"not found"}
+[2026-01-01T10:08:02.000Z] ERROR DATA_CORRUPTION {"model":"Payment","id":"p_999"}
+
+# =====================================================
+# 🔥 CLEANUP / MAINTENANCE
+# =====================================================
+
+[2026-01-01T10:09:00.000Z] INFO DATA_CLEANUP_START {}
+[2026-01-01T10:09:01.000Z] INFO DATA_CLEANUP_DONE {"deleted":120}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const line = `[${new Date().toISOString()}] INFO DATA_EVENT {"key":"value"}\n`;
+# fs.appendFileSync("logs/data.log", line);
+# =====================================================

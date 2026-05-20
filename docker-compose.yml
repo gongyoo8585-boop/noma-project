@@ -1,0 +1,141 @@
+version: "3.9"
+
+services:
+
+  app:
+    container_name: massage_app
+    build: .
+    restart: always
+
+    ports:
+      - "3000:3000"
+
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: mongo
+      REDIS_HOST: redis
+
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+
+    networks:
+      - app_network
+
+    # 🔥 HEALTH CHECK (강화)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    # 🔥 로그 제한
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mongo:
+    container_name: massage_mongo
+    image: mongo:6
+    restart: always
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongo_data:/data/db
+
+    networks:
+      - app_network
+
+    # 🔥 HEALTH CHECK 안정화 (개선)
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok' | grep 1 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    container_name: massage_redis
+    image: redis:7-alpine
+    restart: always
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis_data:/data
+
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+
+    networks:
+      - app_network
+
+    # 🔥 HEALTH CHECK 안정화
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  nginx:
+    container_name: massage_nginx
+    image: nginx:alpine
+    restart: always
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - /etc/letsencrypt:/etc/letsencrypt
+      - ./client/dist:/usr/share/nginx/html
+
+    depends_on:
+      app:
+        condition: service_healthy
+
+    networks:
+      - app_network
+
+    # 🔥 HEALTH CHECK 추가 (신규)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# =========================================
+# 🔥 NETWORK
+# =========================================
+networks:
+  app_network:
+    driver: bridge
+
+# =========================================
+# 🔥 VOLUMES
+# =========================================
+volumes:
+  mongo_data:
+  redis_data:

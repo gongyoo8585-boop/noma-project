@@ -1,0 +1,73 @@
+[2026-01-01T00:00:00.000Z] INFO ADMIN_INIT {"service":"admin","status":"ready"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL ADMIN_EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 ADMIN LOGIN / AUTH
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO ADMIN_LOGIN {"adminId":"admin_01","ip":"127.0.0.1"}
+[2026-01-01T10:00:05.000Z] INFO ADMIN_LOGOUT {"adminId":"admin_01"}
+
+[2026-01-01T10:00:10.000Z] ERROR ADMIN_AUTH_FAIL {"adminId":"admin_02","reason":"INVALID_PASSWORD"}
+
+# =====================================================
+# 🔥 USER MANAGEMENT
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] INFO ADMIN_USER_LIST {"adminId":"admin_01","count":50}
+[2026-01-01T10:01:05.000Z] INFO ADMIN_USER_BLOCK {"adminId":"admin_01","targetUser":"u_001"}
+[2026-01-01T10:01:10.000Z] INFO ADMIN_USER_UNBLOCK {"adminId":"admin_01","targetUser":"u_001"}
+
+# =====================================================
+# 🔥 RESERVATION MANAGEMENT
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] INFO ADMIN_RESERVATION_LIST {"adminId":"admin_01","count":50}
+[2026-01-01T10:02:05.000Z] WARN ADMIN_FORCE_CANCEL {"adminId":"admin_01","reservationId":"r_001"}
+
+# =====================================================
+# 🔥 PAYMENT MANAGEMENT
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] INFO ADMIN_PAYMENT_LIST {"adminId":"admin_01","count":40}
+[2026-01-01T10:03:05.000Z] WARN ADMIN_PAYMENT_REFUND {"adminId":"admin_01","paymentId":"p_001","amount":50000}
+
+# =====================================================
+# 🔥 SYSTEM CONTROL
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] INFO ADMIN_BROADCAST {"adminId":"admin_01","message":"점검 안내"}
+[2026-01-01T10:04:05.000Z] INFO ADMIN_SYSTEM_STATS {"adminId":"admin_01"}
+
+# =====================================================
+# 🔥 SECURITY / WARNING
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] WARN ADMIN_SUSPICIOUS_ACTION {"adminId":"admin_02","action":"MULTIPLE_LOGIN"}
+[2026-01-01T10:05:05.000Z] ERROR ADMIN_UNAUTHORIZED {"ip":"192.168.0.10"}
+
+# =====================================================
+# 🔥 CRITICAL ACTION
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] CRITICAL ADMIN_DELETE_USER {"adminId":"admin_01","targetUser":"u_999"}
+[2026-01-01T10:06:05.000Z] CRITICAL ADMIN_SYSTEM_RESET {"adminId":"admin_01"}
+
+# =====================================================
+# 🔥 AUDIT TRAIL
+# =====================================================
+
+[2026-01-01T10:07:00.000Z] INFO ADMIN_AUDIT {"adminId":"admin_01","action":"UPDATE_PRICING"}
+[2026-01-01T10:07:05.000Z] INFO ADMIN_AUDIT {"adminId":"admin_01","action":"CREATE_COUPON"}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO ADMIN_EVENT {"adminId":"admin_01"}\n`;
+# fs.appendFileSync("logs/admin.log", log);
+# =====================================================

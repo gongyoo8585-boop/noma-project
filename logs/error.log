@@ -1,0 +1,75 @@
+[2026-01-01T00:00:00.000Z] ERROR SYSTEM_INIT_FAIL {"reason":"unknown","service":"massage-platform"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 LEVEL
+# ERROR / CRITICAL
+# =====================================================
+
+# =====================================================
+# 🔥 DATABASE ERRORS
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] ERROR DB_CONNECT_FAIL {"db":"mongodb","error":"timeout"}
+[2026-01-01T10:00:05.000Z] ERROR DB_QUERY_FAIL {"query":"findUser","error":"connection lost"}
+
+# =====================================================
+# 🔥 AUTH ERRORS
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] ERROR AUTH_FAIL {"userId":"u_001","reason":"INVALID_PASSWORD"}
+[2026-01-01T10:01:10.000Z] ERROR TOKEN_INVALID {"token":"expired"}
+
+# =====================================================
+# 🔥 API ERRORS
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] ERROR API_EXCEPTION {"endpoint":"/api/user","error":"Unhandled exception"}
+[2026-01-01T10:02:10.000Z] ERROR ROUTE_NOT_FOUND {"url":"/unknown"}
+
+# =====================================================
+# 🔥 PAYMENT ERRORS
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] ERROR PAYMENT_FAIL {"paymentId":"p_001","reason":"CARD_DECLINED"}
+[2026-01-01T10:03:10.000Z] ERROR PAYMENT_TIMEOUT {"paymentId":"p_002"}
+
+# =====================================================
+# 🔥 RESERVATION ERRORS
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] ERROR RESERVATION_FAIL {"reservationId":"r_001","reason":"SLOT_FULL"}
+[2026-01-01T10:04:10.000Z] ERROR RESERVATION_NOT_FOUND {"reservationId":"r_999"}
+
+# =====================================================
+# 🔥 WEBSOCKET ERRORS
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] ERROR WS_MESSAGE_FAIL {"reason":"INVALID_JSON"}
+[2026-01-01T10:05:10.000Z] ERROR WS_CONNECTION_LOST {"userId":"u_001"}
+
+# =====================================================
+# 🔥 SYSTEM CRITICAL
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] CRITICAL OUT_OF_MEMORY {"service":"node"}
+[2026-01-01T10:06:10.000Z] CRITICAL SERVER_CRASH {"reason":"fatal error"}
+
+# =====================================================
+# 🔥 SECURITY
+# =====================================================
+
+[2026-01-01T10:07:00.000Z] ERROR UNAUTHORIZED_ACCESS {"ip":"192.168.0.1"}
+[2026-01-01T10:07:10.000Z] ERROR RATE_LIMIT_EXCEEDED {"ip":"192.168.0.1"}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const line = `[${new Date().toISOString()}] ERROR EVENT {"error":"message"}\n`;
+# fs.appendFileSync("logs/error.log", line);
+# =====================================================

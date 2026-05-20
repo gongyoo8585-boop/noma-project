@@ -1,0 +1,430 @@
+/* =========================================================
+   /client/src/styles/gold.css
+   🔥 REAL PREMIUM METAL GOLD
+   🔥 YELLOW -> REAL GOLD FIX
+   🔥 TEXT NEON REMOVE
+   🔥 BORDER ONLY NEON
+========================================================= */
+
+:root {
+  --gold-white: #fff6d5;
+  --gold-cream: #f6e7b8;
+  --gold-soft: #e7c96f;
+  --gold-main: #d4af37;
+  --gold-deep: #b8860b;
+  --gold-dark: #8b6508;
+  --gold-black: #120f05;
+
+  --gold-gradient:
+    linear-gradient(
+      135deg,
+      #fff6d5 0%,
+      #f6e7b8 12%,
+      #e7c96f 24%,
+      #d4af37 48%,
+      #b8860b 72%,
+      #8b6508 100%
+    );
+
+  --gold-surface:
+    linear-gradient(
+      180deg,
+      rgba(24, 18, 6, 0.98) 0%,
+      rgba(10, 10, 10, 0.98) 100%
+    );
+
+  --gold-border-color: rgba(212, 175, 55, 0.95);
+
+  /* 🔥 BOX ONLY GLOW */
+  --gold-border-glow:
+    0 0 4px rgba(255, 246, 213, 0.10),
+    0 0 10px rgba(212, 175, 55, 0.10),
+    0 0 20px rgba(184, 134, 11, 0.06);
+
+  --gold-box-shadow:
+    0 0 6px rgba(212, 175, 55, 0.12),
+    0 0 18px rgba(184, 134, 11, 0.08);
+
+  --gold-inset:
+    inset 0 0 12px rgba(255, 246, 213, 0.03);
+
+  --gold-text:
+    linear-gradient(
+      135deg,
+      #fff6d5 0%,
+      #f6e7b8 16%,
+      #e7c96f 36%,
+      #d4af37 56%,
+      #b8860b 76%,
+      #8b6508 100%
+    );
+}
+
+/* =========================================================
+   GLOBAL TEXT FIX
+========================================================= */
+
+* {
+  text-shadow: none !important;
+}
+
+body,
+p,
+span,
+small,
+strong,
+label,
+div,
+button,
+input,
+textarea,
+select,
+li,
+a,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+/* =========================================================
+   REAL GOLD TEXT
+========================================================= */
+
+.gold-text,
+.gold-title,
+.gold-price,
+.gold-number {
+  background: var(--gold-text);
+
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  text-shadow: none !important;
+}
+
+/* =========================================================
+   GOLD PANEL
+========================================================= */
+
+.gold-panel {
+  position: relative;
+
+  background: var(--gold-surface);
+
+  border: 1px solid var(--gold-border-color);
+
+  box-shadow:
+    var(--gold-border-glow),
+    var(--gold-inset);
+
+  overflow: hidden;
+}
+
+.gold-panel::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  border: 1px solid rgba(255, 246, 213, 0.10);
+
+  pointer-events: none;
+}
+
+/* =========================================================
+   GOLD CARD
+========================================================= */
+
+.gold-card {
+  position: relative;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(18, 14, 5, 0.98) 0%,
+      rgba(8, 8, 8, 1) 100%
+    );
+
+  border: 1px solid rgba(212, 175, 55, 0.95);
+
+  overflow: hidden;
+
+  box-shadow:
+    0 0 6px rgba(212, 175, 55, 0.12),
+    0 0 14px rgba(184, 134, 11, 0.08),
+    inset 0 0 12px rgba(255, 246, 213, 0.03);
+
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.gold-card:hover {
+  border-color: rgba(255, 246, 213, 0.95);
+
+  box-shadow:
+    0 0 8px rgba(255, 246, 213, 0.12),
+    0 0 18px rgba(212, 175, 55, 0.12),
+    0 0 28px rgba(184, 134, 11, 0.08),
+    inset 0 0 12px rgba(255, 246, 213, 0.04);
+
+  transform: translateY(-2px);
+}
+
+.gold-card::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 246, 213, 0.02) 0%,
+      transparent 32%,
+      rgba(212, 175, 55, 0.03) 60%,
+      transparent 100%
+    );
+
+  pointer-events: none;
+}
+
+/* =========================================================
+   GOLD IMAGE FRAME
+========================================================= */
+
+.gold-image-frame {
+  position: relative;
+
+  border: 1px solid rgba(212, 175, 55, 0.95);
+
+  overflow: hidden;
+
+  box-shadow:
+    0 0 4px rgba(255, 246, 213, 0.08),
+    0 0 10px rgba(212, 175, 55, 0.08);
+}
+
+.gold-image-frame::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  border: 1px solid rgba(255, 246, 213, 0.10);
+
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* =========================================================
+   GOLD BUTTON
+========================================================= */
+
+.gold-button {
+  position: relative;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(30, 22, 8, 0.98) 0%,
+      rgba(14, 12, 6, 1) 100%
+    );
+
+  border: 1px solid rgba(212, 175, 55, 0.92);
+
+  color: #e7c96f;
+
+  font-weight: 700;
+
+  text-shadow: none !important;
+
+  box-shadow:
+    0 0 4px rgba(212, 175, 55, 0.08),
+    inset 0 0 10px rgba(255, 246, 213, 0.03);
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.gold-button:hover {
+  border-color: rgba(255, 246, 213, 0.95);
+
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 0 6px rgba(255, 246, 213, 0.10),
+    0 0 12px rgba(212, 175, 55, 0.08),
+    0 0 22px rgba(184, 134, 11, 0.06);
+}
+
+/* =========================================================
+   GOLD INPUT
+========================================================= */
+
+.gold-input {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(14, 12, 4, 0.98) 0%,
+      rgba(8, 8, 8, 1) 100%
+    );
+
+  border: 1px solid rgba(212, 175, 55, 0.82);
+
+  color: #fff6d5;
+
+  text-shadow: none !important;
+
+  box-shadow:
+    inset 0 0 10px rgba(255, 246, 213, 0.03),
+    0 0 4px rgba(212, 175, 55, 0.05);
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.gold-input:focus {
+  outline: none;
+
+  border-color: rgba(255, 246, 213, 0.95);
+
+  box-shadow:
+    0 0 6px rgba(255, 246, 213, 0.08),
+    0 0 14px rgba(212, 175, 55, 0.08);
+}
+
+.gold-input::placeholder {
+  color: rgba(246, 231, 184, 0.48);
+}
+
+/* =========================================================
+   GOLD MAP MARKER
+========================================================= */
+
+.gold-marker {
+  position: relative;
+
+  width: 34px;
+  height: 34px;
+
+  border-radius: 999px;
+
+  background:
+    radial-gradient(
+      circle at 30% 30%,
+      #fff6d5 0%,
+      #e7c96f 28%,
+      #d4af37 58%,
+      #b8860b 82%,
+      #8b6508 100%
+    );
+
+  border: 2px solid rgba(255, 246, 213, 0.95);
+
+  box-shadow:
+    0 0 6px rgba(255, 246, 213, 0.10),
+    0 0 14px rgba(212, 175, 55, 0.10),
+    0 0 24px rgba(184, 134, 11, 0.08);
+}
+
+.gold-marker::before {
+  content: "";
+
+  position: absolute;
+
+  left: 50%;
+  bottom: -10px;
+
+  width: 14px;
+  height: 14px;
+
+  background: #b8860b;
+
+  transform:
+    translateX(-50%)
+    rotate(45deg);
+}
+
+/* =========================================================
+   GOLD SCROLLBAR
+========================================================= */
+
+.gold-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.gold-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.gold-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+
+  background:
+    linear-gradient(
+      180deg,
+      #fff6d5 0%,
+      #e7c96f 26%,
+      #d4af37 52%,
+      #b8860b 76%,
+      #8b6508 100%
+    );
+
+  box-shadow:
+    0 0 4px rgba(212, 175, 55, 0.06),
+    0 0 10px rgba(184, 134, 11, 0.05);
+}
+
+/* =========================================================
+   GOLD DIVIDER
+========================================================= */
+
+.gold-divider {
+  width: 100%;
+  height: 1px;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 246, 213, 0.92),
+      rgba(212, 175, 55, 1),
+      rgba(184, 134, 11, 0.92),
+      transparent
+    );
+
+  box-shadow:
+    0 0 4px rgba(212, 175, 55, 0.05);
+}
+
+/* =========================================================
+   GOLD SHINE
+========================================================= */
+
+@keyframes goldShineFlow {
+  0% {
+    transform:
+      translateX(-120%)
+      rotate(12deg);
+  }
+
+  100% {
+    transform:
+      translateX(120%)
+      rotate(12deg);
+  }
+}

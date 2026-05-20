@@ -1,0 +1,65 @@
+[2026-01-01T00:00:00.000Z] INFO  DATA_INIT {"status":"ready"}
+
+# =========================================
+# FORMAT
+# [ISO_TIMESTAMP] LEVEL EVENT DATA(JSON)
+# =========================================
+
+# =========================================
+# LEVEL
+# INFO / WARN / ERROR / DEBUG / CRITICAL
+# =========================================
+
+# =========================================
+# DATA FLOW LOG
+# =========================================
+
+[2026-01-01T10:00:00.000Z] INFO  DATA_CREATE {"model":"User","id":"u_001"}
+[2026-01-01T10:01:00.000Z] INFO  DATA_UPDATE {"model":"User","id":"u_001","field":"name"}
+[2026-01-01T10:02:00.000Z] INFO  DATA_DELETE {"model":"User","id":"u_002"}
+
+[2026-01-01T10:03:00.000Z] INFO  DATA_CREATE {"model":"Reservation","id":"r_001"}
+[2026-01-01T10:04:00.000Z] INFO  DATA_UPDATE {"model":"Reservation","id":"r_001","status":"confirmed"}
+
+[2026-01-01T10:05:00.000Z] INFO  DATA_CREATE {"model":"Payment","id":"p_001","amount":50000}
+[2026-01-01T10:06:00.000Z] INFO  DATA_UPDATE {"model":"Payment","id":"p_001","status":"paid"}
+
+# =========================================
+# CACHE / SYNC
+# =========================================
+
+[2026-01-01T11:00:00.000Z] DEBUG CACHE_SET {"key":"reservation:list"}
+[2026-01-01T11:01:00.000Z] DEBUG CACHE_HIT {"key":"reservation:list"}
+[2026-01-01T11:02:00.000Z] DEBUG CACHE_MISS {"key":"user:profile"}
+
+[2026-01-01T11:03:00.000Z] INFO  SYNC_START {"module":"reservation"}
+[2026-01-01T11:04:00.000Z] INFO  SYNC_DONE {"module":"reservation"}
+
+# =========================================
+# ANALYTICS / TRACKING
+# =========================================
+
+[2026-01-01T12:00:00.000Z] INFO  ANALYTICS_EVENT {"event":"reservation_create","userId":"u_001"}
+[2026-01-01T12:01:00.000Z] INFO  ANALYTICS_EVENT {"event":"payment_success","userId":"u_001"}
+
+# =========================================
+# ERROR / INCONSISTENCY
+# =========================================
+
+[2026-01-01T12:02:00.000Z] WARN  DATA_INCONSISTENT {"model":"Reservation","id":"r_002"}
+[2026-01-01T12:03:00.000Z] ERROR DATA_CORRUPTION {"model":"Payment","id":"p_999"}
+
+# =========================================
+# CLEANUP
+# =========================================
+
+[2026-01-01T13:00:00.000Z] INFO  DATA_CLEANUP_START {}
+[2026-01-01T13:01:00.000Z] INFO  DATA_CLEANUP_DONE {"deleted":120}
+
+# =========================================
+# WRITE EXAMPLE (NODE)
+# =========================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO DATA_EVENT {"key":"value"}\n`;
+# fs.appendFileSync("data.log", log);
+# =========================================

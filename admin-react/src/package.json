@@ -1,21 +1,29 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-function renderApp() {
-  const rootElement = document.getElementById("root");
-
-  if (!rootElement) {
-    throw new Error('root element not found. public/index.html 안에 <div id="root"></div> 필요');
+{
+  "name": "noma-admin-react",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NOMA Admin React",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "chart.js": "^4.4.3",
+    "dayjs": "^1.11.13",
+    "jwt-decode": "^4.0.0",
+    "react": "^18.3.1",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
   }
-
-  const root = ReactDOM.createRoot(rootElement);
-
-  root.render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  );
 }
-
-renderApp();

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>마이페이지</title>
+
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; font-family:sans-serif; }
+
+    body {
+      background:#f4f6f8;
+      color:#222;
+    }
+
+    header {
+      background:#111;
+      color:#fff;
+      padding:16px;
+      display:flex;
+      justify-content:space-between;
+    }
+
+    .container {
+      max-width:1000px;
+      margin:20px auto;
+      padding:0 16px;
+    }
+
+    .card {
+      background:#fff;
+      padding:16px;
+      border-radius:10px;
+      margin-bottom:16px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.05);
+    }
+
+    h2 {
+      margin-bottom:10px;
+    }
+
+    .btn {
+      padding:8px 12px;
+      border:none;
+      border-radius:6px;
+      cursor:pointer;
+      margin-right:6px;
+    }
+
+    .btn-primary { background:#007aff; color:#fff; }
+    .btn-danger { background:#ff3b30; color:#fff; }
+
+    .list-item {
+      border-bottom:1px solid #eee;
+      padding:10px 0;
+    }
+
+    .list-item:last-child {
+      border:none;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div>마이페이지</div>
+  <div>
+    <button class="btn btn-primary" onclick="logout()">로그아웃</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- 내 정보 -->
+  <div class="card">
+    <h2>내 정보</h2>
+    <p>이메일: <span id="email"></span></p>
+    <p>이름: <span id="name"></span></p>
+    <button class="btn btn-primary" onclick="updateProfile()">정보 수정</button>
+  </div>
+
+  <!-- 예약 -->
+  <div class="card">
+    <h2>내 예약</h2>
+    <div id="reservationList"></div>
+  </div>
+
+</div>
+
+<script>
+const API = "/api/user";
+
+/* =========================
+🔥 API 호출
+========================= */
+async function fetchAPI(url, options = {}) {
+  try {
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...options
+    });
+    return await res.json();
+  } catch (e) {
+    console.error(e);
+    return { ok:false };
+  }
+}
+
+/* =========================
+🔥 내 정보
+========================= */
+async function loadMe() {
+  const res = await fetchAPI(API + "/me");
+
+  if (!res.ok) {
+    alert("로그인 필요");
+    location.href = "/login.html";
+    return;
+  }
+
+  document.getElementById("email").innerText = res.email || "";
+  document.getElementById("name").innerText = res.name || "";
+}
+
+/* =========================
+🔥 예약 목록
+========================= */
+async function loadReservations() {
+  const res = await fetchAPI("/api/reservation/me");
+
+  if (!res.ok) return;
+
+  const el = document.getElementById("reservationList");
+  el.innerHTML = "";
+
+  (res.list || []).forEach(r => {
+    const div = document.createElement("div");
+    div.className = "list-item";
+
+    div.innerHTML = `
+      <div>매장: ${r.shopId || "-"}</div>
+      <div>시간: ${new Date(r.time).toLocaleString()}</div>
+      <div>상태: ${r.status}</div>
+      <button class="btn btn-danger" onclick="cancel('${r._id}')">취소</button>
+    `;
+
+    el.appendChild(div);
+  });
+}
+
+/* =========================
+🔥 예약 취소
+========================= */
+async function cancel(id) {
+  if (!confirm("취소하시겠습니까?")) return;
+
+  const res = await fetchAPI("/api/reservation/" + id + "/cancel", {
+    method: "POST"
+  });
+
+  if (res.ok) {
+    alert("취소 완료");
+    loadReservations();
+  } else {
+    alert("실패");
+  }
+}
+
+/* =========================
+🔥 로그아웃
+========================= */
+async function logout() {
+  await fetchAPI(API + "/logout", { method:"POST" });
+  location.href = "/";
+}
+
+/* =========================
+🔥 프로필 수정 (간단)
+========================= */
+function updateProfile() {
+  alert("프로필 수정 기능 연결 필요");
+}
+
+/* =========================
+🔥 INIT
+========================= */
+loadMe();
+loadReservations();
+</script>
+
+</body>
+</html>

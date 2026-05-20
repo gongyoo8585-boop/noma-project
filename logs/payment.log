@@ -1,0 +1,77 @@
+[2026-01-01T00:00:00.000Z] INFO PAYMENT_SYSTEM_INIT {"service":"payment","status":"ready"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL PAYMENT_EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 PAYMENT CREATE
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO PAYMENT_CREATE {"paymentId":"p_001","userId":"u_001","amount":50000,"currency":"KRW","method":"card"}
+[2026-01-01T10:00:01.000Z] INFO PAYMENT_PENDING {"paymentId":"p_001","status":"pending"}
+
+# =====================================================
+# 🔥 PAYMENT SUCCESS
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] INFO PAYMENT_SUCCESS {"paymentId":"p_001","userId":"u_001","amount":50000,"status":"paid","pg":"kakao"}
+[2026-01-01T10:01:01.000Z] INFO PAYMENT_APPROVED {"paymentId":"p_001","approvedAt":"2026-01-01T10:01:01.000Z"}
+
+# =====================================================
+# 🔥 PAYMENT FAIL
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] ERROR PAYMENT_FAIL {"paymentId":"p_002","userId":"u_002","reason":"CARD_DECLINED"}
+[2026-01-01T10:02:01.000Z] WARN  PAYMENT_RETRY {"paymentId":"p_002","retry":1}
+[2026-01-01T10:02:05.000Z] ERROR PAYMENT_FAIL {"paymentId":"p_002","reason":"INSUFFICIENT_FUNDS"}
+
+# =====================================================
+# 🔥 PAYMENT CANCEL
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] INFO PAYMENT_CANCEL {"paymentId":"p_003","userId":"u_003","reason":"USER_REQUEST"}
+[2026-01-01T10:03:01.000Z] INFO PAYMENT_CANCELLED {"paymentId":"p_003","status":"cancelled"}
+
+# =====================================================
+# 🔥 PAYMENT REFUND
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] INFO PAYMENT_REFUND_REQUEST {"paymentId":"p_001","amount":50000}
+[2026-01-01T10:04:02.000Z] INFO PAYMENT_REFUND_SUCCESS {"paymentId":"p_001","amount":50000,"status":"refunded"}
+
+# =====================================================
+# 🔥 PAYMENT TIMEOUT
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] ERROR PAYMENT_TIMEOUT {"paymentId":"p_004","timeout":"30s"}
+
+# =====================================================
+# 🔥 FRAUD / SECURITY
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] WARN PAYMENT_SUSPECTED_FRAUD {"paymentId":"p_005","userId":"u_004","reason":"multiple_attempts"}
+[2026-01-01T10:06:05.000Z] ERROR PAYMENT_BLOCKED {"paymentId":"p_005","status":"blocked"}
+
+# =====================================================
+# 🔥 STATS / AGGREGATION
+# =====================================================
+
+[2026-01-01T11:00:00.000Z] INFO PAYMENT_DAILY_SUMMARY {"totalCount":120,"totalAmount":4500000}
+[2026-01-01T11:00:01.000Z] INFO PAYMENT_SUCCESS_RATE {"rate":"92%"}
+
+# =====================================================
+# 🔥 SYSTEM INTEGRATION
+# =====================================================
+
+[2026-01-01T11:01:00.000Z] INFO PAYMENT_WEBHOOK_RECEIVED {"provider":"kakao","event":"payment.approved"}
+[2026-01-01T11:01:01.000Z] INFO PAYMENT_WEBHOOK_PROCESSED {"paymentId":"p_006"}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO PAYMENT_EVENT {"paymentId":"p_xxx"}\n`;
+# fs.appendFileSync("logs/payment.log", log);
+# =====================================================

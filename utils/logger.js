@@ -1,12 +1,5 @@
 "use strict";
 
-/* =====================================================
-🔥 LOGGER (FINAL ULTRA COMPLETE)
-👉 전역 로그 시스템
-👉 서비스 / 컨트롤러 / 에러 통합
-👉 운영/개발 분리
-===================================================== */
-
 const fs = require("fs");
 const path = require("path");
 
@@ -14,34 +7,40 @@ const path = require("path");
 🔥 CONFIG
 ===================================================== */
 const LOG_LEVEL = process.env.LOG_LEVEL || "debug";
-const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), "logs");
-const ENABLE_FILE_LOG = process.env.LOG_FILE === "true";
+const LOG_DIR = path.join(process.cwd(), "logs");
+
+// 🔥 기본 true로 변경 (중요)
+const ENABLE_FILE_LOG =
+  process.env.LOG_FILE === "false" ? false : true;
+
+/* =====================================================
+🔥 FILE PATH (🔥 네 구조 유지)
+===================================================== */
+const SYSTEM_LOG = path.join(LOG_DIR, "system.log");
+const PAYMENT_LOG = path.join(LOG_DIR, "payment.log");
 
 /* =====================================================
 🔥 LEVEL PRIORITY
 ===================================================== */
-const LEVELS = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3
-};
+const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 
 function canLog(level) {
   return LEVELS[level] >= LEVELS[LOG_LEVEL];
 }
 
 /* =====================================================
-🔥 INIT LOG DIR
+🔥 INIT
 ===================================================== */
 if (ENABLE_FILE_LOG) {
-  try {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-  } catch (e) {
-    console.error("LOG DIR CREATE FAIL");
+  if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
   }
+
+  [SYSTEM_LOG, PAYMENT_LOG].forEach((file) => {
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(file, "");
+    }
+  });
 }
 
 /* =====================================================
@@ -52,20 +51,22 @@ function now() {
 }
 
 function safeStr(v) {
-  if (typeof v === "string") return v;
   try {
-    return JSON.stringify(v);
+    return typeof v === "string" ? v : JSON.stringify(v);
   } catch {
     return String(v);
   }
 }
 
+/* =====================================================
+🔥 FORMAT
+===================================================== */
 function buildLog(level, message, meta = {}) {
   return {
     time: now(),
     level,
     message: safeStr(message),
-    ...meta
+    ...meta,
   };
 }
 
@@ -73,11 +74,16 @@ function formatConsole(log) {
   return `[${log.time}] [${log.level.toUpperCase()}] ${log.message}`;
 }
 
-function writeFile(level, log) {
+/* =====================================================
+🔥 WRITE FILE (🔥 구조 맞춤)
+===================================================== */
+function writeFile(type, log) {
   if (!ENABLE_FILE_LOG) return;
 
   try {
-    const file = path.join(LOG_DIR, `${level}.log`);
+    const file =
+      type === "payment" ? PAYMENT_LOG : SYSTEM_LOG;
+
     fs.appendFileSync(file, JSON.stringify(log) + "\n");
   } catch {
     console.error("FILE LOG WRITE FAIL");
@@ -87,27 +93,30 @@ function writeFile(level, log) {
 /* =====================================================
 🔥 CORE LOGGER
 ===================================================== */
-function log(level, message, meta = {}) {
+function log(level, message, meta = {}, type = "system") {
   if (!canLog(level)) return;
 
   const data = buildLog(level, message, meta);
 
   console.log(formatConsole(data));
-  writeFile(level, data);
+  writeFile(type, data);
 }
 
 /* =====================================================
-🔥 LEVEL API
+🔥 API
 ===================================================== */
 const logger = {
   debug: (msg, meta) => log("debug", msg, meta),
   info: (msg, meta) => log("info", msg, meta),
   warn: (msg, meta) => log("warn", msg, meta),
-  error: (msg, meta) => log("error", msg, meta)
+  error: (msg, meta) => log("error", msg, meta),
+
+  /* 🔥 PAYMENT 전용 */
+  payment: (data) => log("info", "PAYMENT", data, "payment"),
 };
 
 /* =====================================================
-🔥 REQUEST LOGGER MIDDLEWARE
+🔥 REQUEST LOGGER
 ===================================================== */
 logger.request = function (req, res, next) {
   const start = Date.now();
@@ -122,16 +131,13 @@ logger.request = function (req, res, next) {
     traceId,
     method: req.method,
     path: req.originalUrl,
-    ip: req.ip
   });
 
   res.on("finish", () => {
-    const duration = Date.now() - start;
-
     logger.info("REQUEST END", {
       traceId,
       status: res.statusCode,
-      duration: duration + "ms"
+      duration: Date.now() - start,
     });
   });
 
@@ -145,77 +151,9 @@ logger.errorHandler = function (err, req) {
   logger.error("SERVER ERROR", {
     traceId: req?.traceId,
     path: req?.originalUrl,
-    method: req?.method,
     message: err.message,
-    stack: err.stack
   });
 };
-
-/* =====================================================
-🔥 PERFORMANCE TIMER
-===================================================== */
-logger.timer = function (label = "TIMER") {
-  const start = Date.now();
-
-  return {
-    end: () => {
-      const duration = Date.now() - start;
-      logger.debug(label, { duration: duration + "ms" });
-      return duration;
-    }
-  };
-};
-
-/* =====================================================
-🔥 CUSTOM EVENT
-===================================================== */
-logger.event = function (name, payload = {}) {
-  logger.info("EVENT:" + name, payload);
-};
-
-/* =====================================================
-🔥 DB LOGGER
-===================================================== */
-logger.db = function (query, duration) {
-  logger.debug("DB QUERY", {
-    query: safeStr(query),
-    duration: duration + "ms"
-  });
-};
-
-/* =====================================================
-🔥 AUTH LOGGER
-===================================================== */
-logger.auth = function (user, action) {
-  logger.info("AUTH", {
-    userId: user?.id,
-    role: user?.role,
-    action
-  });
-};
-
-/* =====================================================
-🔥 PAYMENT LOGGER
-===================================================== */
-logger.payment = function (data) {
-  logger.info("PAYMENT", data);
-};
-
-/* =====================================================
-🔥 ADMIN LOGGER
-===================================================== */
-logger.admin = function (data) {
-  logger.warn("ADMIN ACTION", data);
-};
-
-/* =====================================================
-🔥 CLEANUP (메모리 보호)
-===================================================== */
-let LOG_COUNT = 0;
-
-setInterval(() => {
-  LOG_COUNT = 0;
-}, 60000);
 
 /* =====================================================
 🔥 FINAL

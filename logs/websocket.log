@@ -1,0 +1,85 @@
+[2026-01-01T00:00:00.000Z] INFO WS_INIT {"service":"websocket","status":"ready"}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL WS_EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 CONNECTION EVENTS
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO WS_CONNECT {"ip":"127.0.0.1","path":"/ws/user"}
+[2026-01-01T10:00:01.000Z] INFO WS_CONNECT {"ip":"127.0.0.1","path":"/ws/admin"}
+
+[2026-01-01T10:00:05.000Z] INFO WS_DISCONNECT {"userId":"u_001","reason":"client_close"}
+[2026-01-01T10:00:06.000Z] INFO WS_DISCONNECT {"userId":"admin_01","reason":"network_error"}
+
+# =====================================================
+# 🔥 AUTH EVENTS
+# =====================================================
+
+[2026-01-01T10:01:00.000Z] INFO WS_AUTH_SUCCESS {"userId":"u_001","role":"user"}
+[2026-01-01T10:01:01.000Z] INFO WS_AUTH_SUCCESS {"userId":"admin_01","role":"admin"}
+
+[2026-01-01T10:01:05.000Z] ERROR WS_AUTH_FAIL {"reason":"INVALID_TOKEN"}
+[2026-01-01T10:01:06.000Z] ERROR WS_AUTH_FAIL {"reason":"TOKEN_EXPIRED"}
+
+# =====================================================
+# 🔥 MESSAGE EVENTS
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] INFO WS_MESSAGE {"type":"PING","userId":"u_001"}
+[2026-01-01T10:02:01.000Z] INFO WS_MESSAGE {"type":"GET_MY_RESERVATIONS","userId":"u_001"}
+
+[2026-01-01T10:02:02.000Z] INFO WS_MESSAGE {"type":"ADMIN_GET_USERS","userId":"admin_01"}
+
+# =====================================================
+# 🔥 ERROR EVENTS
+# =====================================================
+
+[2026-01-01T10:03:00.000Z] ERROR WS_INVALID_JSON {"raw":"{bad json}"}
+[2026-01-01T10:03:01.000Z] ERROR WS_UNKNOWN_TYPE {"type":"UNKNOWN_EVENT"}
+
+# =====================================================
+# 🔥 BROADCAST EVENTS
+# =====================================================
+
+[2026-01-01T10:04:00.000Z] INFO WS_BROADCAST {"type":"NOTICE","targets":120}
+[2026-01-01T10:04:01.000Z] INFO WS_BROADCAST {"type":"RESERVATION_UPDATE","targets":5}
+
+# =====================================================
+# 🔥 SUBSCRIPTION EVENTS
+# =====================================================
+
+[2026-01-01T10:05:00.000Z] INFO WS_SUBSCRIBE {"userId":"u_001","reservationId":"r_001"}
+[2026-01-01T10:05:01.000Z] INFO WS_UNSUBSCRIBE {"userId":"u_001","reservationId":"r_001"}
+
+# =====================================================
+# 🔥 PERFORMANCE / HEALTH
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] INFO WS_HEALTH {"connections":45,"activeUsers":30}
+[2026-01-01T10:06:01.000Z] WARN WS_HIGH_LOAD {"connections":500}
+
+# =====================================================
+# 🔥 SECURITY EVENTS
+# =====================================================
+
+[2026-01-01T10:07:00.000Z] WARN WS_RATE_LIMIT {"ip":"127.0.0.1","count":500}
+[2026-01-01T10:07:01.000Z] ERROR WS_UNAUTHORIZED_ACCESS {"ip":"192.168.0.10"}
+
+# =====================================================
+# 🔥 SYSTEM EVENTS
+# =====================================================
+
+[2026-01-01T10:08:00.000Z] INFO WS_RESTART {"reason":"deployment"}
+[2026-01-01T10:08:01.000Z] CRITICAL WS_CRASH {"reason":"memory overflow"}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO WS_EVENT {"type":"PING"}\n`;
+# fs.appendFileSync("logs/websocket.log", log);
+# =====================================================

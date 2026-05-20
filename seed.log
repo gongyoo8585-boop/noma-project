@@ -1,0 +1,32 @@
+[2026-05-10T13:20:01.000Z] info: SERVER START SUCCESS
+[2026-05-10T13:20:01.102Z] info: MongoDB connected
+[2026-05-10T13:20:01.320Z] info: DB STATE READY
+[2026-05-10T13:20:01.551Z] info: JWT_SECRET LOADED
+[2026-05-10T13:20:01.771Z] info: authRouter mounted
+[2026-05-10T13:20:01.994Z] info: userRouter mounted
+[2026-05-10T13:20:02.211Z] info: adminRouter mounted
+[2026-05-10T13:20:02.432Z] info: reservationRouter mounted
+[2026-05-10T13:20:02.652Z] info: shopRouter mounted
+[2026-05-10T13:20:02.871Z] info: reviewRouter mounted
+[2026-05-10T13:20:03.091Z] info: paymentRouter mounted
+[2026-05-10T13:20:03.301Z] info: paymentVerifyRouter mounted
+[2026-05-10T13:20:03.554Z] info: SOCKET SERVER READY
+[2026-05-10T13:20:03.881Z] info: CACHE SYSTEM READY
+[2026-05-10T13:20:04.103Z] info: RATE LIMIT READY
+[2026-05-10T13:20:04.331Z] info: STATIC PATH READY
+[2026-05-10T13:20:04.662Z] info: HEALTH ROUTE READY
+[2026-05-10T13:20:04.921Z] info: SYSTEM STATUS READY
+[2026-05-10T13:20:05.130Z] info: shops collection detected
+[2026-05-10T13:20:05.381Z] info: Shop documents loaded
+[2026-05-10T13:20:05.602Z] info: Reservation system ready
+[2026-05-10T13:20:05.881Z] info: Review system ready
+[2026-05-10T13:20:06.117Z] info: Payment system ready
+[2026-05-10T13:20:06.339Z] info: Admin dashboard ready
+[2026-05-10T13:20:06.581Z] info: Map API ready
+[2026-05-10T13:20:06.792Z] info: Kakao Map connected
+[2026-05-10T13:20:07.004Z] info: Nearby shop API ready
+[2026-05-10T13:20:07.251Z] info: Upload system ready
+[2026-05-10T13:20:07.494Z] info: Notification system ready
+[2026-05-10T13:20:07.730Z] info: WebSocket ready
+[2026-05-10T13:20:07.991Z] info: API READY
+[2026-05-10T13:20:08.220Z] info: SERVER RUNNING PORT 10000

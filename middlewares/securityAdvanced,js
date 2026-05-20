@@ -1,0 +1,156 @@
+"use strict";
+
+/* =====================================================
+🔥 ADVANCED SECURITY MIDDLEWARE
+👉 HTTP 보안 / 공격 방어 / rate limit / IP 차단
+===================================================== */
+
+/* =====================================================
+🔥 REQUIRE
+===================================================== */
+const helmet = require("helmet");
+
+/* =====================================================
+🔥 SAFE REQUIRE
+===================================================== */
+let cacheService = null;
+let logger = null;
+let slack = null;
+let analyticsService = null;
+
+try { cacheService = require("../services/cacheService"); } catch (_) {}
+try { logger = require("../services/logger.elk"); } catch (_) {}
+try { slack = require("../services/slack.alert"); } catch (_) {}
+try { analyticsService = require("../services/analyticsService"); } catch (_) {}
+
+/* =====================================================
+🔥 CONFIG
+===================================================== */
+const MAX_REQ = Number(process.env.SEC_RATE_LIMIT || 200);
+const WINDOW = Number(process.env.SEC_RATE_WINDOW || 60);
+
+/* =====================================================
+🔥 HELPER
+===================================================== */
+function getIP(req) {
+  return (
+    req.headers["x-forwarded-for"] ||
+    req.socket?.remoteAddress ||
+    "unknown"
+  );
+}
+
+function isMalicious(input = "") {
+  const patterns = [
+    /<script/i,
+    /select.*from/i,
+    /union.*select/i,
+    /drop table/i,
+    /--/,
+    /;/,
+  ];
+
+  return patterns.some(p => p.test(input));
+}
+
+function fail(res, code, message) {
+  return res.status(code).json({
+    success: false,
+    message,
+  });
+}
+
+/* =====================================================
+🔥 MAIN MIDDLEWARE
+===================================================== */
+function securityAdvanced() {
+  return [
+    /* =====================================================
+    🔥 HELMET (기본 보안)
+    ===================================================== */
+    helmet(),
+
+    /* =====================================================
+    🔥 CUSTOM SECURITY
+    ===================================================== */
+    async (req, res, next) => {
+      try {
+        const ip = getIP(req);
+
+        /* =====================================================
+        🔥 IP BLOCK CHECK
+        ===================================================== */
+        if (cacheService?.get(`block:${ip}`)) {
+          return fail(res, 403, "IP_BLOCKED");
+        }
+
+        /* =====================================================
+        🔥 RATE LIMIT
+        ===================================================== */
+        const key = `sec:rate:${ip}`;
+
+        let count = cacheService?.get(key) || 0;
+        count++;
+
+        cacheService?.set(key, count, WINDOW);
+
+        if (count > MAX_REQ) {
+          cacheService?.set(`block:${ip}`, true, 300);
+
+          logger?.warn("rate_limit_block", { ip });
+
+          slack?.warn?.("IP 차단 발생", { ip });
+
+          return fail(res, 429, "TOO_MANY_REQUESTS");
+        }
+
+        /* =====================================================
+        🔥 INPUT SCAN (XSS / SQLi)
+        ===================================================== */
+        const inputs = [
+          JSON.stringify(req.body || {}),
+          JSON.stringify(req.query || {}),
+          JSON.stringify(req.params || {}),
+        ].join(" ");
+
+        if (isMalicious(inputs)) {
+          logger?.error("malicious_detected", {
+            ip,
+            inputs,
+          });
+
+          analyticsService?.track({
+            type: "security_attack",
+            payload: { ip },
+          });
+
+          slack?.error?.(new Error("Malicious Request"), {
+            ip,
+          });
+
+          return fail(res, 400, "INVALID_INPUT");
+        }
+
+        /* =====================================================
+        🔥 HEADERS HARDENING
+        ===================================================== */
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("X-Frame-Options", "DENY");
+        res.setHeader("X-XSS-Protection", "1; mode=block");
+
+        next();
+      } catch (err) {
+        logger?.error("security_error", {
+          message: err.message,
+        });
+
+        return fail(res, 500, "SECURITY_ERROR");
+      }
+    },
+  ];
+}
+
+/* =====================================================
+🔥 EXPORT
+===================================================== */
+module.exports = securityAdvanced;

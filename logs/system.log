@@ -1,0 +1,81 @@
+[2026-01-01T00:00:00.000Z] INFO  SYSTEM_INIT {"env":"production","service":"massage-platform"}
+[2026-01-01T00:00:01.000Z] INFO  SERVER_START {"port":10000,"host":"0.0.0.0"}
+[2026-01-01T00:00:02.000Z] INFO  DB_CONNECT_SUCCESS {"db":"mongodb","status":"connected"}
+[2026-01-01T00:00:03.000Z] INFO  REDIS_CONNECT_SUCCESS {"status":"connected"}
+[2026-01-01T00:00:04.000Z] INFO  WEBSOCKET_INIT {"path":"/ws"}
+[2026-01-01T00:00:05.000Z] INFO  ROUTES_LOADED {"modules":["user","admin","payment","reservation"]}
+
+# =====================================================
+# 🔥 FORMAT
+# [ISO_TIMESTAMP] LEVEL EVENT DATA(JSON)
+# =====================================================
+
+# =====================================================
+# 🔥 LEVEL
+# INFO / WARN / ERROR / DEBUG / CRITICAL
+# =====================================================
+
+# =====================================================
+# 🔥 SERVER EVENTS
+# =====================================================
+
+[2026-01-01T10:00:00.000Z] INFO  REQUEST_START {"method":"GET","url":"/api/health"}
+[2026-01-01T10:00:00.120Z] INFO  REQUEST_END {"status":200,"duration":120}
+
+[2026-01-01T10:01:00.000Z] INFO  USER_LOGIN {"userId":"u_001","ip":"127.0.0.1"}
+[2026-01-01T10:01:10.000Z] INFO  USER_LOGOUT {"userId":"u_001"}
+
+# =====================================================
+# 🔥 BUSINESS EVENTS
+# =====================================================
+
+[2026-01-01T10:02:00.000Z] INFO  RESERVATION_CREATE {"reservationId":"r_001","userId":"u_001"}
+[2026-01-01T10:03:00.000Z] INFO  RESERVATION_CANCEL {"reservationId":"r_001"}
+
+[2026-01-01T10:04:00.000Z] INFO  PAYMENT_SUCCESS {"paymentId":"p_001","amount":50000}
+[2026-01-01T10:05:00.000Z] WARN  PAYMENT_RETRY {"paymentId":"p_002","retry":1}
+
+# =====================================================
+# 🔥 SYSTEM WARN / ERROR
+# =====================================================
+
+[2026-01-01T10:06:00.000Z] WARN  MEMORY_HIGH {"usage":"82%"}
+[2026-01-01T10:07:00.000Z] ERROR DB_QUERY_FAIL {"query":"findUser","error":"timeout"}
+
+[2026-01-01T10:08:00.000Z] ERROR AUTH_FAIL {"userId":"u_002","reason":"INVALID_PASSWORD"}
+
+# =====================================================
+# 🔥 CRITICAL
+# =====================================================
+
+[2026-01-01T10:09:00.000Z] CRITICAL SYSTEM_CRASH {"service":"payment","reason":"OUT_OF_MEMORY"}
+
+# =====================================================
+# 🔥 WEBSOCKET EVENTS
+# =====================================================
+
+[2026-01-01T11:00:00.000Z] INFO  WS_CONNECT {"ip":"127.0.0.1"}
+[2026-01-01T11:00:10.000Z] INFO  WS_AUTH {"userId":"u_001"}
+[2026-01-01T11:01:00.000Z] INFO  WS_DISCONNECT {"userId":"u_001"}
+
+# =====================================================
+# 🔥 HEALTH CHECK
+# =====================================================
+
+[2026-01-01T12:00:00.000Z] INFO  HEALTH_OK {"uptime":3600}
+[2026-01-01T12:05:00.000Z] WARN  CPU_HIGH {"usage":"90%"}
+
+# =====================================================
+# 🔥 CLEANUP / MAINTENANCE
+# =====================================================
+
+[2026-01-01T13:00:00.000Z] INFO  CLEANUP_START {}
+[2026-01-01T13:01:00.000Z] INFO  CLEANUP_DONE {"deletedLogs":500}
+
+# =====================================================
+# 🔥 WRITE EXAMPLE (NODE)
+# =====================================================
+# const fs = require("fs");
+# const line = `[${new Date().toISOString()}] INFO EVENT {"key":"value"}\n`;
+# fs.appendFileSync("logs/system.log", line);
+# =====================================================

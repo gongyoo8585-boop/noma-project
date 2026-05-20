@@ -1,0 +1,475 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   /client/src/index.css
+   NORA ULTRA PREMIUM FINAL
+   블랙 + 메탈 골드 + 핑크 포인트
+   글씨 네온 제거
+   박스/테두리만 골드 glow
+   업로드 디자인 기준 완성형
+========================================================= */
+
+/* =========================================================
+   RESET
+========================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #030303;
+}
+
+body {
+  overflow-x: hidden;
+
+  background:
+    radial-gradient(
+      circle at 10% 0%,
+      rgba(255, 0, 128, 0.035),
+      transparent 22%
+    ),
+    radial-gradient(
+      circle at 80% 0%,
+      rgba(212, 175, 55, 0.035),
+      transparent 28%
+    ),
+    #030303;
+
+  color: #ffffff;
+
+  font-family:
+    "Pretendard",
+    "Noto Sans KR",
+    "Apple SD Gothic Neo",
+    sans-serif;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =========================================================
+   COLOR SYSTEM
+========================================================= */
+
+:root {
+  --nora-black: #030303;
+  --nora-black-soft: #080808;
+  --nora-panel: #0b0b0b;
+
+  --nora-gold-light: #fff8d6;
+  --nora-gold-soft: #f7e4a0;
+  --nora-gold: #d4af37;
+  --nora-gold-deep: #b8860b;
+  --nora-gold-dark: #8b6508;
+
+  --nora-pink: #ff005d;
+  --nora-pink-soft: #ff3d91;
+  --nora-pink-deep: #d9005f;
+
+  --gold-gradient:
+    linear-gradient(
+      135deg,
+      #fff8d6 0%,
+      #f7e4a0 14%,
+      #e7c96f 30%,
+      #d4af37 48%,
+      #b8860b 68%,
+      #8b6508 100%
+    );
+
+  --gold-border-gradient:
+    linear-gradient(
+      135deg,
+      rgba(255,248,214,0.96) 0%,
+      rgba(231,201,111,0.96) 24%,
+      rgba(212,175,55,0.96) 48%,
+      rgba(184,134,11,0.96) 72%,
+      rgba(255,248,214,0.86) 100%
+    );
+
+  --gold-panel:
+    linear-gradient(
+      180deg,
+      rgba(12,12,12,0.98) 0%,
+      rgba(5,5,5,1) 100%
+    );
+
+  --gold-glow:
+    0 0 5px rgba(255,248,214,0.10),
+    0 0 12px rgba(212,175,55,0.10),
+    0 0 24px rgba(184,134,11,0.06);
+
+  --gold-glow-strong:
+    0 0 6px rgba(255,248,214,0.13),
+    0 0 16px rgba(212,175,55,0.14),
+    0 0 34px rgba(184,134,11,0.08);
+
+  --pink-gradient:
+    linear-gradient(
+      135deg,
+      #ff005d 0%,
+      #ff3d91 100%
+    );
+}
+
+/* =========================================================
+   TEXT NEON REMOVE
+========================================================= */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+label,
+small,
+div,
+a,
+li,
+strong,
+b,
+input,
+textarea,
+select,
+button {
+  text-shadow: none !important;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  outline: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-shadow: none !important;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  object-fit: cover;
+}
+
+/* =========================================================
+   LOGO ONLY PINK NEON
+========================================================= */
+
+.nora-logo,
+.logo,
+.site-logo {
+  color: #ffffff;
+  text-shadow:
+    0 0 5px rgba(255,255,255,0.9),
+    0 0 12px rgba(255,0,128,0.95),
+    0 0 24px rgba(255,0,128,0.65) !important;
+}
+
+/* =========================================================
+   SCROLLBAR
+========================================================= */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      #fff8d6 0%,
+      #d4af37 42%,
+      #b8860b 100%
+    );
+  box-shadow:
+    0 0 5px rgba(212,175,55,0.12);
+}
+
+/* =========================================================
+   COMMON GOLD BORDER
+========================================================= */
+
+.neon-gold-border,
+.gold-border,
+.gold-panel {
+  position: relative;
+  background: var(--gold-panel);
+  border: 1px solid rgba(212,175,55,0.88);
+  box-shadow: var(--gold-glow);
+  overflow: hidden;
+}
+
+.neon-gold-border::before,
+.gold-border::before,
+.gold-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--gold-border-gradient);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* =========================================================
+   CARD
+========================================================= */
+
+.neon-card,
+.gold-card,
+.shop-card,
+.map-card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(12,12,12,0.98) 0%,
+      rgba(0,0,0,1) 100%
+    );
+  border: 1px solid rgba(212,175,55,0.82);
+  box-shadow: var(--gold-glow);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  text-shadow: none !important;
+}
+
+.neon-card:hover,
+.gold-card:hover,
+.shop-card:hover,
+.map-card:hover {
+  box-shadow: var(--gold-glow-strong);
+}
+
+/* =========================================================
+   BUTTON
+========================================================= */
+
+.neon-gold-button,
+.gold-button {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid rgba(212,175,55,0.82);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(18,18,18,0.98) 0%,
+      rgba(0,0,0,1) 100%
+    );
+  color: #ffffff;
+  box-shadow: var(--gold-glow);
+  text-shadow: none !important;
+}
+
+.neon-gold-button:hover,
+.gold-button:hover {
+  box-shadow: var(--gold-glow-strong);
+}
+
+.neon-pink-button,
+.pink-button {
+  border-radius: 14px;
+  background: var(--pink-gradient);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: #ffffff;
+  box-shadow:
+    0 0 6px rgba(255,0,93,0.12);
+  text-shadow: none !important;
+}
+
+/* =========================================================
+   INPUT / SELECT
+========================================================= */
+
+input,
+select,
+textarea {
+  outline: none;
+  border: 1px solid rgba(212,175,55,0.62);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(10,10,10,0.98) 0%,
+      rgba(0,0,0,1) 100%
+    );
+  color: #ffffff;
+  text-shadow: none !important;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(212,175,55,0.92);
+  box-shadow:
+    0 0 5px rgba(212,175,55,0.12),
+    0 0 12px rgba(184,134,11,0.08);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(255,255,255,0.45);
+}
+
+/* =========================================================
+   TEXT COLOR HELPERS
+========================================================= */
+
+.neon-gold-text,
+.gold-text {
+  color: #ffffff;
+  text-shadow: none !important;
+  -webkit-text-fill-color: unset;
+  background: none;
+}
+
+.neon-pink-text,
+.pink-text {
+  color: #ff3d91;
+  text-shadow: none !important;
+}
+
+/* =========================================================
+   PRICE / NUMBER
+========================================================= */
+
+.price,
+.amount,
+.number,
+.percent,
+.discount,
+.rating,
+.review-count {
+  color: #ffffff !important;
+  text-shadow: none !important;
+}
+
+.discount-badge,
+.percent-badge,
+.sale-badge {
+  background: var(--pink-gradient) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  box-shadow:
+    0 0 5px rgba(255,0,93,0.10) !important;
+  text-shadow: none !important;
+}
+
+/* =========================================================
+   MAP
+========================================================= */
+
+.dark-map-filter {
+  filter:
+    brightness(0.28)
+    contrast(1.32)
+    saturate(0.68)
+    sepia(0.16)
+    hue-rotate(-8deg);
+}
+
+.kakao-map,
+.map-container,
+.map-wrapper {
+  background: #020202;
+}
+
+/* =========================================================
+   DIVIDER
+========================================================= */
+
+.gold-divider {
+  width: 100%;
+  height: 1px;
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(212,175,55,0.92),
+      rgba(184,134,11,0.9),
+      transparent
+    );
+  box-shadow:
+    0 0 5px rgba(212,175,55,0.08);
+}
+
+/* =========================================================
+   OVERRIDE OLD YELLOW
+   기존 노란색 잔상 제거
+========================================================= */
+
+[style*="#FFD700"],
+[style*="#ffd700"],
+[style*="#ffcc00"],
+[style*="#FFCC00"],
+[style*="#ffe066"],
+[style*="#FFE066"],
+[style*="#ffff00"],
+[style*="#FFFF00"] {
+  text-shadow: none !important;
+}
+
+svg,
+path,
+circle,
+rect,
+line,
+polyline,
+polygon {
+  filter: none;
+}
+
+/* =========================================================
+   MOBILE
+========================================================= */
+
+@media (max-width: 1280px) {
+  html,
+  body {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    min-width: 1400px;
+  }
+}

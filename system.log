@@ -1,0 +1,53 @@
+[2026-01-01T00:00:00.000Z] INFO  SYSTEM_INIT {"env":"production"}
+[2026-01-01T00:00:01.000Z] INFO  SERVER_START {"port":3000}
+[2026-01-01T00:00:02.000Z] INFO  DB_CONNECT_SUCCESS {"db":"mongodb"}
+[2026-01-01T00:00:03.000Z] INFO  CACHE_READY {}
+[2026-01-01T00:00:04.000Z] INFO  WEBSOCKET_READY {}
+
+# =========================================
+# FORMAT
+# [ISO_TIMESTAMP] LEVEL EVENT DATA(JSON)
+# =========================================
+
+# =========================================
+# LEVEL
+# INFO / WARN / ERROR / DEBUG / CRITICAL
+# =========================================
+
+# =========================================
+# SAMPLE LOGS
+# =========================================
+
+[2026-01-01T10:00:00.000Z] INFO  USER_LOGIN {"userId":"u_001","ip":"127.0.0.1"}
+[2026-01-01T10:01:00.000Z] INFO  RESERVATION_CREATE {"reservationId":"r_001","userId":"u_001"}
+[2026-01-01T10:02:00.000Z] INFO  PAYMENT_SUCCESS {"paymentId":"p_001","amount":50000}
+
+[2026-01-01T10:03:00.000Z] WARN  RATE_LIMIT {"ip":"127.0.0.1","reason":"TOO_MANY_REQUESTS"}
+
+[2026-01-01T10:04:00.000Z] ERROR DB_QUERY_FAIL {"query":"findUser","error":"timeout"}
+[2026-01-01T10:05:00.000Z] ERROR AUTH_FAIL {"userId":"u_002","reason":"INVALID_PASSWORD"}
+
+[2026-01-01T10:06:00.000Z] CRITICAL SYSTEM_CRASH {"service":"payment","reason":"OUT_OF_MEMORY"}
+
+# =========================================
+# MODULE LOG EXAMPLES
+# =========================================
+
+[2026-01-01T11:00:00.000Z] INFO  ADMIN_ACTION {"adminId":"admin_01","action":"DELETE_USER","target":"u_003"}
+[2026-01-01T11:01:00.000Z] INFO  COUPON_APPLY {"userId":"u_001","coupon":"CP-1000"}
+[2026-01-01T11:02:00.000Z] INFO  SLOT_RESERVE {"slot":"14:00","branchId":"b_001"}
+
+# =========================================
+# HEALTH CHECK LOG
+# =========================================
+
+[2026-01-01T12:00:00.000Z] INFO  HEALTH_OK {"uptime":3600}
+[2026-01-01T12:05:00.000Z] WARN  MEMORY_HIGH {"usage":"85%"}
+
+# =========================================
+# WRITE EXAMPLE (NODE)
+# =========================================
+# const fs = require("fs");
+# const log = `[${new Date().toISOString()}] INFO EVENT {"key":"value"}\n`;
+# fs.appendFileSync("system.log", log);
+# =========================================
