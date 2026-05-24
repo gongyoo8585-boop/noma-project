@@ -105,6 +105,9 @@ jobs:
 
             pm2 save
 
+            echo "WAIT SERVER START"
+            sleep 15
+
             sudo systemctl daemon-reload
             sudo nginx -t
             sudo systemctl reload nginx
