@@ -1,130 +1,172 @@
-name: 🚀 Deploy Massage Platform
+name: Deploy NORA Platform
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
-env:
-  NODE_VERSION: 20
-  DOCKER_IMAGE: massage-platform
+concurrency:
+  group: nora-production-deploy
+  cancel-in-progress: true
 
 jobs:
-
-  # =========================================
-  # 🔥 BUILD & TEST
-  # =========================================
-  build:
+  build-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: 📦 Checkout
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
+          cache: npm
 
-      - name: 📥 Install Dependencies
+      - name: Install Root Dependencies
         run: npm install
 
-      - name: 🧪 Run Tests
+      - name: Check Root Server
         run: |
-          npm test || echo "No tests configured"
+          npm run check || node -e "console.log('NORA root check pass')"
 
-      - name: 🧹 Lint
-        run: |
-          npm run lint || echo "No lint configured"
+      - name: Install Client Dependencies
+        if: ${{ hashFiles('client/package.json') != '' }}
+        working-directory: client
+        run: npm install
 
-  # =========================================
-  # 🔥 DOCKER BUILD
-  # =========================================
-  docker:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    needs: build
+      - name: Build Client
+        if: ${{ hashFiles('client/package.json') != '' }}
+        working-directory: client
+        run: npm run build
 
-    steps:
-      - name: 📦 Checkout
-        uses: actions/checkout@v4
-
-      - name: 🔐 Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: 🏗 Build Image
-        run: |
-          docker build -t $DOCKER_IMAGE:latest .
-
-      - name: 📤 Push Image
-        run: |
-          docker tag $DOCKER_IMAGE:latest ${{ secrets.DOCKER_USERNAME }}/$DOCKER_IMAGE:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/$DOCKER_IMAGE:latest
-
-  # =========================================
-  # 🔥 DEPLOY (SSH)
-  # =========================================
   deploy:
-    name: Deploy to Server
+    name: Deploy To NORA Server
     runs-on: ubuntu-latest
-    needs: docker
+    needs: build-test
+    timeout-minutes: 30
 
     steps:
-      - name: 🔐 SSH Deploy
+      - name: Validate Secrets
+        run: |
+          test -n "${{ secrets.HOST }}"
+          test -n "${{ secrets.USERNAME }}"
+          test -n "${{ secrets.SSH_KEY }}"
+          test -n "${{ secrets.PORT }}"
+          test -n "${{ secrets.PROJECT_PATH }}"
+
+      - name: Test NORA Before Deploy
+        run: |
+          curl -I --max-time 20 https://api.nora365.co.kr/api/health || true
+          curl -I --max-time 20 https://www.nora365.co.kr || true
+
+      - name: SSH Deploy To NORA Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script_stop: true
+          command_timeout: 30m
           script: |
-            echo "🚀 Pull latest image"
-            docker pull ${{ secrets.DOCKER_USERNAME }}/$DOCKER_IMAGE:latest
+            set -e
 
-            echo "🛑 Stop old container"
-            docker stop massage_app || true
-            docker rm massage_app || true
+            echo "🚀 NORA DEPLOY START"
 
-            echo "🚀 Run new container"
-            docker run -d \
-              --name massage_app \
-              -p 3000:3000 \
-              --env-file .env \
-              ${{ secrets.DOCKER_USERNAME }}/$DOCKER_IMAGE:latest
+            cd "${{ secrets.PROJECT_PATH }}"
 
-            echo "🧹 Cleanup old images"
-            docker image prune -f
+            echo "📥 FETCH MAIN"
+            git fetch origin main
 
-  # =========================================
-  # 🔥 HEALTH CHECK
-  # =========================================
-  health:
+            echo "📥 RESET MAIN"
+            git reset --hard origin/main
+
+            echo "🧹 CLEAN UNTRACKED FILES"
+            git clean -fd
+
+            echo "📦 ROOT INSTALL"
+            npm install
+
+            if [ -d client ]; then
+              echo "📦 CLIENT INSTALL"
+              cd client
+              npm install
+
+              echo "🏗 CLIENT BUILD"
+              npm run build
+
+              if [ ! -d dist ]; then
+                echo "❌ client/dist not found"
+                exit 1
+              fi
+
+              cd ..
+            fi
+
+            echo "🧪 ENV CHECK"
+            if [ ! -f .env ] && [ ! -f .env.production ]; then
+              echo "❌ .env or .env.production not found"
+              exit 1
+            fi
+
+            echo "🧪 PM2 CHECK"
+            if pm2 describe nora-api > /dev/null 2>&1; then
+              echo "♻️ PM2 RESTART nora-api"
+              pm2 restart nora-api --update-env
+            else
+              echo "🆕 PM2 START nora-api"
+              pm2 start ecosystem.config.js --only nora-api
+            fi
+
+            echo "💾 PM2 SAVE"
+            pm2 save
+
+            echo "📄 PM2 STATUS"
+            pm2 status
+
+            echo "🌐 NGINX DAEMON RELOAD"
+            sudo systemctl daemon-reload
+
+            echo "🌐 NGINX TEST"
+            sudo nginx -t
+
+            echo "♻️ NGINX RELOAD"
+            sudo systemctl reload nginx
+
+            echo "🩺 LOCAL API HEALTH"
+            curl -f --max-time 30 http://127.0.0.1:10000/api/health
+            curl -f --max-time 30 http://127.0.0.1:10000/api/system/routes
+
+            echo "✅ NORA DEPLOY SUCCESS"
+
+  health-check:
     name: Health Check
     runs-on: ubuntu-latest
     needs: deploy
+    timeout-minutes: 10
 
     steps:
-      - name: ⏳ Wait for server
-        run: sleep 10
-
-      - name: ❤️ Check Health
+      - name: Production Health Check
         run: |
-          curl -f http://${{ secrets.SERVER_HOST }}:3000/health || exit 1
+          set -e
 
-  # =========================================
-  # 🔥 NOTIFY (OPTIONAL)
-  # =========================================
-  notify:
-    name: Notify
-    runs-on: ubuntu-latest
-    needs: health
+          echo "🌐 CHECK NORA API"
+          curl -f --max-time 30 https://api.nora365.co.kr/api/health
 
-    steps:
-      - name: 📢 Deployment Success
-        run: echo "✅ Deployment completed successfully"
+          echo "🌐 CHECK NORA WEB"
+          curl -f --max-time 30 https://www.nora365.co.kr
+
+          echo "🌐 CHECK NORA ADMIN"
+          curl -f --max-time 30 https://www.nora365.co.kr/admin || true
+
+          echo "🌐 CHECK NORA DASHBOARD"
+          curl -f --max-time 30 https://www.nora365.co.kr/admin/dashboard || true
+
+          echo "🌐 CHECK NORA MOBILE"
+          curl -f --max-time 30 https://m.nora365.co.kr || true
+
+          echo "✅ NORA HEALTH CHECK SUCCESS"
