@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- SEO -->
+  <meta name="description" content="노마 마사지 예약 플랫폼" />
+  <meta name="keywords" content="마사지, 예약, 스파, 힐링, 노마" />
+
+  <!-- PWA -->
+  <meta name="theme-color" content="#000000" />
+
+  <title>노마 마사지 플랫폼</title>
+
+  <!-- 🔥 카카오맵 SDK -->
+  <script
+    src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services,clusterer,drawing&autoload=false"
+  ></script>
+
+  <!-- 🔥 기본 스타일 (블랙 + 골드 테마) -->
+  <style>
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      color: #d4af37;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto;
+    }
+
+    #loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      font-size: 20px;
+      color: #d4af37;
+      background: #000;
+    }
+
+    /* 스크롤바 */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d4af37;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #111;
+    }
+  </style>
+
+  <!-- 🔥 최소 추가: Kakao SDK 상태 플래그 -->
+  <script>
+    window.__KAKAO_SDK_LOADED__ = false;
+
+    window.addEventListener("load", () => {
+      if (window.kakao && window.kakao.maps) {
+        window.__KAKAO_SDK_LOADED__ = true;
+      }
+    });
+  </script>
+  <script type="module" crossorigin src="/assets/index-B2MaeAkK.js"></script>
+</head>
+
+<body>
+  <noscript>이 앱을 실행하려면 JavaScript를 활성화하세요.</noscript>
+
+  <!-- React Root -->
+  <div id="root">
+    <div id="loading">🚀 노마 로딩 중...</div>
+  </div>
+
+  <!-- 🔥 환경 변수 (Vite 환경 대응 안전값) -->
+  <script>
+    window.__ENV__ = {
+      API_BASE_URL: "",
+      KAKAO_KEY: "290ec1ed8354f004a77502dfef5cbd28"
+    };
+  </script>
+
+  <!-- 🔥 카카오맵 로드 확인 -->
+  <script>
+    window.addEventListener("load", () => {
+      if (!window.kakao || !window.kakao.maps) {
+        console.error("❌ Kakao Map SDK 로드 실패");
+      } else {
+        console.log("✅ Kakao Map SDK 로드 완료");
+
+        if (window.kakao.maps.load) {
+          window.kakao.maps.load(() => {
+            console.log("✅ Kakao Map API 초기화 완료");
+          });
+        }
+      }
+    });
+  </script>
+
+  <!-- 🔥 서비스 워커 (PWA 준비) -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js")
+        .then(() => console.log("✅ SW 등록"))
+        .catch(() => console.warn("❌ SW 실패"));
+    }
+  </script>
+
+  <!-- 🔥 React 진입 -->
+</body>
+</html>
