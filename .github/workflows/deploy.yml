@@ -30,8 +30,7 @@ jobs:
         run: npm install
 
       - name: Check Root Server
-        run: |
-          npm run check || node -e "console.log('NORA root check pass')"
+        run: npm run check || node -e "console.log('NORA root check pass')"
 
       - name: Install Client Dependencies
         if: ${{ hashFiles('client/package.json') != '' }}
@@ -58,11 +57,6 @@ jobs:
           test -n "${{ secrets.PORT }}"
           test -n "${{ secrets.PROJECT_PATH }}"
 
-      - name: Test NORA Before Deploy
-        run: |
-          curl -I --max-time 20 https://api.nora365.co.kr/api/health || true
-          curl -I --max-time 20 https://www.nora365.co.kr || true
-
       - name: SSH Deploy To NORA Server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -75,73 +69,50 @@ jobs:
           script: |
             set -e
 
-            echo "🚀 NORA DEPLOY START"
+            echo "NORA DEPLOY START"
 
             cd "${{ secrets.PROJECT_PATH }}"
 
-            echo "📥 FETCH MAIN"
             git fetch origin main
-
-            echo "📥 RESET MAIN"
             git reset --hard origin/main
-
-            echo "🧹 CLEAN UNTRACKED FILES"
             git clean -fd
 
-            echo "📦 ROOT INSTALL"
             npm install
 
             if [ -d client ]; then
-              echo "📦 CLIENT INSTALL"
               cd client
               npm install
-
-              echo "🏗 CLIENT BUILD"
               npm run build
 
               if [ ! -d dist ]; then
-                echo "❌ client/dist not found"
+                echo "client/dist not found"
                 exit 1
               fi
 
               cd ..
             fi
 
-            echo "🧪 ENV CHECK"
             if [ ! -f .env ] && [ ! -f .env.production ]; then
-              echo "❌ .env or .env.production not found"
+              echo ".env or .env.production not found"
               exit 1
             fi
 
-            echo "🧪 PM2 CHECK"
             if pm2 describe nora-api > /dev/null 2>&1; then
-              echo "♻️ PM2 RESTART nora-api"
               pm2 restart nora-api --update-env
             else
-              echo "🆕 PM2 START nora-api"
               pm2 start ecosystem.config.js --only nora-api
             fi
 
-            echo "💾 PM2 SAVE"
             pm2 save
 
-            echo "📄 PM2 STATUS"
-            pm2 status
-
-            echo "🌐 NGINX DAEMON RELOAD"
             sudo systemctl daemon-reload
-
-            echo "🌐 NGINX TEST"
             sudo nginx -t
-
-            echo "♻️ NGINX RELOAD"
             sudo systemctl reload nginx
 
-            echo "🩺 LOCAL API HEALTH"
             curl -f --max-time 30 http://127.0.0.1:10000/api/health
             curl -f --max-time 30 http://127.0.0.1:10000/api/system/routes
 
-            echo "✅ NORA DEPLOY SUCCESS"
+            echo "NORA DEPLOY SUCCESS"
 
   health-check:
     name: Health Check
@@ -154,19 +125,10 @@ jobs:
         run: |
           set -e
 
-          echo "🌐 CHECK NORA API"
           curl -f --max-time 30 https://api.nora365.co.kr/api/health
-
-          echo "🌐 CHECK NORA WEB"
           curl -f --max-time 30 https://www.nora365.co.kr
-
-          echo "🌐 CHECK NORA ADMIN"
           curl -f --max-time 30 https://www.nora365.co.kr/admin || true
-
-          echo "🌐 CHECK NORA DASHBOARD"
           curl -f --max-time 30 https://www.nora365.co.kr/admin/dashboard || true
-
-          echo "🌐 CHECK NORA MOBILE"
           curl -f --max-time 30 https://m.nora365.co.kr || true
 
-          echo "✅ NORA HEALTH CHECK SUCCESS"
+          echo "NORA HEALTH CHECK SUCCESS"
