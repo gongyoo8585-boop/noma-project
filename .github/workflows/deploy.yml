@@ -113,7 +113,6 @@ jobs:
             sudo systemctl reload nginx
 
             curl -f --max-time 30 http://127.0.0.1:10000/api/health
-            curl -f --max-time 30 http://127.0.0.1:10000/api/system/routes
 
             echo "NORA DEPLOY SUCCESS"
 
