@@ -304,5 +304,3 @@ GROUPS.forEach((g) => {
     );
   }
 });
-
-module.exports = router;

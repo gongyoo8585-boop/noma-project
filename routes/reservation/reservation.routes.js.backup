@@ -1,0 +1,1276 @@
+"use strict";
+
+/**
+ * =====================================================
+ * 🔥 RESERVATION ROUTES (FULL REPLACE FINAL)
+ * 기존 기능 유지 + 오류 수정 + 누락 복구 + 확장 안정화
+ * =====================================================
+ */
+
+const express = require("express");
+const mongoose = require("mongoose");
+const router = express.Router();
+
+const Reservation = require("../models/Reservation");
+const Shop = require("../models/Shop");
+
+const auth = require("../middlewares/auth");
+const admin = require("../middlewares/admin");
+
+/* =====================================================
+   공통 유틸
+===================================================== */
+function ok(res, data = {}) {
+  return res.json({ ok: true, ...data });
+}
+
+function fail(res, status = 500, data = {}) {
+  return res.status(status).json({ ok: false, ...data });
+}
+
+function safeAsync(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch((e) => {
+      console.error("RESERVATION ROUTE ERROR:", e);
+      return fail(res, 500, { message: e.message || "SERVER_ERROR" });
+    });
+  };
+}
+
+function isValidId(id) {
+  return /^[0-9a-fA-F]{24}$/.test(String(id || ""));
+}
+
+function safeStr(v = "") {
+  return String(v == null ? "" : v).trim();
+}
+
+function safeNum(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+function safePage(v) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function safeLimit(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 1) return 20;
+  return Math.min(n, 100);
+}
+
+function minuteFloor(date) {
+  if (!date) return null;
+  const d = new Date(date);
+  d.setSeconds(0, 0);
+  return d;
+}
+
+function parseReserveTime(date, time) {
+  if (date && time) {
+    const d = new Date(`${date} ${time}`);
+    if (!Number.isNaN(d.getTime())) return minuteFloor(d);
+  }
+
+  if (time) {
+    const d = new Date(time);
+    if (!Number.isNaN(d.getTime())) return minuteFloor(d);
+  }
+
+  if (date) {
+    const d = new Date(date);
+    if (!Number.isNaN(d.getTime())) return minuteFloor(d);
+  }
+
+  return null;
+}
+
+function paginateMeta(page, limit, total) {
+  return {
+    page,
+    limit,
+    total,
+    hasMore: page * limit < total
+  };
+}
+
+function normalizeReservation(doc) {
+  if (!doc) return null;
+  const r = doc.toObject ? doc.toObject() : { ...doc };
+
+  return {
+    ...r,
+    id: String(r._id || r.id || ""),
+    userId: String(r.userId || ""),
+    placeId: String(r.placeId || ""),
+    shopId: String(r.shopId || r.placeId || ""),
+    reserveAt: r.time || null
+  };
+}
+
+async function findReservationOr404(id) {
+  if (!isValidId(id)) return null;
+  return Reservation.findById(id);
+}
+
+function isOwnerOrAdmin(req, reservation) {
+  const me = String(req.user?.id || req.user?._id || "");
+  const owner = String(reservation?.userId || "");
+  const role = String(req.user?.role || "");
+  return owner === me || role === "admin" || role === "superAdmin";
+}
+
+function addStatusLog(item, status, reason = "", by = "") {
+  if (!Array.isArray(item.statusLogs)) item.statusLogs = [];
+  item.statusLogs.push({
+    status: safeStr(status),
+    at: new Date(),
+    reason: safeStr(reason),
+    by: safeStr(by)
+  });
+}
+
+function setUpdatedBy(item, userId = "") {
+  const v = safeStr(userId);
+  item.lastUpdatedBy = v;
+  if (!Array.isArray(item.updatedByLogs)) item.updatedByLogs = [];
+  if (v && !item.updatedByLogs.includes(v)) item.updatedByLogs.push(v);
+}
+
+async function fallbackGetRevenue() {
+  const items = await Reservation.find({ paymentStatus: "paid", isDeleted: { $ne: true } }).select("paymentAmount");
+  return items.reduce((sum, item) => sum + safeNum(item.paymentAmount, 0), 0);
+}
+
+async function fallbackGetSuccessRate() {
+  const total = await Reservation.countDocuments({ isDeleted: { $ne: true } });
+  if (!total) return 0;
+  const okCount = await Reservation.countDocuments({
+    isDeleted: { $ne: true },
+    $or: [
+      { status: "confirmed" },
+      { status: "completed" },
+      { isVisited: true },
+      { isCompleted: true }
+    ]
+  });
+  return okCount / total;
+}
+
+async function fallbackGetCancelRate() {
+  const total = await Reservation.countDocuments({ isDeleted: { $ne: true } });
+  if (!total) return 0;
+  const cancelCount = await Reservation.countDocuments({
+    isDeleted: { $ne: true },
+    status: "cancelled"
+  });
+  return cancelCount / total;
+}
+
+async function fallbackGetHotTimes(placeId) {
+  return Reservation.aggregate([
+    {
+      $match: {
+        placeId: String(placeId),
+        isDeleted: { $ne: true }
+      }
+    },
+    {
+      $group: {
+        _id: { hour: { $hour: "$time" } },
+        count: { $sum: 1 }
+      }
+    },
+    { $sort: { count: -1, "_id.hour": 1 } }
+  ]);
+}
+
+async function fallbackGetRanking(limit = 20) {
+  const items = await Reservation.find({ isDeleted: { $ne: true } }).lean();
+  return items
+    .map((v) => ({
+      ...v,
+      score:
+        safeNum(v.people, 1) * 2 +
+        (v.isVisited ? 5 : 0) +
+        (v.isReviewed ? 8 : 0) +
+        (v.paymentStatus === "paid" ? 10 : 0) +
+        (v.status === "completed" ? 7 : 0)
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, safeNum(limit, 20)));
+}
+
+/* =====================================================
+   메모리 캐시 / 로그 / 보호
+===================================================== */
+const RESERVATION_CACHE = new Map();
+const RESERVATION_LOG = [];
+const REQUEST_RATE = new Map();
+const CREATE_LOCK = new Set();
+
+function cacheSet(key, data, ttl = 5000) {
+  RESERVATION_CACHE.set(key, {
+    data,
+    expire: Date.now() + ttl
+  });
+}
+
+function cacheGet(key) {
+  const c = RESERVATION_CACHE.get(key);
+  if (!c) return null;
+  if (Date.now() > c.expire) {
+    RESERVATION_CACHE.delete(key);
+    return null;
+  }
+  return c.data;
+}
+
+function rateLimit(req, ms = 150, max = 15) {
+  const ip = req.ip || "unknown";
+  const now = Date.now();
+  const arr = REQUEST_RATE.get(ip) || [];
+  const filtered = arr.filter((t) => now - t < ms * max);
+  filtered.push(now);
+  REQUEST_RATE.set(ip, filtered);
+  return filtered.length <= max;
+}
+
+function addLog(type, payload = {}) {
+  RESERVATION_LOG.push({
+    type,
+    payload,
+    time: Date.now()
+  });
+
+  if (RESERVATION_LOG.length > 5000) {
+    RESERVATION_LOG.shift();
+  }
+}
+
+/* =====================================================
+   전역 미들웨어
+===================================================== */
+router.use((req, res, next) => {
+  if (!rateLimit(req)) {
+    return fail(res, 429, { message: "Too many requests" });
+  }
+  return next();
+});
+
+router.use((req, res, next) => {
+  addLog("request", {
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip
+  });
+  return next();
+});
+
+/* =====================================================
+   보조 조회 라우트 먼저
+===================================================== */
+router.get("/ping", (req, res) => {
+  return ok(res, { time: Date.now() });
+});
+
+router.get("/health", safeAsync(async (req, res) => {
+  const one = await Reservation.findOne().select("_id");
+  return ok(res, { exists: !!one });
+}));
+
+router.get("/exists/:id", safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  return ok(res, { exists: !!item });
+}));
+
+router.get("/one/:id", safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.get("/latest/one", safeAsync(async (req, res) => {
+  const item = await Reservation.findOne().sort({ createdAt: -1 });
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.get("/count", safeAsync(async (req, res) => {
+  const count = await Reservation.countDocuments();
+  return ok(res, { count });
+}));
+
+router.get("/count/status", safeAsync(async (req, res) => {
+  const [pending, confirmed, cancelled] = await Promise.all([
+    Reservation.countDocuments({ status: "pending" }),
+    Reservation.countDocuments({ status: "confirmed" }),
+    Reservation.countDocuments({ status: "cancelled" })
+  ]);
+
+  return ok(res, { pending, confirmed, cancelled });
+}));
+
+router.get("/recent/:n", safeAsync(async (req, res) => {
+  const n = Math.min(100, safeNum(req.params.n, 10));
+  const list = await Reservation.find().sort({ createdAt: -1 }).limit(n);
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/old", safeAsync(async (req, res) => {
+  const d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const list = await Reservation.find({
+    createdAt: { $lte: d }
+  }).limit(50);
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+/* =====================================================
+   예약 생성
+===================================================== */
+router.post("/", auth, safeAsync(async (req, res) => {
+  const userId = String(req.user?.id || req.user?._id || "");
+  const {
+    shopId,
+    placeId,
+    date,
+    time,
+    people = 1,
+    memo = "",
+    source = "app",
+    channel = "app",
+    device = "",
+    contactPhone = "",
+    specialRequest = "",
+    reserveName = "",
+    reserveEmail = ""
+  } = req.body || {};
+
+  const finalPlaceId = String(shopId || placeId || "");
+  if (!isValidId(finalPlaceId)) {
+    return fail(res, 400, { message: "invalid placeId" });
+  }
+
+  const shop = await Shop.findById(finalPlaceId);
+  if (!shop || shop.isDeleted) {
+    return fail(res, 404, { message: "shop not found" });
+  }
+
+  if (shop.isReservable === false) {
+    return fail(res, 400, { message: "shop not reservable" });
+  }
+
+  const reserveTime = parseReserveTime(date, time);
+  if (!reserveTime) {
+    return fail(res, 400, { message: "invalid reservation time" });
+  }
+
+  const lockKey = `${userId}_${finalPlaceId}_${reserveTime.toISOString()}`;
+  if (CREATE_LOCK.has(lockKey)) {
+    return fail(res, 429, { message: "duplicated request" });
+  }
+
+  CREATE_LOCK.add(lockKey);
+  setTimeout(() => CREATE_LOCK.delete(lockKey), 3000);
+
+  const limitCheck = typeof Reservation.limitPerUserStrict === "function"
+    ? await Reservation.limitPerUserStrict(userId)
+    : { allowed: true, count: 0 };
+
+  if (!limitCheck.allowed) {
+    return fail(res, 400, { message: "reservation limit exceeded", current: limitCheck.count });
+  }
+
+  const conflict = typeof Reservation.checkConflictFinal === "function"
+    ? await Reservation.checkConflictFinal(finalPlaceId, reserveTime)
+    : await Reservation.exists({
+        placeId: String(finalPlaceId),
+        time: reserveTime,
+        status: { $in: ["pending", "confirmed", "checked_in", "arrived"] },
+        isDeleted: { $ne: true }
+      });
+
+  if (conflict) {
+    return fail(res, 409, { message: "reservation conflict" });
+  }
+
+  const reservation = await Reservation.create({
+    userId,
+    placeId: String(finalPlaceId),
+    shopId: String(finalPlaceId),
+    time: reserveTime,
+    people: Math.max(1, safeNum(people, 1)),
+    memo: safeStr(memo),
+    source: safeStr(source || "app"),
+    channel: safeStr(channel || "app"),
+    device: safeStr(device),
+    contactPhone: safeStr(contactPhone),
+    specialRequest: safeStr(specialRequest),
+    reserveName: safeStr(reserveName),
+    reserveEmail: safeStr(reserveEmail).toLowerCase(),
+    status: "pending",
+    isActive: true
+  });
+
+  addStatusLog(reservation, "pending", "create", userId);
+  await reservation.save();
+
+  try {
+    shop.reservationCount = safeNum(shop.reservationCount) + 1;
+    if (typeof shop.updateReservable === "function") {
+      await shop.updateReservable();
+    } else {
+      await shop.save();
+    }
+  } catch (e) {
+    console.warn("SHOP RESERVATION COUNT UPDATE FAIL:", e.message);
+  }
+
+  RESERVATION_CACHE.clear();
+  addLog("create", { reservationId: reservation._id, userId, placeId: finalPlaceId });
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+/* =====================================================
+   예약 가능 여부 / 슬롯
+===================================================== */
+router.post("/check", safeAsync(async (req, res) => {
+  const placeId = String(req.body.shopId || req.body.placeId || "");
+  const reserveTime = parseReserveTime(req.body.date, req.body.time);
+
+  if (!isValidId(placeId) || !reserveTime) {
+    return fail(res, 400, { available: false });
+  }
+
+  const available = typeof Reservation.isSlotAvailable === "function"
+    ? await Reservation.isSlotAvailable(placeId, reserveTime, safeNum(req.body.max, 10))
+    : !(await Reservation.exists({
+        placeId,
+        time: reserveTime,
+        status: { $in: ["pending", "confirmed", "checked_in", "arrived"] },
+        isDeleted: { $ne: true }
+      }));
+
+  return ok(res, { available });
+}));
+
+router.get("/slot/count", safeAsync(async (req, res) => {
+  const placeId = String(req.query.shopId || req.query.placeId || "");
+  const reserveTime = parseReserveTime(req.query.date, req.query.time);
+
+  if (!isValidId(placeId) || !reserveTime) {
+    return fail(res, 400, { message: "invalid input" });
+  }
+
+  const count = typeof Reservation.getSlotCount === "function"
+    ? await Reservation.getSlotCount(placeId, reserveTime)
+    : await Reservation.countDocuments({
+        placeId,
+        time: reserveTime,
+        status: { $in: ["pending", "confirmed", "checked_in", "arrived"] },
+        isDeleted: { $ne: true }
+      });
+
+  return ok(res, { count });
+}));
+
+/* =====================================================
+   내 예약 조회
+===================================================== */
+router.get("/me", auth, safeAsync(async (req, res) => {
+  const userId = String(req.user?.id || req.user?._id || "");
+  const page = safePage(req.query.page);
+  const limit = safeLimit(req.query.limit);
+  const status = safeStr(req.query.status);
+
+  const query = { userId, isDeleted: { $ne: true } };
+  if (status) query.status = status;
+
+  const [list, total] = await Promise.all([
+    Reservation.find(query)
+      .sort({ time: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Reservation.countDocuments(query)
+  ]);
+
+  return ok(res, {
+    list: list.map(normalizeReservation),
+    ...paginateMeta(page, limit, total)
+  });
+}));
+
+router.get("/me/history", auth, safeAsync(async (req, res) => {
+  const userId = String(req.user?.id || req.user?._id || "");
+  const list = typeof Reservation.getUserHistory === "function"
+    ? await Reservation.getUserHistory(userId)
+    : await Reservation.find({ userId, isDeleted: { $ne: true } }).sort({ createdAt: -1 }).limit(50);
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+/* =====================================================
+   코드 조회
+===================================================== */
+router.get("/code/:code", auth, admin, safeAsync(async (req, res) => {
+  const item = typeof Reservation.findByReserveCode === "function"
+    ? await Reservation.findByReserveCode(req.params.code)
+    : await Reservation.findOne({
+        reserveCode: req.params.code,
+        isDeleted: { $ne: true }
+      });
+
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.get("/visit-code/:code", auth, admin, safeAsync(async (req, res) => {
+  const item = typeof Reservation.findByVisitCode === "function"
+    ? await Reservation.findByVisitCode(req.params.code)
+    : await Reservation.findOne({
+        visitCode: req.params.code,
+        isDeleted: { $ne: true }
+      });
+
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+/* =====================================================
+   관리자 리스트/검색
+===================================================== */
+router.get("/admin/all", auth, admin, safeAsync(async (req, res) => {
+  const page = safePage(req.query.page);
+  const limit = safeLimit(req.query.limit);
+  const status = safeStr(req.query.status);
+  const placeId = safeStr(req.query.placeId);
+  const userId = safeStr(req.query.userId);
+
+  const query = { isDeleted: { $ne: true } };
+  if (status) query.status = status;
+  if (placeId) query.placeId = placeId;
+  if (userId) query.userId = userId;
+
+  const [list, total] = await Promise.all([
+    Reservation.find(query)
+      .sort({ time: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Reservation.countDocuments(query)
+  ]);
+
+  return ok(res, {
+    list: list.map(normalizeReservation),
+    ...paginateMeta(page, limit, total)
+  });
+}));
+
+router.get("/status/list", auth, admin, safeAsync(async (req, res) => {
+  const status = safeStr(req.query.status);
+  const query = { isDeleted: { $ne: true } };
+  if (status) query.status = status;
+
+  const list = await Reservation.find(query).sort({ createdAt: -1 }).limit(200);
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/today/list", auth, admin, safeAsync(async (req, res) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  const list = await Reservation.find({
+    time: { $gte: start, $lt: end },
+    isDeleted: { $ne: true }
+  }).sort({ time: 1 });
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/upcoming/list", auth, admin, safeAsync(async (req, res) => {
+  const list = typeof Reservation.findUpcoming === "function"
+    ? await Reservation.findUpcoming(50)
+    : await Reservation.find({
+        time: { $gte: new Date() },
+        status: { $ne: "cancelled" },
+        isDeleted: { $ne: true }
+      }).sort({ time: 1 }).limit(50);
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/completed/list", auth, admin, safeAsync(async (req, res) => {
+  const list = typeof Reservation.findCompleted === "function"
+    ? await Reservation.findCompleted(50)
+    : await Reservation.find({
+        isDeleted: { $ne: true },
+        $or: [{ isCompleted: true }, { status: "completed" }]
+      }).sort({ completedAt: -1 }).limit(50);
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/expired/list", auth, admin, safeAsync(async (req, res) => {
+  const list = typeof Reservation.findExpiredPending === "function"
+    ? await Reservation.findExpiredPending()
+    : await Reservation.find({
+        status: "pending",
+        expireAt: { $lte: new Date() },
+        isDeleted: { $ne: true }
+      });
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/admin/search/memo", auth, admin, safeAsync(async (req, res) => {
+  const q = safeStr(req.query.q);
+  const list = await Reservation.find({
+    adminMemo: { $regex: q, $options: "i" },
+    isDeleted: { $ne: true }
+  }).limit(100);
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/admin/by-user/:userId", auth, admin, safeAsync(async (req, res) => {
+  const list = await Reservation.find({
+    userId: String(req.params.userId),
+    isDeleted: { $ne: true }
+  }).sort({ createdAt: -1 });
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+router.get("/admin/by-place/:placeId", auth, admin, safeAsync(async (req, res) => {
+  const list = await Reservation.find({
+    placeId: String(req.params.placeId),
+    isDeleted: { $ne: true }
+  }).sort({ createdAt: -1 });
+
+  return ok(res, { list: list.map(normalizeReservation) });
+}));
+
+/* =====================================================
+   통계
+===================================================== */
+router.get("/stats", auth, admin, safeAsync(async (req, res) => {
+  const cacheKey = "reservation_stats";
+  const cached = cacheGet(cacheKey);
+  if (cached) return ok(res, cached);
+
+  const [total, pending, confirmed, cancelled, completed, noShow, paidRevenue] = await Promise.all([
+    Reservation.countDocuments({ isDeleted: { $ne: true } }),
+    Reservation.countDocuments({ status: "pending", isDeleted: { $ne: true } }),
+    Reservation.countDocuments({ status: "confirmed", isDeleted: { $ne: true } }),
+    Reservation.countDocuments({ status: "cancelled", isDeleted: { $ne: true } }),
+    Reservation.countDocuments({
+      isDeleted: { $ne: true },
+      $or: [{ isCompleted: true }, { status: "completed" }]
+    }),
+    Reservation.countDocuments({ isNoShow: true, isDeleted: { $ne: true } }),
+    typeof Reservation.getRevenue === "function" ? Reservation.getRevenue() : fallbackGetRevenue()
+  ]);
+
+  const payload = { total, pending, confirmed, cancelled, completed, noShow, paidRevenue };
+  cacheSet(cacheKey, payload, 3000);
+
+  return ok(res, payload);
+}));
+
+router.get("/stats/success-rate", auth, admin, safeAsync(async (req, res) => {
+  const rate = typeof Reservation.getSuccessRate === "function"
+    ? await Reservation.getSuccessRate()
+    : await fallbackGetSuccessRate();
+
+  return ok(res, { rate });
+}));
+
+router.get("/stats/cancel-rate", auth, admin, safeAsync(async (req, res) => {
+  const rate = typeof Reservation.getCancelRate === "function"
+    ? await Reservation.getCancelRate()
+    : await fallbackGetCancelRate();
+
+  return ok(res, { rate });
+}));
+
+router.get("/stats/hot-times", auth, admin, safeAsync(async (req, res) => {
+  const placeId = String(req.query.shopId || req.query.placeId || "");
+  if (!placeId) return fail(res, 400, { message: "placeId required" });
+
+  const items = typeof Reservation.getHotTimes === "function"
+    ? await Reservation.getHotTimes(placeId)
+    : await fallbackGetHotTimes(placeId);
+
+  return ok(res, { items });
+}));
+
+router.get("/ranking", auth, admin, safeAsync(async (req, res) => {
+  const items = typeof Reservation.getRanking === "function"
+    ? await Reservation.getRanking()
+    : await fallbackGetRanking();
+
+  return ok(res, { items });
+}));
+
+/* =====================================================
+   상세/상태 변경
+===================================================== */
+router.get("/:id([0-9a-fA-F]{24})", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (!isOwnerOrAdmin(req, reservation)) {
+    return fail(res, 403, { message: "FORBIDDEN" });
+  }
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/cancel", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  const reason = safeStr(req.body.reason);
+
+  if (typeof reservation.cancelSafe === "function") {
+    await reservation.cancelSafe(reason);
+  } else {
+    reservation.status = "cancelled";
+    reservation.cancelledAt = new Date();
+    reservation.cancelReason = reason;
+    reservation.isActive = false;
+    addStatusLog(reservation, "cancelled", reason, String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  RESERVATION_CACHE.clear();
+  addLog("cancel", { reservationId: reservation._id, reason });
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/approve", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.confirm === "function") {
+    await reservation.confirm(String(req.user?.id || req.user?._id || ""));
+  } else {
+    reservation.status = "confirmed";
+    reservation.confirmedAt = new Date();
+    setUpdatedBy(reservation, String(req.user?.id || req.user?._id || ""));
+    addStatusLog(reservation, "confirmed", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  RESERVATION_CACHE.clear();
+  addLog("approve", { reservationId: reservation._id });
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/reject", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  const reason = safeStr(req.body.reason || "rejected by admin");
+  reservation.status = "cancelled";
+  reservation.cancelledAt = new Date();
+  reservation.cancelReason = reason;
+  reservation.isActive = false;
+  setUpdatedBy(reservation, String(req.user?.id || req.user?._id || ""));
+  addStatusLog(reservation, "cancelled", reason, String(req.user?.id || ""));
+  await reservation.save();
+
+  RESERVATION_CACHE.clear();
+  addLog("reject", { reservationId: reservation._id });
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/reschedule", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  const reserveTime = parseReserveTime(req.body.date, req.body.time);
+  if (!reserveTime) {
+    return fail(res, 400, { message: "invalid reservation time" });
+  }
+
+  const conflict = typeof Reservation.checkConflictFinal === "function"
+    ? await Reservation.checkConflictFinal(reservation.placeId, reserveTime, reservation._id)
+    : await Reservation.exists({
+        placeId: String(reservation.placeId),
+        time: reserveTime,
+        status: { $in: ["pending", "confirmed", "checked_in", "arrived"] },
+        _id: { $ne: reservation._id },
+        isDeleted: { $ne: true }
+      });
+
+  if (conflict) {
+    return fail(res, 409, { message: "reservation conflict" });
+  }
+
+  if (typeof reservation.reschedule === "function") {
+    await reservation.reschedule(reserveTime, String(req.user?.id || ""));
+  } else {
+    reservation.time = reserveTime;
+    reservation.status = "pending";
+    reservation.expireAt = new Date(reserveTime.getTime() + 60 * 60 * 1000);
+    addStatusLog(reservation, "pending", "reschedule", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  RESERVATION_CACHE.clear();
+  addLog("reschedule", { reservationId: reservation._id });
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/people", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  if (typeof reservation.extendPeople === "function") {
+    await reservation.extendPeople(req.body.people);
+  } else {
+    reservation.people = Math.max(1, safeNum(req.body.people, 1));
+    await reservation.save();
+  }
+
+  RESERVATION_CACHE.clear();
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/memo", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  if (typeof reservation.setMemo === "function") {
+    await reservation.setMemo(req.body.memo);
+  } else {
+    reservation.memo = safeStr(req.body.memo);
+    await reservation.save();
+  }
+
+  RESERVATION_CACHE.clear();
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/check-in", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.checkIn === "function") {
+    await reservation.checkIn();
+  } else {
+    reservation.checkInAt = new Date();
+    reservation.status = "checked_in";
+    addStatusLog(reservation, "checked_in", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  addLog("check-in", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/check-out", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.checkOut === "function") {
+    await reservation.checkOut();
+  } else {
+    reservation.checkOutAt = new Date();
+    reservation.status = "checked_out";
+    reservation.isActive = false;
+    addStatusLog(reservation, "checked_out", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  addLog("check-out", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/arrive", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.arrive === "function") {
+    await reservation.arrive();
+  } else {
+    reservation.arrivalAt = new Date();
+    reservation.status = "arrived";
+    addStatusLog(reservation, "arrived", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  addLog("arrive", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/complete", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.complete === "function") {
+    await reservation.complete();
+  } else {
+    reservation.isCompleted = true;
+    reservation.completedAt = new Date();
+    reservation.status = "completed";
+    reservation.isActive = false;
+    addStatusLog(reservation, "completed", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  addLog("complete", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/no-show", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.markNoShow === "function") {
+    await reservation.markNoShow();
+  } else {
+    reservation.isNoShow = true;
+    reservation.status = "no_show";
+    reservation.isActive = false;
+    addStatusLog(reservation, "no_show", "", String(req.user?.id || ""));
+    await reservation.save();
+  }
+
+  addLog("no-show", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/visited", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.markVisited === "function") {
+    await reservation.markVisited();
+  } else {
+    reservation.isVisited = true;
+    await reservation.save();
+  }
+
+  addLog("visited", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/reviewed", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  if (typeof reservation.markReviewed === "function") {
+    await reservation.markReviewed();
+  } else {
+    reservation.isReviewed = true;
+    await reservation.save();
+  }
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/pay", auth, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+  if (!isOwnerOrAdmin(req, reservation)) return fail(res, 403, { message: "FORBIDDEN" });
+
+  const amount = safeNum(req.body.amount, reservation.paymentAmount || 0);
+
+  if (typeof reservation.attachPayment === "function") {
+    await reservation.attachPayment(safeStr(req.body.paymentId), amount);
+  } else if (typeof reservation.pay === "function") {
+    await reservation.pay(amount);
+    reservation.paymentId = safeStr(req.body.paymentId);
+    await reservation.save();
+  } else {
+    reservation.paymentStatus = "paid";
+    reservation.paymentAmount = amount;
+    reservation.paymentId = safeStr(req.body.paymentId);
+    await reservation.save();
+  }
+
+  addLog("pay", { reservationId: reservation._id, amount });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/refund", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.refund === "function") {
+    await reservation.refund();
+  } else {
+    reservation.paymentStatus = "refund";
+    await reservation.save();
+  }
+
+  addLog("refund", { reservationId: reservation._id });
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/reminder", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.markReminder === "function") {
+    await reservation.markReminder();
+  } else {
+    reservation.isReminderSent = true;
+    reservation.reminderAt = new Date();
+    await reservation.save();
+  }
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/admin-memo", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.setAdminMemo === "function") {
+    await reservation.setAdminMemo(req.body.adminMemo);
+  } else {
+    reservation.adminMemo = safeStr(req.body.adminMemo);
+    await reservation.save();
+  }
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/updated-by", auth, admin, safeAsync(async (req, res) => {
+  const reservation = await findReservationOr404(req.params.id);
+  if (!reservation) return fail(res, 404, { message: "NOT_FOUND" });
+
+  if (typeof reservation.setUpdatedBy === "function") {
+    await reservation.setUpdatedBy(String(req.user?.id || req.user?._id || ""));
+  } else {
+    setUpdatedBy(reservation, String(req.user?.id || req.user?._id || ""));
+    await reservation.save();
+  }
+
+  return ok(res, { reservation: normalizeReservation(reservation) });
+}));
+
+/* =====================================================
+   강제 제어 / 벌크
+===================================================== */
+router.post("/:id([0-9a-fA-F]{24})/force-complete", auth, admin, safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+
+  item.isCompleted = true;
+  item.completedAt = new Date();
+  item.status = "completed";
+  item.isActive = false;
+  addStatusLog(item, "completed", "force-complete", String(req.user?.id || ""));
+  await item.save();
+
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/force-cancel", auth, admin, safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+
+  item.status = "cancelled";
+  item.isActive = false;
+  item.cancelledAt = new Date();
+  addStatusLog(item, "cancelled", "force-cancel", String(req.user?.id || ""));
+  await item.save();
+
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/activate", auth, admin, safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+
+  item.isActive = true;
+  await item.save();
+
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.post("/:id([0-9a-fA-F]{24})/deactivate", auth, admin, safeAsync(async (req, res) => {
+  const item = await findReservationOr404(req.params.id);
+  if (!item) return fail(res, 404, { message: "NOT_FOUND" });
+
+  item.isActive = false;
+  await item.save();
+
+  return ok(res, { reservation: normalizeReservation(item) });
+}));
+
+router.post("/admin/bulk-cancel", auth, admin, safeAsync(async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(isValidId) : [];
+
+  await Reservation.updateMany(
+    { _id: { $in: ids } },
+    {
+      $set: {
+        status: "cancelled",
+        isActive: false,
+        cancelledAt: new Date()
+      }
+    }
+  );
+
+  RESERVATION_CACHE.clear();
+  return ok(res);
+}));
+
+router.post("/admin/bulk-approve", auth, admin, safeAsync(async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(isValidId) : [];
+
+  await Reservation.updateMany(
+    { _id: { $in: ids } },
+    {
+      $set: {
+        status: "confirmed",
+        confirmedAt: new Date()
+      }
+    }
+  );
+
+  RESERVATION_CACHE.clear();
+  return ok(res);
+}));
+
+router.post("/admin/bulk-complete", auth, admin, safeAsync(async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(isValidId) : [];
+
+  await Reservation.updateMany(
+    { _id: { $in: ids } },
+    {
+      $set: {
+        isCompleted: true,
+        completedAt: new Date(),
+        status: "completed",
+        isActive: false
+      }
+    }
+  );
+
+  RESERVATION_CACHE.clear();
+  return ok(res);
+}));
+
+router.post("/admin/delete-all", auth, admin, safeAsync(async (req, res) => {
+  await Reservation.deleteMany({});
+  RESERVATION_CACHE.clear();
+  return ok(res);
+}));
+
+/* =====================================================
+   운영/디버그
+===================================================== */
+router.get("/admin/log", auth, admin, safeAsync(async (req, res) => {
+  return ok(res, { logs: RESERVATION_LOG.slice(-100) });
+}));
+
+router.get("/admin/cache/status", auth, admin, safeAsync(async (req, res) => {
+  return ok(res, { size: RESERVATION_CACHE.size });
+}));
+
+router.post("/admin/cache/clear", auth, admin, safeAsync(async (req, res) => {
+  RESERVATION_CACHE.clear();
+  return ok(res);
+}));
+
+router.post("/admin/cache/set", auth, admin, safeAsync(async (req, res) => {
+  cacheSet("manual", { time: Date.now() }, 5000);
+  return ok(res);
+}));
+
+router.post("/admin/log/clear", auth, admin, safeAsync(async (req, res) => {
+  RESERVATION_LOG.length = 0;
+  return ok(res);
+}));
+
+router.get("/admin/rate", auth, admin, safeAsync(async (req, res) => {
+  return ok(res, { size: REQUEST_RATE.size });
+}));
+
+router.get("/admin/lock", auth, admin, safeAsync(async (req, res) => {
+  return ok(res, { size: CREATE_LOCK.size });
+}));
+
+router.get("/ids", safeAsync(async (req, res) => {
+  const items = await Reservation.find().select("_id");
+  return ok(res, { ids: items.map((v) => String(v._id)) });
+}));
+
+router.get("/system/status", safeAsync(async (req, res) => {
+  return ok(res, {
+    cache: RESERVATION_CACHE.size,
+    log: RESERVATION_LOG.length,
+    lock: CREATE_LOCK.size,
+    rate: REQUEST_RATE.size,
+    now: Date.now()
+  });
+}));
+
+router.get("/debug/final", auth, admin, safeAsync(async (req, res) => {
+  return ok(res, {
+    cacheSize: RESERVATION_CACHE.size,
+    logSize: RESERVATION_LOG.length,
+    now: Date.now()
+  });
+}));
+
+/* =====================================================
+   자동 백그라운드 안정화
+===================================================== */
+setInterval(async () => {
+  try {
+    const expired = await Reservation.find({
+      status: "pending",
+      expireAt: { $lte: new Date() },
+      isDeleted: { $ne: true }
+    }).limit(50);
+
+    for (const item of expired) {
+      if (typeof item.autoExpireSafeFinal === "function") {
+        await item.autoExpireSafeFinal();
+      } else if (typeof item.autoExpireSafe === "function") {
+        await item.autoExpireSafe();
+      } else {
+        item.status = "cancelled";
+        item.isActive = false;
+        item.cancelledAt = new Date();
+        addStatusLog(item, "cancelled", "expire", "system");
+        await item.save();
+      }
+    }
+  } catch (e) {
+    console.error("RESERVATION AUTO EXPIRE ERROR:", e.message);
+  }
+}, 60000);
+
+setInterval(() => {
+  if (REQUEST_RATE.size > 5000) REQUEST_RATE.clear();
+  if (RESERVATION_CACHE.size > 500) RESERVATION_CACHE.clear();
+}, 30000);
+
+/* =====================================================
+   FINAL
+===================================================== */
+console.log("🔥 RESERVATION ROUTES FINAL MASTER READY");
+
+module.exports = router;

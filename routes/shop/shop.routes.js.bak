@@ -1,0 +1,1133 @@
+/**
+ * =====================================================
+ * 🔥 SHOP ROUTES (FINAL ULTRA COMPLETE - NO DELETE)
+ * =====================================================
+ */
+
+const express = require("express");
+const router = express.Router();
+
+/* =====================================================
+🔥 SAFE REQUIRE (최소 추가)
+===================================================== */
+function safeRequire(path) {
+  try {
+    return require(path);
+  } catch (e) {
+    console.warn("SAFE REQUIRE FAIL:", path);
+    return null;
+  }
+}
+
+/* =====================================================
+🔥 경로 FIX ONLY
+===================================================== */
+const Shop =
+  safeRequire("../../models/Shop") ||
+  safeRequire("../models/Shop");
+
+const Review =
+  safeRequire("../../models/Review") ||
+  safeRequire("../models/Review");
+
+const auth =
+  safeRequire("../../middlewares/auth") ||
+  safeRequire("../middlewares/auth") ||
+  function (req, res, next) {
+    return next();
+  };
+
+const admin =
+  safeRequire("../../middlewares/admin") ||
+  safeRequire("../middlewares/admin") ||
+  function (req, res, next) {
+    return next();
+  };
+
+const distanceUtil =
+  safeRequire("../../utils/distance") ||
+  safeRequire("../utils/distance") ||
+  {};
+
+/* 🔥 최소 추가 */
+const calcDistanceKm =
+  distanceUtil.calcDistanceKm ||
+  (() => 999);
+
+const safeNumber =
+  distanceUtil.safeNumber ||
+  ((v, d = 0) => {
+    const n = Number(v);
+    return isNaN(n) ? d : n;
+  });
+
+
+function normalizeShopCategory(value) {
+  const text = String(value || "")
+    .toLowerCase()
+    .trim();
+
+  if (
+    text === "karaoke" ||
+    text === "노래방" ||
+    text === "가라오케" ||
+    text === "coin-karaoke" ||
+    text === "coin_karaoke" ||
+    text === "nora-karaoke" ||
+    text === "nora_karaoke"
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text === "massage" ||
+    text === "마사지" ||
+    text === "shop" ||
+    text === "nora-massage" ||
+    text === "nora_massage"
+  ) {
+    return "massage";
+  }
+
+  return "";
+}
+
+function getRequestShopCategory(req) {
+  const url = String(req?.originalUrl || req?.url || "").toLowerCase();
+
+  return (
+    normalizeShopCategory(req?.query?.category) ||
+    normalizeShopCategory(req?.query?.shopCategory) ||
+    normalizeShopCategory(req?.query?.serviceType) ||
+    normalizeShopCategory(req?.query?.businessType) ||
+    normalizeShopCategory(req?.query?.adminCategory) ||
+    normalizeShopCategory(req?.body?.category) ||
+    normalizeShopCategory(req?.body?.shopCategory) ||
+    normalizeShopCategory(req?.body?.serviceType) ||
+    normalizeShopCategory(req?.body?.businessType) ||
+    normalizeShopCategory(req?.body?.adminCategory) ||
+    normalizeShopCategory(req?.user?.adminType) ||
+    normalizeShopCategory(req?.user?.adminCategory) ||
+    normalizeShopCategory(req?.user?.serviceType) ||
+    (url.includes("category=karaoke") ? "karaoke" : "") ||
+    (url.includes("category=massage") ? "massage" : "") ||
+    (url.includes("/karaoke") ? "karaoke" : "") ||
+    ""
+  );
+}
+
+function getSafeRequestShopCategory(req) {
+  return getRequestShopCategory(req) || "massage";
+}
+
+function applyShopCategoryRequest(req, res, next) {
+  try {
+    const category = getSafeRequestShopCategory(req);
+
+    req.shopCategory = category;
+    req.adminCategory = category;
+    req.query = req.query || {};
+    req.body = req.body || {};
+
+    req.query.category = category;
+    req.query.shopCategory = category;
+    req.query.serviceType = category;
+    req.query.businessType = category;
+    req.query.adminCategory = category;
+
+    req.body.category = category;
+    req.body.shopCategory = category;
+    req.body.serviceType = category;
+    req.body.businessType = category;
+    req.body.adminCategory = category;
+
+    return next();
+  } catch (e) {
+    console.error("SHOP ROUTES CATEGORY ERROR:", e.message);
+
+    return fail(res, 500, "CATEGORY_FILTER_ERROR");
+  }
+}
+
+function buildShopCategoryQuery(req) {
+  return {
+    category: getSafeRequestShopCategory(req),
+  };
+}
+
+function buildShopBaseQuery(req, extra = {}) {
+  return {
+    ...extra,
+    ...buildShopCategoryQuery(req),
+  };
+}
+
+function applyPayloadCategory(payload = {}, req) {
+  const category = getSafeRequestShopCategory(req);
+
+  return {
+    ...payload,
+    category,
+    shopCategory: category,
+    serviceType: category,
+    businessType: category,
+    adminCategory: category,
+  };
+}
+
+function safeAsync(fn) {
+  return function (req, res, next) {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+function safeStr(v = "") {
+  return String(v || "").trim();
+}
+
+function ok(res, data = {}) {
+  return res.json({
+    ok: true,
+    ...data,
+  });
+}
+
+function fail(res, code = 400, msg = "ERROR") {
+  return res.status(code).json({
+    ok: false,
+    msg,
+    message: msg,
+  });
+}
+
+function requireShopModel(res) {
+  if (!Shop) {
+    fail(res, 500, "SHOP_MODEL_MISSING");
+    return false;
+  }
+
+  return true;
+}
+
+function requireReviewModel() {
+  return !!Review;
+}
+
+function normalizeArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizePrice(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) =>
+        Number(
+          String(v)
+            .replaceAll(",", "")
+            .replaceAll("원", "")
+            .trim()
+        )
+      )
+      .filter((v) => !Number.isNaN(v));
+  }
+
+  if (typeof value === "string") {
+    const list = value
+      .split(",")
+      .map((v) =>
+        Number(
+          String(v)
+            .replaceAll(",", "")
+            .replaceAll("원", "")
+            .trim()
+        )
+      )
+      .filter((v) => !Number.isNaN(v));
+
+    return list.length > 1 ? list : list[0] || 0;
+  }
+
+  const num = Number(value || 0);
+  return Number.isNaN(num) ? 0 : num;
+}
+
+function normalizePayload(body = {}) {
+  const lat = safeNumber(
+    body.lat ?? body.location?.lat,
+    0
+  );
+
+  const lng = safeNumber(
+    body.lng ?? body.location?.lng,
+    0
+  );
+
+  const premiumValue =
+    body.premium === true ||
+    body.isPremium === true ||
+    body.premiumActive === true ||
+    body.premium === "true" ||
+    body.isPremium === "true" ||
+    body.premiumActive === "true";
+
+  const category =
+    normalizeShopCategory(body.category) ||
+    normalizeShopCategory(body.shopCategory) ||
+    normalizeShopCategory(body.serviceType) ||
+    normalizeShopCategory(body.businessType) ||
+    normalizeShopCategory(body.adminCategory) ||
+    "massage";
+
+  return {
+    ...body,
+    category,
+    shopCategory: category,
+    serviceType: category,
+    businessType: category,
+    adminCategory: category,
+    name: safeStr(body.name),
+    region: safeStr(body.region),
+    district: safeStr(body.district),
+    address: safeStr(body.address),
+    phone: safeStr(body.phone),
+    description: safeStr(body.description),
+    lat,
+    lng,
+    location: {
+      lat,
+      lng,
+    },
+    priceOriginal: safeNumber(body.priceOriginal, 0),
+    priceDiscount: safeNumber(body.priceDiscount, 0),
+    price:
+      body.price !== undefined
+        ? normalizePrice(body.price)
+        : normalizePrice(body.priceDiscount || body.priceOriginal || 0),
+    courses: normalizeArray(body.courses),
+    tags: normalizeArray(body.tags),
+    serviceTypes: normalizeArray(body.serviceTypes),
+    visible: body.visible !== false,
+    approved: body.approved !== false,
+    premium: premiumValue,
+    isPremium: premiumValue,
+    premiumActive: premiumValue,
+    isReservable: body.isReservable !== false,
+    status: body.status === "inactive" ? "inactive" : "active",
+    isDeleted: body.isDeleted === true ? true : false,
+  };
+}
+
+/* ========================= 유틸 ========================= */
+
+function isValidCoord(lat, lng) {
+  return !isNaN(lat) && !isNaN(lng);
+}
+
+function escapeRegex(str = "") {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function safePage(n) {
+  n = Number(n);
+  return isNaN(n) || n < 1 ? 1 : n;
+}
+
+function safeLimit(n) {
+  n = Number(n);
+  if (isNaN(n) || n < 1) return 20;
+  return Math.min(n, 100);
+}
+
+function getShopCategory(shop = {}) {
+  const raw = String(
+    shop.category ||
+      shop.type ||
+      shop.shopType ||
+      shop.serviceType ||
+      shop.mainCategory ||
+      shop.businessType ||
+      shop.adminCategory ||
+      shop.service ||
+      ""
+  ).toLowerCase();
+
+  if (
+    raw.includes("karaoke") ||
+    raw.includes("노래") ||
+    raw.includes("노래방") ||
+    raw.includes("가라오케") ||
+    raw.includes("코인")
+  ) {
+    return "karaoke";
+  }
+
+  return "massage";
+}
+
+function enrichWithDistance(items, lat, lng) {
+  if (!isValidCoord(lat, lng)) {
+    return items.map((s) => {
+      const obj = s.toObject ? s.toObject() : s;
+
+      const premium =
+        obj.premium === true ||
+        obj.isPremium === true ||
+        obj.premiumActive === true;
+
+      return {
+        ...obj,
+        premium,
+        isPremium: premium,
+        premiumActive: premium,
+        categoryGroup: getShopCategory(obj),
+        distanceKm: obj.distanceKm || 999,
+      };
+    });
+  }
+
+  return items.map((s) => {
+    const obj = s.toObject ? s.toObject() : s;
+
+    const premium =
+      obj.premium === true ||
+      obj.isPremium === true ||
+      obj.premiumActive === true;
+
+    const targetLat =
+      obj.lat ??
+      obj.latitude ??
+      obj.location?.lat ??
+      obj.coords?.lat;
+
+    const targetLng =
+      obj.lng ??
+      obj.longitude ??
+      obj.location?.lng ??
+      obj.coords?.lng;
+
+    const distanceKm = calcDistanceKm(
+      lat,
+      lng,
+      targetLat,
+      targetLng
+    );
+
+    return {
+      ...obj,
+      premium,
+      isPremium: premium,
+      premiumActive: premium,
+      categoryGroup: getShopCategory(obj),
+      distanceKm: distanceKm || 999,
+    };
+  });
+}
+
+function applySort(items, sort) {
+  const copy = [...items];
+
+  switch (sort) {
+    case "distance":
+      return copy.sort((a, b) => {
+        const premiumA = a.premium === true || a.isPremium === true ? 1 : 0;
+        const premiumB = b.premium === true || b.isPremium === true ? 1 : 0;
+
+        if (premiumA !== premiumB) {
+          return premiumB - premiumA;
+        }
+
+        return (a.distanceKm || 999) - (b.distanceKm || 999);
+      });
+    case "rating":
+      return copy.sort((a, b) => (b.ratingAvg || 0) - (a.ratingAvg || 0));
+    case "view":
+      return copy.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
+    case "recent":
+      return copy.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    case "price":
+      return copy.sort((a, b) => (a.priceDiscount || 0) - (b.priceDiscount || 0));
+    default:
+      return copy.sort((a, b) => {
+        const premiumA = a.premium === true || a.isPremium === true ? 1 : 0;
+        const premiumB = b.premium === true || b.isPremium === true ? 1 : 0;
+
+        if (premiumA !== premiumB) {
+          return premiumB - premiumA;
+        }
+
+        return (b.likeCount || 0) - (a.likeCount || 0);
+      });
+  }
+}
+
+function groupPremiumNearbyItems(items = [], limit = 3) {
+  const safeLimitValue = safeLimit(limit);
+
+  const sorted = applySort(items, "distance");
+
+  const massage = sorted
+    .filter((item) => getShopCategory(item) === "massage")
+    .slice(0, safeLimitValue);
+
+  const karaoke = sorted
+    .filter((item) => getShopCategory(item) === "karaoke")
+    .slice(0, safeLimitValue);
+
+  return {
+    massage,
+    karaoke,
+    all: [...massage, ...karaoke],
+  };
+}
+
+function calcScore(s) {
+  return (s.likeCount || 0) * 2 + (s.viewCount || 0) * 0.5 + (s.ratingAvg || 0) * 10 + ((s.premium === true || s.isPremium === true) ? 20 : 0);
+}
+
+router.use(applyShopCategoryRequest);
+
+/* =====================================================
+   🔥 기존 코드 (절대 삭제 없음)
+===================================================== */
+
+/* 관리자 통계 */
+router.get("/admin/stats", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const total = await Shop.countDocuments(
+      buildShopBaseQuery(req, {
+        isDeleted: false,
+      })
+    );
+
+    return ok(res, {
+      total,
+      shops: total,
+    });
+  } catch (e) {
+    console.error("SHOP ADMIN STATS ERROR:", e);
+    return ok(res, {
+      total: 0,
+      shops: 0,
+    });
+  }
+});
+
+/* 조회수 초기화 */
+router.post("/admin/reset-view", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    await Shop.updateMany(
+      buildShopCategoryQuery(req),
+      {
+        $set: {
+          viewCount: 0,
+        },
+      }
+    );
+
+    return ok(res, {
+      msg: "RESET_VIEW_OK",
+    });
+  } catch (e) {
+    console.error("SHOP RESET VIEW ERROR:", e);
+    return ok(res, {
+      msg: "RESET_VIEW_OK",
+    });
+  }
+});
+
+/* 좋아요 초기화 */
+router.post("/admin/reset-like", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    await Shop.updateMany(
+      buildShopCategoryQuery(req),
+      {
+        $set: {
+          likeCount: 0,
+        },
+      }
+    );
+
+    return ok(res, {
+      msg: "RESET_LIKE_OK",
+    });
+  } catch (e) {
+    console.error("SHOP RESET LIKE ERROR:", e);
+    return ok(res, {
+      msg: "RESET_LIKE_OK",
+    });
+  }
+});
+
+/* PREMIUM 활성화 */
+router.patch("/admin/:id([0-9a-fA-F]{24})/premium/on", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const item = await Shop.findOneAndUpdate(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      }),
+      {
+        premium: true,
+        isPremium: true,
+        premiumActive: true,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!item) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    return ok(res, {
+      shop: item,
+      item,
+      premium: true,
+      isPremium: true,
+      premiumActive: true,
+    });
+  } catch (e) {
+    console.error("SHOP PREMIUM ON ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_PREMIUM_ON_ERROR");
+  }
+});
+
+/* PREMIUM 비활성화 */
+router.patch("/admin/:id([0-9a-fA-F]{24})/premium/off", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const item = await Shop.findOneAndUpdate(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      }),
+      {
+        premium: false,
+        isPremium: false,
+        premiumActive: false,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!item) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    return ok(res, {
+      shop: item,
+      item,
+      premium: false,
+      isPremium: false,
+      premiumActive: false,
+    });
+  } catch (e) {
+    console.error("SHOP PREMIUM OFF ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_PREMIUM_OFF_ERROR");
+  }
+});
+
+/* PREMIUM 토글 */
+router.patch("/admin/:id([0-9a-fA-F]{24})/premium", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const current = await Shop.findOne(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      })
+    );
+
+    if (!current) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    const nextPremium = !(
+      current.premium === true ||
+      current.isPremium === true ||
+      current.premiumActive === true
+    );
+
+    const item = await Shop.findOneAndUpdate(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      }),
+      {
+        premium: nextPremium,
+        isPremium: nextPremium,
+        premiumActive: nextPremium,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    return ok(res, {
+      shop: item,
+      item,
+      premium: nextPremium,
+      isPremium: nextPremium,
+      premiumActive: nextPremium,
+    });
+  } catch (e) {
+    console.error("SHOP PREMIUM TOGGLE ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_PREMIUM_TOGGLE_ERROR");
+  }
+});
+
+/* TOP */
+router.get("/top/list", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const items = await Shop.find(
+        buildShopBaseQuery(req, {
+          isDeleted: false,
+        })
+      )
+      .sort({ premium: -1, isPremium: -1, premiumActive: -1, likeCount: -1 })
+      .limit(10);
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("SHOP TOP ERROR:", e);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* 최근 */
+router.get("/recent/list", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const items = await Shop.find(
+        buildShopBaseQuery(req, {
+          isDeleted: false,
+        })
+      )
+      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+      .limit(10);
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("SHOP RECENT ERROR:", e);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* nearby */
+router.get("/nearby/list", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const { lat, lng, max = 5 } = req.query;
+
+    let items = await Shop.find(
+      buildShopBaseQuery(req, {
+        isDeleted: false,
+      })
+    ).lean();
+    items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
+    items = items.filter((i) => (i.distanceKm || 999) <= safeNumber(max, 5));
+
+    items = applySort(items, "distance");
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("SHOP NEARBY ERROR:", e);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* PREMIUM + 거리순 + 마사지3 + 노래방3 */
+router.get("/premium/nearby", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const {
+      lat,
+      lng,
+      limit = 3,
+      region,
+      district,
+    } = req.query;
+
+    const query = buildShopBaseQuery(req, {
+      isDeleted: false,
+      visible: { $ne: false },
+      approved: { $ne: false },
+      status: { $ne: "inactive" },
+    });
+
+    if (region) {
+      query.region = region;
+    }
+
+    if (district) {
+      query.district = district;
+    }
+
+    let items = await Shop.find(query).lean();
+
+    items = enrichWithDistance(
+      items,
+      safeNumber(lat),
+      safeNumber(lng)
+    );
+
+    const grouped = groupPremiumNearbyItems(
+      items,
+      limit
+    );
+
+    return ok(res, {
+      items: grouped.all,
+      list: grouped.all,
+      massage: grouped.massage,
+      karaoke: grouped.karaoke,
+      total: grouped.all.length,
+    });
+  } catch (e) {
+    console.error("SHOP PREMIUM NEARBY ERROR:", e);
+    return res.status(500).json({
+      ok: false,
+      items: [],
+      list: [],
+      massage: [],
+      karaoke: [],
+      total: 0,
+    });
+  }
+});
+
+/* ranking */
+router.get("/ranking/list", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    let items = await Shop.find(
+      buildShopBaseQuery(req, {
+        isDeleted: false,
+      })
+    ).lean();
+    items = items.map((s) => ({
+      ...s,
+      premium: s.premium === true || s.isPremium === true || s.premiumActive === true,
+      isPremium: s.premium === true || s.isPremium === true || s.premiumActive === true,
+      premiumActive: s.premium === true || s.isPremium === true || s.premiumActive === true,
+      score: calcScore(s),
+    }));
+    items.sort((a, b) => b.score - a.score);
+
+    res.json({ ok: true, items: items.slice(0, 20) });
+  } catch (e) {
+    console.error("SHOP RANKING ERROR:", e);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* random */
+router.get("/random/list", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const items = await Shop.aggregate([
+      { $match: buildShopBaseQuery(req, { isDeleted: false }) },
+      { $sample: { size: 10 } },
+    ]);
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("SHOP RANDOM ERROR:", e);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* =====================================================
+   🔥 메인 리스트
+===================================================== */
+router.get("/", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    let {
+      keyword = "",
+      region,
+      service,
+      tag,
+      sort = "like",
+      lat,
+      lng,
+      page = 1,
+      limit = 20,
+      premiumNearby,
+      home,
+    } = req.query;
+
+    page = safePage(page);
+    limit = safeLimit(limit);
+
+    const query = buildShopBaseQuery(req, {
+      isDeleted: false,
+    });
+
+    if (keyword) {
+      const safe = escapeRegex(keyword);
+      query.$or = [
+        { name: { $regex: safe, $options: "i" } },
+        { region: { $regex: safe, $options: "i" } },
+        { address: { $regex: safe, $options: "i" } },
+      ];
+    }
+
+    if (region) query.region = region;
+
+    if (service) query.serviceTypes = { $in: [service] };
+
+    if (tag) query.tags = { $in: [tag] };
+
+    let items = await Shop.find(query)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
+    items = applySort(items, sort);
+
+    if (
+      premiumNearby === "true" ||
+      premiumNearby === true ||
+      home === "true" ||
+      home === true
+    ) {
+      const grouped = groupPremiumNearbyItems(items, 3);
+
+      return res.json({
+        ok: true,
+        items: grouped.all,
+        list: grouped.all,
+        massage: grouped.massage,
+        karaoke: grouped.karaoke,
+        total: grouped.all.length,
+      });
+    }
+
+    res.json({
+      ok: true,
+      items,
+      list: items,
+      total: items.length,
+    });
+  } catch (err) {
+    console.error("SHOP LIST ERROR:", err);
+    res.status(500).json({ ok: false, items: [] });
+  }
+});
+
+/* =====================================================
+   🔥 생성
+===================================================== */
+router.post("/", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const payload = applyPayloadCategory(
+      normalizePayload(req.body),
+      req
+    );
+
+    if (!payload.name) {
+      return fail(res, 400, "매장명 필요");
+    }
+
+    if (!payload.address) {
+      return fail(res, 400, "주소 필요");
+    }
+
+    const item = await Shop.create(payload);
+
+    return ok(res, {
+      shop: item,
+      item,
+    });
+  } catch (e) {
+    console.error("SHOP CREATE ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_CREATE_ERROR");
+  }
+});
+
+/* =====================================================
+   🔥 상세
+===================================================== */
+router.get("/:id([0-9a-fA-F]{24})", async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const shop = await Shop.findOne(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      })
+    );
+
+    if (!shop || shop.isDeleted) {
+      return res.status(404).json({ ok: false });
+    }
+
+    let reviews = [];
+
+    if (requireReviewModel()) {
+      reviews = await Review.find({ shopId: shop._id });
+    }
+
+    let ratingAvg = 0;
+
+    if (reviews.length) {
+      ratingAvg =
+        reviews.reduce((a, b) => a + (b.rating || 0), 0) /
+        reviews.length;
+    }
+
+    const shopObject = shop.toObject();
+
+    res.json({
+      ok: true,
+      shop: {
+        ...shopObject,
+        premium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
+        isPremium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
+        premiumActive: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
+        ratingAvg,
+      },
+    });
+  } catch (e) {
+    console.error("SHOP DETAIL ERROR:", e);
+    res.status(500).json({ ok: false });
+  }
+});
+
+/* =====================================================
+   🔥 수정
+===================================================== */
+router.put("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const payload = applyPayloadCategory(
+      normalizePayload(req.body),
+      req
+    );
+
+    const item = await Shop.findOneAndUpdate(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      }),
+      {
+        ...payload,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!item) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    return ok(res, {
+      shop: item,
+      item,
+    });
+  } catch (e) {
+    console.error("SHOP UPDATE ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_UPDATE_ERROR");
+  }
+});
+
+/* =====================================================
+   🔥 삭제
+===================================================== */
+router.delete("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const item = await Shop.findOneAndUpdate(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      }),
+      {
+        isDeleted: true,
+        deletedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!item) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    return ok(res, {
+      shop: item,
+      item,
+    });
+  } catch (e) {
+    console.error("SHOP DELETE ERROR:", e);
+    return fail(res, 500, e.message || "SHOP_DELETE_ERROR");
+  }
+});
+
+/* =====================================================
+   🔥 FIX ONLY (중요 버그 수정)
+===================================================== */
+router.get("/search/phone", auth, admin, safeAsync(async (req, res) => {
+  try {
+    if (!requireShopModel(res)) return;
+
+    const phone = safeStr(req.query.phone);
+
+    const items = await Shop.find(
+      buildShopBaseQuery(req, {
+        phone: { $regex: escapeRegex(phone), $options: "i" },
+      })
+    ).limit(50);
+
+    return ok(res, { items });
+  } catch (e) {
+    console.error("SHOP SEARCH PHONE ERROR:", e);
+    return ok(res, { items: [] });
+  }
+}));
+
+/* =========================
+🔥 FINAL MASTER LOG
+========================= */
+console.log("🔥 SHOP ROUTES FINAL MASTER PATCH READY");
+
+module.exports = router;

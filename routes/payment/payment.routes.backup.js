@@ -17,7 +17,7 @@ const router = express.Router();
 ===================================================== */
 function safeRequire(path){
   try{ return require(path); }
-  catch(error){
+  catch{
     console.warn("[payment.routes] require fail:", path);
     return null;
   }
@@ -38,13 +38,8 @@ const auth =
 ===================================================== */
 function safeAsync(fn){
   return (req,res,next)=>{
-    if(typeof fn !== "function"){
-      return res.status(501).json({ ok:false, message:"NOT_IMPLEMENTED" });
-    }
-
     Promise.resolve(fn(req,res,next)).catch(e=>{
       console.error("[PAYMENT ERROR]", e);
-      if(res.headersSent) return;
       res.status(e.status || 500).json({
         ok:false,
         message:e.message || "SERVER_ERROR"
@@ -95,16 +90,12 @@ function resolveMiddleware(middleware, fallback){
 
 const authMiddleware = resolveMiddleware(auth, (req,res,next)=>next());
 
-function ensureMiddleware(middleware){
-  return typeof middleware === "function" ? middleware : (req,res,next)=>next();
-}
-
 function adminOnly(req,res,next){
   if(!req.user) return res.status(401).json({ ok:false });
   if(!["admin","superAdmin"].includes(req.user.role)){
     return res.status(403).json({ ok:false });
   }
-  return typeof next === "function" ? next() : undefined;
+  next();
 }
 
 function optionalAuth(req,res,next){
@@ -170,7 +161,7 @@ router.get("/ping",(req,res)=>{
 /* =====================================================
 🔥 KAKAO PAY (핵심 유지)
 ===================================================== */
-router.post("/kakao/ready", ensureMiddleware(authMiddleware), safeHandler(paymentController.kakaoReady));
+router.post("/kakao/ready", authMiddleware, safeHandler(paymentController.kakaoReady));
 router.get("/kakao/success", safeHandler(paymentController.kakaoSuccess));
 router.get("/kakao/cancel", safeHandler(paymentController.kakaoCancel));
 router.get("/kakao/fail", safeHandler(paymentController.kakaoFail));
@@ -178,79 +169,79 @@ router.get("/kakao/fail", safeHandler(paymentController.kakaoFail));
 /* =====================================================
 🔥 CORE PAYMENT (기존 유지)
 ===================================================== */
-router.post("/checkout", ensureMiddleware(authMiddleware), safeHandler(paymentController.createCheckout));
-router.post("/", ensureMiddleware(authMiddleware), safeHandler(paymentController.createPayment));
-router.post("/approve", ensureMiddleware(authMiddleware), safeHandler(paymentController.approvePayment));
-router.post("/fail", ensureMiddleware(authMiddleware), safeHandler(paymentController.failPayment));
-router.post("/cancel", ensureMiddleware(authMiddleware), safeHandler(paymentController.cancelPayment));
-router.post("/refund", ensureMiddleware(authMiddleware), safeHandler(paymentController.refundPayment));
+router.post("/checkout", authMiddleware, safeHandler(paymentController.createCheckout));
+router.post("/", authMiddleware, safeHandler(paymentController.createPayment));
+router.post("/approve", authMiddleware, safeHandler(paymentController.approvePayment));
+router.post("/fail", authMiddleware, safeHandler(paymentController.failPayment));
+router.post("/cancel", authMiddleware, safeHandler(paymentController.cancelPayment));
+router.post("/refund", authMiddleware, safeHandler(paymentController.refundPayment));
 router.post("/calculate", optionalAuth, safeHandler(paymentController.calculateAmount));
 router.post("/validate", optionalAuth, safeHandler(paymentController.validateCheckout));
 
 /* =====================================================
 🔥 QUERY (기존 유지)
 ===================================================== */
-router.get("/me", ensureMiddleware(authMiddleware), safeHandler(paymentController.myPayments));
-router.get("/", ensureMiddleware(authMiddleware), safeHandler(paymentController.listPayments));
+router.get("/me", authMiddleware, safeHandler(paymentController.myPayments));
+router.get("/", authMiddleware, safeHandler(paymentController.listPayments));
 
 router.get("/reservation/:reservationId",
-  ensureMiddleware(authMiddleware),
+  authMiddleware,
   validateObjectIdParam("reservationId"),
   safeHandler(paymentController.getReservationPayments)
 );
 
-router.get("/user/:userId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getUserPayments));
+router.get("/user/:userId", authMiddleware, safeHandler(paymentController.getUserPayments));
 
 router.get("/shop/:shopId",
-  ensureMiddleware(authMiddleware),
+  authMiddleware,
   validateObjectIdParam("shopId"),
   safeHandler(paymentController.getShopPayments)
 );
 
-router.get("/order/:orderId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPaymentByOrderId));
-router.get("/key/:paymentKey", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPaymentByKey));
-router.get("/:paymentId/receipt", ensureMiddleware(authMiddleware), safeHandler(paymentController.getReceipt));
-router.get("/:paymentId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPayment));
+router.get("/order/:orderId", authMiddleware, safeHandler(paymentController.getPaymentByOrderId));
+router.get("/key/:paymentKey", authMiddleware, safeHandler(paymentController.getPaymentByKey));
+router.get("/:paymentId/receipt", authMiddleware, safeHandler(paymentController.getReceipt));
+router.get("/:paymentId", authMiddleware, safeHandler(paymentController.getPayment));
 
 /* =====================================================
 🔥 MOCK (기존 유지)
 ===================================================== */
-router.post("/mock/success", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockSuccess));
-router.post("/mock/cancel", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockCancel));
-router.post("/mock/fail", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockFail));
+router.post("/mock/success", authMiddleware, safeHandler(paymentController.mockSuccess));
+router.post("/mock/cancel", authMiddleware, safeHandler(paymentController.mockCancel));
+router.post("/mock/fail", authMiddleware, safeHandler(paymentController.mockFail));
 
 /* =====================================================
 🔥 ADMIN (기존 유지)
 ===================================================== */
-router.get("/admin/logs", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getLogs));
-router.get("/admin/metrics", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getMetrics));
-router.get("/admin/health", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getHealth));
-router.get("/admin/store-size", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getStoreSize));
+router.get("/admin/logs", authMiddleware, adminOnly, safeHandler(paymentController.getLogs));
+router.get("/admin/metrics", authMiddleware, adminOnly, safeHandler(paymentController.getMetrics));
+router.get("/admin/health", authMiddleware, adminOnly, safeHandler(paymentController.getHealth));
+router.get("/admin/store-size", authMiddleware, adminOnly, safeHandler(paymentController.getStoreSize));
 
-router.post("/admin/logs/clear", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.clearLogs));
-router.post("/admin/clear-expired", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.clearExpired));
+router.post("/admin/logs/clear", authMiddleware, adminOnly, safeHandler(paymentController.clearLogs));
+router.post("/admin/clear-expired", authMiddleware, adminOnly, safeHandler(paymentController.clearExpired));
 
 /* =====================================================
 🔥 NEW FEATURES (확장)
 ===================================================== */
 
 router.get("/status/:paymentId",
-  ensureMiddleware(authMiddleware),
+  authMiddleware,
   validateObjectIdParam("paymentId"),
   safeHandler(paymentController.getPaymentStatus)
 );
 
-router.get("/recent", ensureMiddleware(authMiddleware), safeHandler(paymentController.getRecentPayments));
-router.get("/stats/summary", ensureMiddleware(authMiddleware), safeHandler(paymentController.getSummaryStats));
+router.get("/recent", authMiddleware, safeHandler(paymentController.getRecentPayments));
+router.get("/stats/summary", authMiddleware, safeHandler(paymentController.getSummaryStats));
 
 /* =====================================================
 🔥 DEBUG
 ===================================================== */
-router.get("/admin/route-logs", ensureMiddleware(authMiddleware), adminOnly, (req,res)=>{
+router.get("/admin/route-logs", authMiddleware, adminOnly, (req,res)=>{
   res.json({ ok:true, logs:LOGS.slice(-200) });
 });
 
-router.post("/admin/route-logs/clear", ensureMiddleware(authMiddleware), adminOnly, (req,res)=>{
+router.post("/admin/route-logs/clear", authMiddleware, adminOnly, (req,res)=>{
   LOGS.length = 0;
   res.json({ ok:true });
 });
