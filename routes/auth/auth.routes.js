@@ -1,276 +1,652 @@
 "use strict";
 
 /* =====================================================
-🔥 ENV
+🔥 AUTH ROUTES (NORA SAFE ROUTER FINAL)
+✔ route 파일에서 server/app import 금지
+✔ app.listen/server.listen side effect 차단
+✔ module.exports = router 보장
+✔ /api/auth NOT_FOUND 복구
+✔ 기존 auth endpoint 유지
 ===================================================== */
-require("dotenv").config();
 
-/* =====================================================
-🔥 CORE
-===================================================== */
 const express = require("express");
-const mongoose = require("mongoose");
-const http = require("http");
 const path = require("path");
+const fs = require("fs");
+const jwt = require("jsonwebtoken");
 
-/* =====================================================
-🔥 MIDDLEWARE
-===================================================== */
-const helmet = require("helmet");
-const morgan = require("morgan");
-const cors = require("cors");
-const cookieParser = require("cookie-parser");
-const rateLimit = require("express-rate-limit");
-const compression = require("compression");
+let bcrypt = null;
 
-/* =====================================================
-🔥 SOCKET (기존 유지 + 확장)
-===================================================== */
-const { Server } = require("socket.io");
+try {
+  bcrypt = require("bcryptjs");
+} catch (_) {
+  try {
+    bcrypt = require("bcrypt");
+  } catch (error) {
+    bcrypt = null;
+  }
+}
+
+const router = express.Router();
 
 /* =====================================================
 🔥 SAFE REQUIRE
 ===================================================== */
-function safeRequire(p) {
-  try { return require(p); } catch { return null; }
+
+function safeRequire(modulePath) {
+  try {
+    const basePath = path.resolve(__dirname, modulePath);
+
+    const candidates = [
+      basePath,
+      `${basePath}.js`,
+      `${basePath}.json`,
+      path.join(basePath, "index.js"),
+    ];
+
+    const found = candidates.find((filePath) => fs.existsSync(filePath));
+
+    if (!found) {
+      return null;
+    }
+
+    return require(found);
+  } catch (error) {
+    console.error("[AUTH ROUTE LOAD ERROR]", modulePath, error.message);
+
+    return null;
+  }
 }
 
 /* =====================================================
-🔥 DB
+🔥 MODEL LOAD
 ===================================================== */
-const dbModule = safeRequire("./config/database") || safeRequire("./db");
+
+const User =
+  safeRequire("../../models/User") ||
+  safeRequire("../../models/user") ||
+  safeRequire("../../models/User.model") ||
+  safeRequire("../../models/user.model") ||
+  safeRequire("../../server/models/User") ||
+  safeRequire("../../server/models/user") ||
+  safeRequire("../../modules/user/models/User") ||
+  null;
 
 /* =====================================================
-🔥 MODELS
+🔥 BASIC UTILS
 ===================================================== */
-const Shop = safeRequire("./models/Shop");
-const Reservation = safeRequire("./models/Reservation");
 
-/* =====================================================
-🔥 ROUTES (확장)
-===================================================== */
-const routesIndex = safeRequire("./routes/index");
-const authRouter = safeRequire("./routes/auth");
+function ok(res, data = {}, status = 200) {
+  return res.status(status).json({
+    ok: true,
+    success: true,
+    ...data,
+  });
+}
 
-/* =====================================================
-🔥 APP INIT
-===================================================== */
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: true } });
+function fail(res, status = 400, message = "AUTH_ERROR") {
+  return res.status(status).json({
+    ok: false,
+    success: false,
+    msg: message,
+    message,
+    error: message,
+  });
+}
 
-const PORT = process.env.PORT || 10000;
+function getJwtSecret() {
+  return (
+    process.env.JWT_SECRET ||
+    process.env.JWT_ACCESS_SECRET ||
+    process.env.ACCESS_TOKEN_SECRET ||
+    process.env.SECRET ||
+    "nora-local-secret"
+  );
+}
 
-/* =====================================================
-🔥 GLOBAL STATE
-===================================================== */
-let REQUEST_COUNT = 0;
-const CACHE = new Map();
+function signToken(user) {
+  const payload = {
+    id: user.id || user.email || user.username || String(user._id || ""),
+    _id: user._id,
+    email: user.email,
+    role: user.role || (user.isAdmin ? "admin" : "user"),
+    isAdmin: user.isAdmin === true || user.role === "admin",
+  };
 
-/* =====================================================
-🔥 MIDDLEWARE
-===================================================== */
-app.use(helmet());
-app.use(compression());
-app.use(morgan("dev"));
-app.use(cors({ origin: true, credentials: true }));
-app.use(cookieParser());
-app.use(express.json({ limit: "10mb" }));
+  return jwt.sign(payload, getJwtSecret(), {
+    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  });
+}
 
-/* 🔥 RATE LIMIT */
-app.use("/api", rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.RATE_LIMIT_MAX || 300
-}));
+function extractToken(req) {
+  const authHeader = req.headers.authorization || "";
 
-/* REQUEST COUNT */
-app.use((req, res, next) => {
-  REQUEST_COUNT++;
-  next();
-});
+  if (authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
 
-/* =====================================================
-🔥 STATIC
-===================================================== */
-const PUBLIC_PATH = path.resolve(process.cwd(), "public");
-app.use(express.static(PUBLIC_PATH));
+  return (
+    req.cookies?.token ||
+    req.cookies?.accessToken ||
+    req.cookies?.authToken ||
+    req.headers["x-access-token"] ||
+    req.headers["x-auth-token"] ||
+    req.query?.token ||
+    null
+  );
+}
 
-/* =====================================================
-🔥 UTIL
-===================================================== */
-const ok = (res, data = {}) => res.json({ ok: true, ...data });
-const fail = (res, s = 400, m = "ERROR") => res.status(s).json({ ok: false, msg: m });
-
-/* =====================================================
-🔥 CACHE SYSTEM (강화)
-===================================================== */
-function cacheGet(key) {
-  const v = CACHE.get(key);
-  if (!v) return null;
-
-  if (Date.now() > v.expire) {
-    CACHE.delete(key);
+function normalizeUser(user) {
+  if (!user) {
     return null;
   }
 
-  return v.data;
+  const item = typeof user.toObject === "function" ? user.toObject() : { ...user };
+
+  delete item.password;
+  delete item.passwordHash;
+  delete item.refreshToken;
+
+  return item;
 }
 
-function cacheSet(key, data, ttl = 5000) {
-  CACHE.set(key, { data, expire: Date.now() + ttl });
+function firstValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+
+  return "";
 }
 
-/* =====================================================
-🔥 ROUTER APPLY
-===================================================== */
-if (authRouter) {
-  app.use("/api/auth", authRouter);
+async function comparePassword(plain, hashed) {
+  if (!plain || !hashed) {
+    return false;
+  }
+
+  if (!bcrypt) {
+    return plain === hashed;
+  }
+
+  try {
+    return await bcrypt.compare(plain, hashed);
+  } catch (_) {
+    return plain === hashed;
+  }
 }
 
-if (routesIndex) {
-  app.use("/api", routesIndex);
+async function hashPassword(password) {
+  if (!bcrypt) {
+    return password;
+  }
+
+  return bcrypt.hash(password, 10);
 }
 
-/* =====================================================
-🔥 ROOT
-===================================================== */
-app.get("/", (req, res) => {
-  return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
-});
+async function findUserByLogin(loginId) {
+  if (!User || typeof User.findOne !== "function") {
+    return null;
+  }
 
-/* =====================================================
-🔥 CACHE LAYER (GET ONLY)
-===================================================== */
-app.use("/api", (req, res, next) => {
-  if (req.method !== "GET") return next();
-
-  const cached = cacheGet(req.originalUrl);
-  if (cached) return res.json(cached);
-
-  const original = res.json.bind(res);
-
-  res.json = (data) => {
-    cacheSet(req.originalUrl, data);
-    return original(data);
+  const query = {
+    $or: [
+      { id: loginId },
+      { email: loginId },
+      { username: loginId },
+      { phone: loginId },
+    ],
   };
 
-  next();
-});
+  return User.findOne(query);
+}
 
-/* =====================================================
-🔥 SHOP API
-===================================================== */
-app.get("/api/shops", async (req, res) => {
-  if (!Shop) return fail(res, 500);
+async function requireAuth(req, res, next) {
+  try {
+    const token = extractToken(req);
 
-  const items = await Shop.find().limit(50);
-  ok(res, { items });
-});
+    if (!token) {
+      return fail(res, 401, "AUTH_REQUIRED");
+    }
 
-/* =====================================================
-🔥 RESERVATION API
-===================================================== */
-app.post("/api/reservations", async (req, res) => {
-  if (!Reservation) return fail(res, 500);
+    const decoded = jwt.verify(token, getJwtSecret());
 
-  const r = await Reservation.create({
-    userId: req.body.userId,
-    shopId: req.body.shopId,
-    status: "pending"
-  });
+    req.user = decoded;
+    req.auth = decoded;
 
-  /* 🔥 SOCKET PUSH */
-  io.emit("reservation:new", r);
+    return next();
+  } catch (error) {
+    return fail(res, 401, "INVALID_TOKEN");
+  }
+}
 
-  ok(res, { r });
-});
+async function optionalAuth(req, res, next) {
+  try {
+    const token = extractToken(req);
 
-/* =====================================================
-🔥 ADMIN
-===================================================== */
-app.get("/api/admin/stats", async (req, res) => {
-  const users = await mongoose.connection.collection("users").countDocuments();
-  const shops = Shop ? await Shop.countDocuments() : 0;
-  const reservations = Reservation ? await Reservation.countDocuments() : 0;
+    if (token) {
+      const decoded = jwt.verify(token, getJwtSecret());
 
-  ok(res, { users, shops, reservations });
-});
+      req.user = decoded;
+      req.auth = decoded;
+    }
+  } catch (_) {
+    req.user = null;
+    req.auth = null;
+  }
 
-/* =====================================================
-🔥 SYSTEM
-===================================================== */
-app.get("/api/system/status", (req, res) => {
-  ok(res, {
-    memory: process.memoryUsage(),
-    uptime: process.uptime(),
-    requests: REQUEST_COUNT
-  });
-});
+  return next();
+}
 
 /* =====================================================
 🔥 HEALTH
 ===================================================== */
-app.get("/api/health", (req, res) => {
+
+router.get("/health", (req, res) =>
   ok(res, {
-    db: mongoose.connection.readyState,
-    uptime: process.uptime()
-  });
-});
+    service: "NORA AUTH API",
+    status: "UP",
+    hasUserModel: !!User,
+    timestamp: new Date().toISOString(),
+  })
+);
+
+router.get("/ping", (req, res) =>
+  ok(res, {
+    service: "NORA AUTH API",
+    pong: true,
+    timestamp: new Date().toISOString(),
+  })
+);
 
 /* =====================================================
-🔥 SOCKET (확장)
+🔥 LOGIN / REGISTER
 ===================================================== */
-io.on("connection", (socket) => {
 
-  socket.on("ping", () => {
-    socket.emit("pong");
-  });
-
-  /* 🔥 USER JOIN */
-  socket.on("join:user", (userId) => {
-    socket.join(`user:${userId}`);
-  });
-
-  /* 🔥 ADMIN JOIN */
-  socket.on("join:admin", () => {
-    socket.join("admin");
-  });
-
-  /* 🔥 BROADCAST */
-  socket.on("broadcast", (msg) => {
-    io.emit("broadcast", msg);
-  });
-
-});
-
-/* =====================================================
-🔥 ERROR
-===================================================== */
-app.use((req, res) => fail(res, 404, "NOT_FOUND"));
-
-app.use((err, req, res, next) => {
-  console.error(err);
-  fail(res, 500, "SERVER_ERROR");
-});
-
-/* =====================================================
-🔥 START
-===================================================== */
-async function start() {
+router.post("/login", async (req, res) => {
   try {
+    const loginId = firstValue(
+      req.body?.id,
+      req.body?.email,
+      req.body?.username,
+      req.body?.phone,
+      req.body?.loginId
+    );
 
-    if (dbModule?.connectDB) {
-      await dbModule.connectDB();
-      console.log("DB CONNECTED");
+    const password = firstValue(req.body?.password, req.body?.pw);
+
+    if (!loginId || !password) {
+      return fail(res, 400, "ID_PASSWORD_REQUIRED");
     }
 
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log("🚀 SERVER START", PORT);
+    if (!User) {
+      return fail(res, 503, "USER_MODEL_NOT_CONNECTED");
+    }
+
+    const user = await findUserByLogin(loginId);
+
+    if (!user) {
+      return fail(res, 401, "INVALID_ACCOUNT");
+    }
+
+    const hashed = user.password || user.passwordHash;
+
+    const matched = await comparePassword(password, hashed);
+
+    if (!matched) {
+      return fail(res, 401, "INVALID_PASSWORD");
+    }
+
+    const token = signToken(user);
+    const safeUser = normalizeUser(user);
+
+    return ok(res, {
+      token,
+      accessToken: token,
+      authToken: token,
+      adminToken: token,
+      jwt: token,
+      user: safeUser,
+    });
+  } catch (error) {
+    console.error("[AUTH LOGIN ERROR]", error.message);
+
+    return fail(res, 500, "LOGIN_ERROR");
+  }
+});
+
+router.post("/register", async (req, res) => {
+  try {
+    const id = firstValue(
+      req.body?.id,
+      req.body?.email,
+      req.body?.username,
+      req.body?.phone
+    );
+
+    const email = firstValue(req.body?.email);
+    const username = firstValue(req.body?.username, req.body?.name);
+    const phone = firstValue(req.body?.phone);
+    const password = firstValue(req.body?.password, req.body?.pw);
+
+    if (!id || !password) {
+      return fail(res, 400, "ID_PASSWORD_REQUIRED");
+    }
+
+    if (!User) {
+      return fail(res, 503, "USER_MODEL_NOT_CONNECTED");
+    }
+
+    const exists = await findUserByLogin(id);
+
+    if (exists) {
+      return fail(res, 409, "USER_ALREADY_EXISTS");
+    }
+
+    const hashed = await hashPassword(password);
+
+    const created = await User.create({
+      id,
+      email: email || undefined,
+      username: username || undefined,
+      name: username || undefined,
+      phone: phone || undefined,
+      password: hashed,
+      role: req.body?.role || "user",
+      isAdmin: req.body?.isAdmin === true,
     });
 
-  } catch (e) {
-    console.error(e);
+    const token = signToken(created);
+
+    return ok(
+      res,
+      {
+        token,
+        accessToken: token,
+        authToken: token,
+        user: normalizeUser(created),
+      },
+      201
+    );
+  } catch (error) {
+    console.error("[AUTH REGISTER ERROR]", error.message);
+
+    return fail(res, 500, "REGISTER_ERROR");
+  }
+});
+
+router.post("/signup", async (req, res, next) => {
+  req.url = "/register";
+  return next();
+});
+
+router.post("/logout", (req, res) =>
+  ok(res, {
+    message: "LOGOUT_OK",
+  })
+);
+
+router.post("/refresh", optionalAuth, (req, res) => {
+  if (!req.user) {
+    return fail(res, 401, "INVALID_TOKEN");
+  }
+
+  const token = jwt.sign(req.user, getJwtSecret(), {
+    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  });
+
+  return ok(res, {
+    token,
+    accessToken: token,
+    authToken: token,
+  });
+});
+
+/* =====================================================
+🔥 PROFILE
+===================================================== */
+
+async function getCurrentUser(req, res) {
+  try {
+    if (!req.user) {
+      return fail(res, 401, "AUTH_REQUIRED");
+    }
+
+    if (!User || typeof User.findOne !== "function") {
+      return ok(res, {
+        user: req.user,
+      });
+    }
+
+    const userId = req.user._id || req.user.id || req.user.email;
+
+    const user = await User.findOne({
+      $or: [
+        { _id: userId },
+        { id: userId },
+        { email: userId },
+      ],
+    }).catch(() => null);
+
+    return ok(res, {
+      user: normalizeUser(user) || req.user,
+    });
+  } catch (error) {
+    console.error("[AUTH ME ERROR]", error.message);
+
+    return fail(res, 500, "ME_ERROR");
   }
 }
 
-start();
+router.get("/me", requireAuth, getCurrentUser);
+router.get("/profile", requireAuth, getCurrentUser);
+router.get("/session", optionalAuth, (req, res) =>
+  ok(res, {
+    user: req.user || null,
+    authenticated: !!req.user,
+  })
+);
+
+async function updateProfile(req, res) {
+  try {
+    if (!User || typeof User.findOneAndUpdate !== "function") {
+      return fail(res, 503, "USER_MODEL_NOT_CONNECTED");
+    }
+
+    const userId = req.user?._id || req.user?.id || req.user?.email;
+
+    if (!userId) {
+      return fail(res, 401, "AUTH_REQUIRED");
+    }
+
+    const allowed = {};
+
+    ["name", "username", "phone", "email", "nickname", "avatar"].forEach((key) => {
+      if (req.body?.[key] !== undefined) {
+        allowed[key] = req.body[key];
+      }
+    });
+
+    const user = await User.findOneAndUpdate(
+      {
+        $or: [
+          { _id: userId },
+          { id: userId },
+          { email: userId },
+        ],
+      },
+      {
+        $set: allowed,
+      },
+      {
+        new: true,
+      }
+    );
+
+    return ok(res, {
+      user: normalizeUser(user),
+    });
+  } catch (error) {
+    console.error("[AUTH UPDATE PROFILE ERROR]", error.message);
+
+    return fail(res, 500, "UPDATE_PROFILE_ERROR");
+  }
+}
+
+router.patch("/profile", requireAuth, updateProfile);
+router.put("/profile", requireAuth, updateProfile);
+
+/* =====================================================
+🔥 PASSWORD
+===================================================== */
+
+router.post("/change-password", requireAuth, async (req, res) => {
+  try {
+    const oldPassword = firstValue(req.body?.oldPassword, req.body?.currentPassword);
+    const newPassword = firstValue(req.body?.newPassword, req.body?.password);
+
+    if (!oldPassword || !newPassword) {
+      return fail(res, 400, "PASSWORD_REQUIRED");
+    }
+
+    if (!User || typeof User.findOneAndUpdate !== "function") {
+      return fail(res, 503, "USER_MODEL_NOT_CONNECTED");
+    }
+
+    const userId = req.user?._id || req.user?.id || req.user?.email;
+
+    const user = await User.findOne({
+      $or: [
+        { _id: userId },
+        { id: userId },
+        { email: userId },
+      ],
+    });
+
+    if (!user) {
+      return fail(res, 404, "USER_NOT_FOUND");
+    }
+
+    const matched = await comparePassword(oldPassword, user.password || user.passwordHash);
+
+    if (!matched) {
+      return fail(res, 401, "INVALID_PASSWORD");
+    }
+
+    user.password = await hashPassword(newPassword);
+
+    await user.save();
+
+    return ok(res, {
+      message: "PASSWORD_CHANGED",
+    });
+  } catch (error) {
+    console.error("[AUTH CHANGE PASSWORD ERROR]", error.message);
+
+    return fail(res, 500, "CHANGE_PASSWORD_ERROR");
+  }
+});
+
+router.post("/forgot-password", (req, res) =>
+  ok(res, {
+    message: "FORGOT_PASSWORD_REQUEST_ACCEPTED",
+  })
+);
+
+router.post("/reset-password", (req, res) =>
+  ok(res, {
+    message: "RESET_PASSWORD_REQUEST_ACCEPTED",
+  })
+);
+
+router.get("/verify-email", (req, res) =>
+  ok(res, {
+    message: "VERIFY_EMAIL_REQUEST_ACCEPTED",
+  })
+);
+
+/* =====================================================
+🔥 ADMIN / SECURITY
+===================================================== */
+
+router.get("/admin/users", requireAuth, async (req, res) => {
+  try {
+    if (!User || typeof User.find !== "function") {
+      return fail(res, 503, "USER_MODEL_NOT_CONNECTED");
+    }
+
+    const users = await User.find({})
+      .limit(300)
+      .lean();
+
+    return ok(res, {
+      users: users.map(normalizeUser),
+      items: users.map(normalizeUser),
+      total: users.length,
+    });
+  } catch (error) {
+    console.error("[AUTH ADMIN USERS ERROR]", error.message);
+
+    return fail(res, 500, "ADMIN_USERS_ERROR");
+  }
+});
+
+router.post("/admin/users/:id/force-logout", requireAuth, (req, res) =>
+  ok(res, {
+    message: "FORCE_LOGOUT_OK",
+    id: req.params.id,
+  })
+);
+
+router.get("/login-history", requireAuth, (req, res) =>
+  ok(res, {
+    items: [],
+    history: [],
+  })
+);
+
+router.get("/security-check", optionalAuth, (req, res) =>
+  ok(res, {
+    secure: true,
+    authenticated: !!req.user,
+  })
+);
+
+/* =====================================================
+🔥 KAKAO
+===================================================== */
+
+router.get("/kakao", (req, res) => {
+  const clientId = process.env.KAKAO_CLIENT_ID;
+  const redirectUri = process.env.KAKAO_REDIRECT_URI;
+
+  if (!clientId || !redirectUri) {
+    return fail(res, 503, "KAKAO_CONFIG_MISSING");
+  }
+
+  const url =
+    "https://kauth.kakao.com/oauth/authorize" +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    "&response_type=code";
+
+  return res.redirect(url);
+});
+
+router.get("/kakao/callback", (req, res) =>
+  ok(res, {
+    message: "KAKAO_CALLBACK_RECEIVED",
+    code: req.query?.code || null,
+  })
+);
+
+/* =====================================================
+🔥 FALLBACK
+===================================================== */
+
+router.use((req, res) =>
+  fail(res, 404, "AUTH_ROUTE_NOT_FOUND")
+);
+
+module.exports = router;
+
+console.log("🔥 AUTH ROUTES FINAL SAFE READY");

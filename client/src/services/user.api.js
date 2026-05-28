@@ -11,17 +11,24 @@ import axios from "axios";
 /* =========================
 🔥 BASE URL
 ========================= */
+const isLocalHost =
+  typeof window !== "undefined" &&
+  (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+
 const API_BASE_URL =
-  (typeof process !== "undefined" &&
-    process.env &&
-    process.env.REACT_APP_API_URL) ||
   (typeof window !== "undefined" &&
     window.__ENV__ &&
     window.__ENV__.API_BASE_URL) ||
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
-    import.meta.env.VITE_API_URL) ||
-  "http://localhost:10000/api";
+    (
+      import.meta.env.VITE_API_BASE_URL ||
+      import.meta.env.VITE_API_URL
+    )) ||
+  "https://api.nora365.co.kr/api";
 
 /* =========================
 🔥 AXIOS INSTANCE
@@ -29,6 +36,7 @@ const API_BASE_URL =
 const API = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000,
+  withCredentials: true,
 });
 
 try {

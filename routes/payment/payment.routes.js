@@ -1,293 +1,500 @@
-"use strict";
-
-/* =====================================================
-🔥 PAYMENT ROUTES (FULL REBUILD FINAL)
-✔ 기존 기능 100% 유지
-✔ 오류 수정 완료
-✔ 안정성 + 보안 강화
-✔ 확장 100+
-✔ 즉시 교체 가능
-===================================================== */
-
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
+
 const router = express.Router();
 
 /* =====================================================
-🔥 SAFE REQUIRE
+ SAFE REQUIRE
 ===================================================== */
-function safeRequire(path){
-  try{ return require(path); }
-  catch(error){
-    console.warn("[payment.routes] require fail:", path);
+function safeRequire(modulePath) {
+  try {
+    const basePath = path.resolve(__dirname, modulePath);
+
+    const candidates = [
+      basePath,
+      `${basePath}.js`,
+      `${basePath}.json`,
+      path.join(basePath, "index.js"),
+    ];
+
+    const found = candidates.find((filePath) => fs.existsSync(filePath));
+
+    if (!found) {
+      console.warn("[payment.routes] require fail:", modulePath, "MODULE_NOT_FOUND");
+      return null;
+    }
+
+    return require(found);
+  } catch (error) {
+    console.warn(
+      "[payment.routes] require fail:",
+      modulePath,
+      error.message
+    );
+
     return null;
   }
 }
 
-const paymentController =
+function normalizeControllerModule(mod) {
+  if (!mod) {
+    return {};
+  }
+
+  if (mod && typeof mod === "object") {
+    return mod.default || mod.controller || mod.paymentController || mod;
+  }
+
+  return {};
+}
+
+/* =====================================================
+ CONTROLLER
+===================================================== */
+const paymentController = normalizeControllerModule(
   safeRequire("../../controllers/payment/paymentController") ||
-  safeRequire("../../controllers/payment.controller") ||
+    safeRequire("../../controllers/payment/payment.controller") ||
+    safeRequire("../../controllers/payment/payment.Controller") ||
+    safeRequire("../controllers/payment/paymentController") ||
+    safeRequire("../controllers/payment/payment.controller") ||
+    safeRequire("../controllers/payment/payment.Controller") ||
+    {}
+);
+
+/* =====================================================
+ AUTH
+===================================================== */
+const authModule =
+  safeRequire("../../middlewares/auth") ||
+  safeRequire("../middlewares/auth") ||
   {};
 
 const auth =
-  safeRequire("../../middlewares/auth") ||
-  safeRequire("../middlewares/auth") ||
-  null;
+  typeof authModule === "function"
+    ? authModule
+    : typeof authModule.auth === "function"
+    ? authModule.auth
+    : (req, res, next) => next();
 
 /* =====================================================
-🔥 UTIL
+ ADMIN
 ===================================================== */
-function safeAsync(fn){
-  return (req,res,next)=>{
-    if(typeof fn !== "function"){
-      return res.status(501).json({ ok:false, message:"NOT_IMPLEMENTED" });
-    }
+function adminOnly(req, res, next) {
+  const role = req.user?.role || "";
 
-    Promise.resolve(fn(req,res,next)).catch(e=>{
-      console.error("[PAYMENT ERROR]", e);
-      if(res.headersSent) return;
-      res.status(e.status || 500).json({
-        ok:false,
-        message:e.message || "SERVER_ERROR"
+  if (!req.user) {
+    return res.status(401).json({
+      ok: false,
+      message: "UNAUTHORIZED",
+    });
+  }
+
+  if (!["admin", "superAdmin"].includes(role)) {
+    return res.status(403).json({
+      ok: false,
+      message: "FORBIDDEN",
+    });
+  }
+
+  next();
+}
+
+/* =====================================================
+ SAFE ASYNC
+===================================================== */
+function safeAsync(fn) {
+  return async (req, res, next) => {
+    try {
+      return await fn(req, res, next);
+    } catch (error) {
+      console.error("[PAYMENT ERROR]", error);
+
+      return res.status(error.status || 500).json({
+        ok: false,
+        message: error.message || "SERVER_ERROR",
       });
+    }
+  };
+}
+
+/* =====================================================
+ SAFE HANDLER
+===================================================== */
+function safeHandler(handlerName) {
+  const handler = paymentController?.[handlerName];
+
+  if (typeof handler === "function") {
+    return safeAsync(handler);
+  }
+
+  return (req, res) => {
+    return res.status(501).json({
+      ok: false,
+      message: `${handlerName}_NOT_IMPLEMENTED`,
     });
   };
 }
 
-function safeHandler(handler){
-  return typeof handler === "function"
-    ? safeAsync(handler)
-    : (req,res)=>res.status(501).json({ ok:false, message:"NOT_IMPLEMENTED" });
+/* =====================================================
+ OBJECT ID VALIDATION
+===================================================== */
+function isValidId(id) {
+  return /^[0-9a-fA-F]{24}$/.test(String(id || ""));
 }
 
-function isValidId(id){
-  return /^[0-9a-fA-F]{24}$/.test(String(id||""));
-}
-
-function validateObjectIdParam(name){
-  return (req,res,next)=>{
-    if(!isValidId(req.params[name])){
-      return res.status(400).json({ ok:false, message:`invalid ${name}` });
+function validateObjectIdParam(name) {
+  return (req, res, next) => {
+    if (!isValidId(req.params[name])) {
+      return res.status(400).json({
+        ok: false,
+        message: `invalid ${name}`,
+      });
     }
+
     next();
   };
 }
 
 /* =====================================================
-🔥 AUTH
-===================================================== */
-function resolveMiddleware(middleware, fallback){
-  if(typeof middleware === "function"){
-    return middleware;
-  }
-
-  if(middleware && typeof middleware === "object"){
-    if(typeof middleware.auth === "function") return middleware.auth;
-    if(typeof middleware.authenticate === "function") return middleware.authenticate;
-    if(typeof middleware.requireAuth === "function") return middleware.requireAuth;
-    if(typeof middleware.verifyToken === "function") return middleware.verifyToken;
-    if(typeof middleware.protect === "function") return middleware.protect;
-    if(typeof middleware.default === "function") return middleware.default;
-    if(typeof middleware.middleware === "function") return middleware.middleware;
-  }
-
-  return fallback;
-}
-
-const authMiddleware = resolveMiddleware(auth, (req,res,next)=>next());
-
-function ensureMiddleware(middleware){
-  return typeof middleware === "function" ? middleware : (req,res,next)=>next();
-}
-
-function adminOnly(req,res,next){
-  if(!req.user) return res.status(401).json({ ok:false });
-  if(!["admin","superAdmin"].includes(req.user.role)){
-    return res.status(403).json({ ok:false });
-  }
-  return typeof next === "function" ? next() : undefined;
-}
-
-function optionalAuth(req,res,next){
-  if(auth && typeof auth.optional === "function"){
-    return auth.optional(req,res,next);
-  }
-
-  if(auth && typeof auth.optionalAuth === "function"){
-    return auth.optionalAuth(req,res,next);
-  }
-
-  next();
-}
-
-/* =====================================================
-🔥 RATE LIMIT
+ RATE LIMIT
 ===================================================== */
 const RATE = new Map();
 
-router.use((req,res,next)=>{
+router.use((req, res, next) => {
   const now = Date.now();
-  const arr = RATE.get(req.ip) || [];
 
-  const filtered = arr.filter(t=>now-t<1000);
+  const list = RATE.get(req.ip) || [];
+
+  const filtered = list.filter((t) => now - t < 1000);
+
   filtered.push(now);
 
-  RATE.set(req.ip,filtered);
+  RATE.set(req.ip, filtered);
 
-  if(filtered.length > 100){
-    return res.status(429).json({ ok:false, message:"Too many requests" });
-  }
-
-  next();
-});
-
-/* =====================================================
-🔥 ROUTE LOG
-===================================================== */
-const LOGS = [];
-
-router.use((req,res,next)=>{
-  LOGS.push({
-    path:req.originalUrl,
-    method:req.method,
-    time:Date.now()
-  });
-
-  if(LOGS.length > 3000) LOGS.shift();
-  next();
-});
-
-/* =====================================================
-🔥 HEALTH
-===================================================== */
-router.get("/health",(req,res)=>{
-  res.json({ ok:true, service:"payment", time:Date.now() });
-});
-
-router.get("/ping",(req,res)=>{
-  res.json({ ok:true, pong:true });
-});
-
-/* =====================================================
-🔥 KAKAO PAY (핵심 유지)
-===================================================== */
-router.post("/kakao/ready", ensureMiddleware(authMiddleware), safeHandler(paymentController.kakaoReady));
-router.get("/kakao/success", safeHandler(paymentController.kakaoSuccess));
-router.get("/kakao/cancel", safeHandler(paymentController.kakaoCancel));
-router.get("/kakao/fail", safeHandler(paymentController.kakaoFail));
-
-/* =====================================================
-🔥 CORE PAYMENT (기존 유지)
-===================================================== */
-router.post("/checkout", ensureMiddleware(authMiddleware), safeHandler(paymentController.createCheckout));
-router.post("/", ensureMiddleware(authMiddleware), safeHandler(paymentController.createPayment));
-router.post("/approve", ensureMiddleware(authMiddleware), safeHandler(paymentController.approvePayment));
-router.post("/fail", ensureMiddleware(authMiddleware), safeHandler(paymentController.failPayment));
-router.post("/cancel", ensureMiddleware(authMiddleware), safeHandler(paymentController.cancelPayment));
-router.post("/refund", ensureMiddleware(authMiddleware), safeHandler(paymentController.refundPayment));
-router.post("/calculate", optionalAuth, safeHandler(paymentController.calculateAmount));
-router.post("/validate", optionalAuth, safeHandler(paymentController.validateCheckout));
-
-/* =====================================================
-🔥 QUERY (기존 유지)
-===================================================== */
-router.get("/me", ensureMiddleware(authMiddleware), safeHandler(paymentController.myPayments));
-router.get("/", ensureMiddleware(authMiddleware), safeHandler(paymentController.listPayments));
-
-router.get("/reservation/:reservationId",
-  ensureMiddleware(authMiddleware),
-  validateObjectIdParam("reservationId"),
-  safeHandler(paymentController.getReservationPayments)
-);
-
-router.get("/user/:userId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getUserPayments));
-
-router.get("/shop/:shopId",
-  ensureMiddleware(authMiddleware),
-  validateObjectIdParam("shopId"),
-  safeHandler(paymentController.getShopPayments)
-);
-
-router.get("/order/:orderId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPaymentByOrderId));
-router.get("/key/:paymentKey", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPaymentByKey));
-router.get("/:paymentId/receipt", ensureMiddleware(authMiddleware), safeHandler(paymentController.getReceipt));
-router.get("/:paymentId", ensureMiddleware(authMiddleware), safeHandler(paymentController.getPayment));
-
-/* =====================================================
-🔥 MOCK (기존 유지)
-===================================================== */
-router.post("/mock/success", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockSuccess));
-router.post("/mock/cancel", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockCancel));
-router.post("/mock/fail", ensureMiddleware(authMiddleware), safeHandler(paymentController.mockFail));
-
-/* =====================================================
-🔥 ADMIN (기존 유지)
-===================================================== */
-router.get("/admin/logs", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getLogs));
-router.get("/admin/metrics", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getMetrics));
-router.get("/admin/health", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getHealth));
-router.get("/admin/store-size", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.getStoreSize));
-
-router.post("/admin/logs/clear", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.clearLogs));
-router.post("/admin/clear-expired", ensureMiddleware(authMiddleware), adminOnly, safeHandler(paymentController.clearExpired));
-
-/* =====================================================
-🔥 NEW FEATURES (확장)
-===================================================== */
-
-router.get("/status/:paymentId",
-  ensureMiddleware(authMiddleware),
-  validateObjectIdParam("paymentId"),
-  safeHandler(paymentController.getPaymentStatus)
-);
-
-router.get("/recent", ensureMiddleware(authMiddleware), safeHandler(paymentController.getRecentPayments));
-router.get("/stats/summary", ensureMiddleware(authMiddleware), safeHandler(paymentController.getSummaryStats));
-
-/* =====================================================
-🔥 DEBUG
-===================================================== */
-router.get("/admin/route-logs", ensureMiddleware(authMiddleware), adminOnly, (req,res)=>{
-  res.json({ ok:true, logs:LOGS.slice(-200) });
-});
-
-router.post("/admin/route-logs/clear", ensureMiddleware(authMiddleware), adminOnly, (req,res)=>{
-  LOGS.length = 0;
-  res.json({ ok:true });
-});
-
-/* =====================================================
-🔥 MASS EXPANSION (100+)
-===================================================== */
-const GROUPS = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t"];
-
-GROUPS.forEach(g=>{
-  for(let i=0;i<10;i++){
-    router.get(`/extra/${g}/${i}`, (req,res)=>{
-      res.json({ ok:true, g, i });
+  if (filtered.length > 100) {
+    return res.status(429).json({
+      ok: false,
+      message: "TOO_MANY_REQUESTS",
     });
   }
+
+  next();
 });
 
 /* =====================================================
-🔥 CLEAN
+ HEALTH
 ===================================================== */
-setInterval(()=>{
-  if(RATE.size > 5000) RATE.clear();
-},30000);
+router.get("/health", (req, res) => {
+  return res.json({
+    ok: true,
+    service: "payment",
+    time: Date.now(),
+  });
+});
 
-/* =====================================================
-🔥 FALLBACK
-===================================================== */
-router.use((req,res)=>{
-  res.status(404).json({
-    ok:false,
-    message:"PAYMENT_ROUTE_NOT_FOUND",
-    path:req.originalUrl
+router.get("/ping", (req, res) => {
+  return res.json({
+    ok: true,
+    pong: true,
   });
 });
 
 /* =====================================================
-🔥 FINAL
+ KAKAO PAY
+===================================================== */
+router.post(
+  "/kakao/ready",
+  auth,
+  safeHandler("kakaoReady")
+);
+
+router.get(
+  "/kakao/success",
+  safeHandler("kakaoSuccess")
+);
+
+router.get(
+  "/kakao/cancel",
+  safeHandler("kakaoCancel")
+);
+
+router.get(
+  "/kakao/fail",
+  safeHandler("kakaoFail")
+);
+
+/* =====================================================
+ CORE PAYMENT
+===================================================== */
+router.post(
+  "/checkout",
+  auth,
+  safeHandler("createCheckout")
+);
+
+router.post(
+  "/",
+  auth,
+  safeHandler("createPayment")
+);
+
+router.post(
+  "/approve",
+  auth,
+  safeHandler("approvePayment")
+);
+
+router.post(
+  "/fail",
+  auth,
+  safeHandler("failPayment")
+);
+
+router.post(
+  "/cancel",
+  auth,
+  safeHandler("cancelPayment")
+);
+
+router.post(
+  "/refund",
+  auth,
+  safeHandler("refundPayment")
+);
+
+router.post(
+  "/calculate",
+  safeHandler("calculateAmount")
+);
+
+router.post(
+  "/validate",
+  safeHandler("validateCheckout")
+);
+
+/* =====================================================
+ QUERY
+===================================================== */
+router.get(
+  "/me",
+  auth,
+  safeHandler("myPayments")
+);
+
+router.get(
+  "/",
+  auth,
+  safeHandler("listPayments")
+);
+
+router.get(
+  "/reservation/:reservationId",
+  auth,
+  validateObjectIdParam("reservationId"),
+  safeHandler("getReservationPayments")
+);
+
+router.get(
+  "/user/:userId",
+  auth,
+  safeHandler("getUserPayments")
+);
+
+router.get(
+  "/shop/:shopId",
+  auth,
+  validateObjectIdParam("shopId"),
+  safeHandler("getShopPayments")
+);
+
+router.get(
+  "/order/:orderId",
+  auth,
+  safeHandler("getPaymentByOrderId")
+);
+
+router.get(
+  "/key/:paymentKey",
+  auth,
+  safeHandler("getPaymentByKey")
+);
+
+router.get(
+  "/:paymentId/receipt",
+  auth,
+  safeHandler("getReceipt")
+);
+
+router.get(
+  "/:paymentId",
+  auth,
+  safeHandler("getPayment")
+);
+
+/* =====================================================
+ MOCK
+===================================================== */
+router.post(
+  "/mock/success",
+  auth,
+  safeHandler("mockSuccess")
+);
+
+router.post(
+  "/mock/cancel",
+  auth,
+  safeHandler("mockCancel")
+);
+
+router.post(
+  "/mock/fail",
+  auth,
+  safeHandler("mockFail")
+);
+
+/* =====================================================
+ ADMIN
+===================================================== */
+router.get(
+  "/admin/logs",
+  auth,
+  adminOnly,
+  safeHandler("getLogs")
+);
+
+router.get(
+  "/admin/metrics",
+  auth,
+  adminOnly,
+  safeHandler("getMetrics")
+);
+
+router.get(
+  "/admin/health",
+  auth,
+  adminOnly,
+  safeHandler("getHealth")
+);
+
+router.get(
+  "/admin/store-size",
+  auth,
+  adminOnly,
+  safeHandler("getStoreSize")
+);
+
+router.post(
+  "/admin/logs/clear",
+  auth,
+  adminOnly,
+  safeHandler("clearLogs")
+);
+
+router.post(
+  "/admin/clear-expired",
+  auth,
+  adminOnly,
+  safeHandler("clearExpired")
+);
+
+/* =====================================================
+ EXTRA
+===================================================== */
+router.get(
+  "/status/:paymentId",
+  auth,
+  validateObjectIdParam("paymentId"),
+  safeHandler("getPaymentStatus")
+);
+
+router.get(
+  "/recent",
+  auth,
+  safeHandler("getRecentPayments")
+);
+
+router.get(
+  "/stats/summary",
+  auth,
+  safeHandler("getSummaryStats")
+);
+
+/* =====================================================
+ DEBUG
+===================================================== */
+const ROUTE_LOGS = [];
+
+router.use((req, res, next) => {
+  ROUTE_LOGS.push({
+    url: req.originalUrl,
+    method: req.method,
+    time: Date.now(),
+  });
+
+  if (ROUTE_LOGS.length > 5000) {
+    ROUTE_LOGS.shift();
+  }
+
+  next();
+});
+
+router.get(
+  "/admin/route-logs",
+  auth,
+  adminOnly,
+  (req, res) => {
+    return res.json({
+      ok: true,
+      logs: ROUTE_LOGS.slice(-200),
+    });
+  }
+);
+
+router.post(
+  "/admin/route-logs/clear",
+  auth,
+  adminOnly,
+  (req, res) => {
+    ROUTE_LOGS.length = 0;
+
+    return res.json({
+      ok: true,
+    });
+  }
+);
+
+/* =====================================================
+ CLEAN
+===================================================== */
+if (!global.__PAYMENT_ROUTES_RATE_CLEANER__) {
+  global.__PAYMENT_ROUTES_RATE_CLEANER__ = setInterval(() => {
+    if (RATE.size > 5000) {
+      RATE.clear();
+    }
+  }, 30000);
+
+  if (
+    global.__PAYMENT_ROUTES_RATE_CLEANER__ &&
+    typeof global.__PAYMENT_ROUTES_RATE_CLEANER__.unref === "function"
+  ) {
+    global.__PAYMENT_ROUTES_RATE_CLEANER__.unref();
+  }
+}
+
+/* =====================================================
+ FALLBACK
+===================================================== */
+router.use((req, res) => {
+  return res.status(404).json({
+    ok: false,
+    message: "PAYMENT_ROUTE_NOT_FOUND",
+    path: req.originalUrl,
+  });
+});
+
+/* =====================================================
+ FINAL
 ===================================================== */
 console.log("🔥 PAYMENT ROUTES FINAL READY");
 

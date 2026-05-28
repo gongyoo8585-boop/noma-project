@@ -3,6 +3,7 @@
 /**
  * =====================================================
  * 🔥 AUTH ROUTES (COMPLETE - PRODUCTION READY)
+ * 기존 라우팅 유지 + require 경로 안정화 + middleware 함수 검증
  * =====================================================
  */
 
@@ -12,126 +13,146 @@ const router = express.Router();
 /* =========================
 SAFE REQUIRE
 ========================= */
-function safeRequire(path) {
+function safeRequire(modulePath) {
   try {
-    return require(path);
+    return require(modulePath);
   } catch (e) {
-    console.error("[AUTH ROUTE LOAD FAIL]", path);
+    console.error("[AUTH ROUTE LOAD FAIL]", modulePath, e.message);
     return null;
   }
+}
+
+function firstAvailable(paths) {
+  for (const modulePath of paths) {
+    const mod = safeRequire(modulePath);
+    if (mod) {
+      return mod;
+    }
+  }
+  return null;
+}
+
+function pickFunction(mod, names = []) {
+  if (typeof mod === "function") {
+    return mod;
+  }
+
+  if (!mod || typeof mod !== "object") {
+    return null;
+  }
+
+  for (const name of names) {
+    if (typeof mod[name] === "function") {
+      return mod[name];
+    }
+  }
+
+  if (mod.default) {
+    return pickFunction(mod.default, names);
+  }
+
+  return null;
+}
+
+function runAuth(req, res, next) {
+  const middleware = pickFunction(authMiddleware, [
+    "auth",
+    "verifyToken",
+    "authenticate",
+    "requireAuth",
+    "protect",
+    "default",
+  ]);
+
+  if (!middleware) {
+    return next();
+  }
+
+  return middleware(req, res, next);
+}
+
+function controllerAction(name) {
+  return (req, res, next) => {
+    const action = authController && authController[name];
+
+    if (typeof action !== "function") {
+      return res.status(500).json({
+        ok: false,
+        msg: `${String(name).toUpperCase()}_NOT_IMPLEMENTED`,
+      });
+    }
+
+    return action(req, res, next);
+  };
+}
+
+function protectedControllerAction(name) {
+  return (req, res, next) => {
+    return runAuth(req, res, (authError) => {
+      if (authError) {
+        return next(authError);
+      }
+
+      return controllerAction(name)(req, res, next);
+    });
+  };
 }
 
 /* =========================
 CONTROLLER
 ========================= */
-const authController = safeRequire("../../controllers/auth/auth.controller");
+const authController = firstAvailable([
+  "../../controllers/auth.controller",
+  "../../controllers/auth/auth.controller",
+  "../../../controllers/auth/authController",
+  "../../../controllers/auth/auth.controller",
+  "../../../controllers/authController",
+]);
 
 /* =========================
 MIDDLEWARE (OPTIONAL)
 ========================= */
-const authMiddleware = safeRequire("../../middlewares/auth");
+const authMiddleware = firstAvailable([
+  "../../middlewares/auth",
+  "../../middleware/auth",
+  "../../../middlewares/auth",
+  "../../../middleware/auth",
+]);
 
 /* =====================================================
 🔥 AUTH ROUTES
 ===================================================== */
 
 /* 회원가입 */
-router.post("/register", (req, res, next) => {
-  if (!authController?.register) {
-    return res.status(500).json({ ok: false, msg: "REGISTER_NOT_IMPLEMENTED" });
-  }
-  return authController.register(req, res, next);
-});
+router.post("/register", controllerAction("register"));
 
 /* 로그인 */
-router.post("/login", (req, res, next) => {
-  if (!authController?.login) {
-    return res.status(500).json({ ok: false, msg: "LOGIN_NOT_IMPLEMENTED" });
-  }
-  return authController.login(req, res, next);
-});
+router.post("/login", controllerAction("login"));
 
 /* 내 정보 */
-router.get("/me", (req, res, next) => {
-  if (!authController?.me) {
-    return res.status(500).json({ ok: false, msg: "ME_NOT_IMPLEMENTED" });
-  }
-
-  /* auth middleware 적용 (있을 경우만) */
-  if (authMiddleware) {
-    return authMiddleware(req, res, () =>
-      authController.me(req, res, next)
-    );
-  }
-
-  return authController.me(req, res, next);
-});
+router.get("/me", protectedControllerAction("me"));
 
 /* 토큰 검증 */
-router.get("/verify", (req, res, next) => {
-  if (!authController?.verify) {
-    return res.status(500).json({ ok: false, msg: "VERIFY_NOT_IMPLEMENTED" });
-  }
-
-  if (authMiddleware) {
-    return authMiddleware(req, res, () =>
-      authController.verify(req, res, next)
-    );
-  }
-
-  return authController.verify(req, res, next);
-});
+router.get("/verify", protectedControllerAction("verify"));
 
 /* 로그아웃 */
-router.post("/logout", (req, res, next) => {
-  if (!authController?.logout) {
-    return res.status(500).json({ ok: false, msg: "LOGOUT_NOT_IMPLEMENTED" });
-  }
-  return authController.logout(req, res, next);
-});
+router.post("/logout", controllerAction("logout"));
 
 /* 토큰 재발급 */
-router.get("/token", (req, res, next) => {
-  if (!authController?.getToken) {
-    return res.status(500).json({ ok: false, msg: "TOKEN_NOT_IMPLEMENTED" });
-  }
-
-  if (authMiddleware) {
-    return authMiddleware(req, res, () =>
-      authController.getToken(req, res, next)
-    );
-  }
-
-  return authController.getToken(req, res, next);
-});
+router.get("/token", protectedControllerAction("getToken"));
 
 /* =====================================================
 🔥 KAKAO AUTH
 ===================================================== */
 
 /* 카카오 로그인 URL */
-router.get("/kakao", (req, res, next) => {
-  if (!authController?.kakaoLogin) {
-    return res.status(500).json({ ok: false, msg: "KAKAO_LOGIN_NOT_IMPLEMENTED" });
-  }
-  return authController.kakaoLogin(req, res, next);
-});
+router.get("/kakao", controllerAction("kakaoLogin"));
 
 /* 카카오 콜백 */
-router.get("/kakao/callback", (req, res, next) => {
-  if (!authController?.kakaoCallback) {
-    return res.status(500).json({ ok: false, msg: "KAKAO_CALLBACK_NOT_IMPLEMENTED" });
-  }
-  return authController.kakaoCallback(req, res, next);
-});
+router.get("/kakao/callback", controllerAction("kakaoCallback"));
 
 /* 카카오 간편 로그인 */
-router.post("/kakao/simple", (req, res, next) => {
-  if (!authController?.kakaoSimple) {
-    return res.status(500).json({ ok: false, msg: "KAKAO_SIMPLE_NOT_IMPLEMENTED" });
-  }
-  return authController.kakaoSimple(req, res, next);
-});
+router.post("/kakao/simple", controllerAction("kakaoSimple"));
 
 /* =====================================================
 🔥 DEBUG
@@ -141,9 +162,20 @@ router.get("/health", (req, res) => {
   res.json({
     ok: true,
     service: "auth",
+    controller: !!authController,
+    middleware: !!pickFunction(authMiddleware, [
+      "auth",
+      "verifyToken",
+      "authenticate",
+      "requireAuth",
+      "protect",
+      "default",
+    ]),
     time: new Date(),
   });
 });
 
 /* ===================================================== */
+console.log("🔥 AUTH ROUTES FINAL SAFE READY");
+
 module.exports = router;

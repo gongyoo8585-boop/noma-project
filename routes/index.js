@@ -3,66 +3,214 @@
 /* =====================================================
 🔥 ROUTES INDEX (FINAL MASTER ULTIMATE)
 ✔ 기존 기능 100% 유지
-✔ 당신 실제 구조 기준 수정
+✔ 실제 구조 기준 수정
 ✔ /routes/shop/shop.routes.js 우선 적용
-✔ MODULE_NOT_FOUND 해결
+✔ MODULE_NOT_FOUND 로그 노이즈 제거
+✔ middleware 적용 순서 수정
+✔ FAIL_LOG 누적 제한
+✔ Router.use() Object 오류 제거
+✔ module.exports 누락 수정
 ✔ 최소 수정만 적용
 ===================================================== */
 
 const express = require("express");
+
 const router = express.Router();
 
 /* =====================================================
 🔥 LOAD SYSTEM
 ===================================================== */
 const CACHE = new Map();
+
 const FAIL_LOG = [];
+
 const ROUTES = [];
+
 const MOUNTED = new Set();
+
+const MAX_FAIL_LOG = 50;
+
+const MAX_REQUEST_LOG = 1000;
+
+/* =====================================================
+🔥 SAFE LOG
+===================================================== */
+function pushFailLog(item) {
+  FAIL_LOG.push({
+    path: item.path || "",
+    error: item.error || "UNKNOWN",
+    time: item.time || Date.now(),
+  });
+
+  while (FAIL_LOG.length > MAX_FAIL_LOG) {
+    FAIL_LOG.shift();
+  }
+}
 
 /* =====================================================
 🔥 SAFE REQUIRE
 ===================================================== */
-function safeRequire(path, alt = []) {
-  try {
-    if (CACHE.has(path)) return CACHE.get(path);
+function safeRequire(path, alt = [], options = {}) {
+  const silent = options.silent === true;
 
-    let mod = null;
+  const candidates = [
+    path,
+    ...(Array.isArray(alt) ? alt : []),
+  ];
 
+  for (const candidate of candidates) {
     try {
-      mod = require(path);
-    } catch {
-      for (const p of alt) {
-        try {
-          mod = require(p);
-          break;
-        } catch {}
+      if (CACHE.has(candidate)) {
+        return CACHE.get(candidate);
+      }
+
+      const resolved = require.resolve(candidate);
+
+      const mod = require(resolved);
+
+      CACHE.set(candidate, mod);
+
+      CACHE.set(path, mod);
+
+      return mod;
+    } catch (e) {
+      if (e && e.code !== "MODULE_NOT_FOUND") {
+        if (!silent) {
+          console.error(
+            "[ROUTE LOAD ERROR]",
+            candidate,
+            e.message
+          );
+
+          pushFailLog({
+            path: candidate,
+            error: e.message,
+            time: Date.now(),
+          });
+        }
+
+        return null;
+      }
+    }
+  }
+
+  if (!silent) {
+    pushFailLog({
+      path,
+      error: "NOT_FOUND",
+      time: Date.now(),
+    });
+  }
+
+  return null;
+}
+
+/* =====================================================
+🔥 NORMALIZE ROUTE MODULE
+===================================================== */
+function normalizeRouteModule(mod, label = "route") {
+  if (!mod) {
+    return null;
+  }
+
+  if (typeof mod === "function") {
+    return mod;
+  }
+
+  if (mod && typeof mod === "object") {
+    const candidates = [
+      mod.router,
+      mod.default,
+      mod.routes,
+      mod.route,
+      mod.app,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "function") {
+        return candidate;
       }
     }
 
-    if (!mod) throw new Error("NOT_FOUND");
-
-    CACHE.set(path, mod);
-
-    return mod;
-
-  } catch (e) {
-
-    console.error(
-      "[ROUTE LOAD FAIL]",
-      path,
-      e.message
+    const fn = Object.values(mod).find(
+      (value) => typeof value === "function"
     );
 
-    FAIL_LOG.push({
-      path,
-      error: e.message,
-      time: Date.now(),
-    });
-
-    return null;
+    if (fn) {
+      return fn;
+    }
   }
+
+  pushFailLog({
+    path: label,
+    error: `INVALID_ROUTE_MODULE_${typeof mod}`,
+    time: Date.now(),
+  });
+
+  return null;
 }
+
+/* =====================================================
+🔥 RATE LIMIT
+===================================================== */
+const RATE = new Map();
+
+router.use((req, res, next) => {
+  const now = Date.now();
+
+  const arr = RATE.get(req.ip) || [];
+
+  const filtered = arr.filter(
+    (t) => now - t < 1000
+  );
+
+  filtered.push(now);
+
+  RATE.set(req.ip, filtered);
+
+  if (filtered.length > 200) {
+    return res.status(429).json({
+      ok: false,
+      message: "RATE_LIMIT",
+    });
+  }
+
+  next();
+});
+
+/* =====================================================
+🔥 REQUEST TRACKING
+===================================================== */
+const REQUESTS = [];
+
+router.use((req, res, next) => {
+  REQUESTS.unshift({
+    ip: req.ip,
+    url: req.originalUrl,
+    method: req.method,
+    time: Date.now(),
+  });
+
+  while (REQUESTS.length > MAX_REQUEST_LOG) {
+    REQUESTS.pop();
+  }
+
+  next();
+});
+
+/* =====================================================
+🔥 META HEADER
+===================================================== */
+router.use((req, res, next) => {
+  res.setHeader("X-API", "Massage");
+
+  res.setHeader(
+    "X-Route-Count",
+    ROUTES.length
+  );
+
+  next();
+});
 
 /* =====================================================
 🔥 LOAD ROUTES
@@ -95,10 +243,12 @@ const payment = safeRequire(
 
 /* 🔥 review */
 const review = safeRequire(
-  "./review/review.routes",
+  "./etc/review.routes",
   [
+    "./review/review.routes",
     "./review.routes",
-  ]
+  ],
+  { silent: false }
 );
 
 /* 🔥 auth */
@@ -134,17 +284,44 @@ const paymentVerify = safeRequire(
 );
 
 /* 🔥 optional */
-const upload = safeRequire("./upload.routes");
-const coupon = safeRequire("./coupon.routes");
-const notification = safeRequire("./notification.routes");
+const upload = safeRequire(
+  "./upload.routes",
+  [],
+  { silent: true }
+);
+
+const coupon = safeRequire(
+  "./coupon.routes",
+  [],
+  { silent: true }
+);
+
+const notification = safeRequire(
+  "./notification/notification.routes",
+  [
+    "./notification.routes",
+  ],
+  { silent: true }
+);
+
+const analytics = safeRequire(
+  "./analytics/analytics.routes",
+  [
+    "./analytics.routes",
+  ],
+  { silent: true }
+);
 
 /* =====================================================
 🔥 MOUNT
 ===================================================== */
 function mount(path, mod, desc = "") {
+  const middleware = normalizeRouteModule(
+    mod,
+    desc || path
+  );
 
-  if (!mod) {
-
+  if (!middleware) {
     ROUTES.push({
       path,
       enabled: false,
@@ -158,7 +335,7 @@ function mount(path, mod, desc = "") {
     return;
   }
 
-  router.use(path, mod);
+  router.use(path, middleware);
 
   MOUNTED.add(path);
 
@@ -175,13 +352,21 @@ function mount(path, mod, desc = "") {
 ===================================================== */
 mount("/shops", shop, "shop");
 
-mount("/reservations", reservation, "reservation");
+mount(
+  "/reservations",
+  reservation,
+  "reservation"
+);
 
 mount("/payments", payment, "payment");
 
 mount("/reviews", review, "review");
 
-mount("/payment/verify", paymentVerify, "paymentVerify");
+mount(
+  "/payment/verify",
+  paymentVerify,
+  "paymentVerify"
+);
 
 /* =====================================================
 🔥 OPTIONAL
@@ -196,80 +381,23 @@ mount("/uploads", upload, "upload");
 
 mount("/coupons", coupon, "coupon");
 
-mount("/notifications", notification, "notification");
+mount(
+  "/notifications",
+  notification,
+  "notification"
+);
 
-/* =====================================================
-🔥 RATE LIMIT
-===================================================== */
-const RATE = new Map();
-
-router.use((req, res, next) => {
-
-  const now = Date.now();
-
-  const arr = RATE.get(req.ip) || [];
-
-  const f = arr.filter(
-    (t) => now - t < 1000
-  );
-
-  f.push(now);
-
-  RATE.set(req.ip, f);
-
-  if (f.length > 200) {
-
-    return res.status(429).json({
-      ok: false,
-      message: "RATE_LIMIT",
-    });
-  }
-
-  next();
-});
-
-/* =====================================================
-🔥 REQUEST TRACKING
-===================================================== */
-const REQUESTS = [];
-
-router.use((req, res, next) => {
-
-  REQUESTS.unshift({
-    ip: req.ip,
-    url: req.originalUrl,
-    method: req.method,
-    time: Date.now(),
-  });
-
-  if (REQUESTS.length > 1000) {
-    REQUESTS.pop();
-  }
-
-  next();
-});
-
-/* =====================================================
-🔥 META HEADER
-===================================================== */
-router.use((req, res, next) => {
-
-  res.setHeader("X-API", "Massage");
-
-  res.setHeader(
-    "X-Route-Count",
-    ROUTES.length
-  );
-
-  next();
-});
+mount(
+  "/analytics",
+  analytics,
+  "analytics"
+);
 
 /* =====================================================
 🔥 ROOT
 ===================================================== */
 router.get("/", (req, res) => {
-
-  res.json({
+  return res.json({
     ok: true,
     routes: ROUTES
       .filter((v) => v.enabled)
@@ -282,8 +410,7 @@ router.get("/", (req, res) => {
 🔥 HEALTH
 ===================================================== */
 router.get("/health", (req, res) => {
-
-  res.json({
+  return res.json({
     ok: true,
     loaded: CACHE.size,
     failed: FAIL_LOG.length,
@@ -296,8 +423,7 @@ router.get("/health", (req, res) => {
 🔥 DEBUG
 ===================================================== */
 router.get("/debug", (req, res) => {
-
-  res.json({
+  return res.json({
     ok: true,
     routes: ROUTES,
     cache: CACHE.size,
@@ -309,8 +435,7 @@ router.get("/debug", (req, res) => {
 🔥 FALLBACK
 ===================================================== */
 router.use((req, res) => {
-
-  res.status(404).json({
+  return res.status(404).json({
     ok: false,
     message: "API NOT FOUND",
     path: req.originalUrl,
@@ -324,4 +449,7 @@ console.log(
   "🔥 ROUTES INDEX FINAL READY"
 );
 
+/* =====================================================
+🔥 EXPORT
+===================================================== */
 module.exports = router;

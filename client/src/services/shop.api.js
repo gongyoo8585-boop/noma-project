@@ -1,4 +1,3 @@
-
 function normalizeShopApiResponse(response) {
   const payload =
     response?.data ||
@@ -6,11 +5,23 @@ function normalizeShopApiResponse(response) {
     {};
 
   const rawShops =
-    payload?.shops ||
-    payload?.items ||
-    payload?.list ||
-    payload?.data ||
-    [];
+    Array.isArray(payload?.shops)
+      ? payload.shops
+      : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.list)
+      ? payload.list
+      : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.data?.shops)
+      ? payload.data.shops
+      : Array.isArray(payload?.data?.items)
+      ? payload.data.items
+      : Array.isArray(payload?.data?.list)
+      ? payload.data.list
+      : Array.isArray(response)
+      ? response
+      : [];
 
   const shops = Array.isArray(rawShops)
     ? rawShops
@@ -35,48 +46,12 @@ function normalizeShopApiResponse(response) {
  */
 
 const DEFAULT_API_BASE = "https://api.nora365.co.kr/api";
-const LOCAL_DEFAULT_API_BASE = "/api";
-const BLOCKED_LOCAL_API_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", "::1"];
+const LOCAL_DEFAULT_API_BASE = DEFAULT_API_BASE;
 
 function isBrowserLocalHost(hostname = "") {
-  return BLOCKED_LOCAL_API_HOSTS.includes(
+  return ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(
     String(hostname || "").toLowerCase()
   );
-}
-
-function isLocalhostApiUrl(value = "") {
-  try {
-    const url = new URL(
-      String(value || ""),
-      typeof window !== "undefined" && window.location
-        ? window.location.origin
-        : DEFAULT_API_BASE
-    );
-
-    return isBrowserLocalHost(url.hostname);
-  } catch (e) {
-    const text = String(value || "").toLowerCase();
-
-    return (
-      text.includes("localhost:10000") ||
-      text.includes("127.0.0.1:10000") ||
-      text.includes("0.0.0.0:10000")
-    );
-  }
-}
-
-function sanitizeApiBaseForRuntime(value = "") {
-  const currentHostname = getCurrentHostname();
-
-  if (isBrowserProductionHost(currentHostname)) {
-    return DEFAULT_API_BASE;
-  }
-
-  if (isLocalhostApiUrl(value) && !isBrowserLocalHost(currentHostname)) {
-    return DEFAULT_API_BASE;
-  }
-
-  return value;
 }
 
 function isBrowserProductionHost(hostname = "") {
@@ -97,7 +72,7 @@ function getCurrentHostname() {
 }
 
 function normalizeApiBaseUrl(value) {
-  const rawValue = String(sanitizeApiBaseForRuntime(value) || "").trim();
+  const rawValue = String(value || "").trim();
   const currentHostname = getCurrentHostname();
 
   if (isBrowserProductionHost(currentHostname)) {
@@ -114,18 +89,6 @@ function normalizeApiBaseUrl(value) {
 
   if (isBrowserLocalHost(currentHostname) && rawValue === DEFAULT_API_BASE) {
     return LOCAL_DEFAULT_API_BASE;
-  }
-
-  if (isBrowserLocalHost(currentHostname)) {
-    try {
-      const localUrl = new URL(rawValue, window.location.origin);
-
-      if (isBrowserLocalHost(localUrl.hostname)) {
-        return LOCAL_DEFAULT_API_BASE;
-      }
-    } catch (e) {
-      // keep existing fallback handling below
-    }
   }
 
   if (rawValue.startsWith("/")) {
@@ -169,7 +132,7 @@ const API_BASE_RAW =
     (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL)) ||
   DEFAULT_API_BASE;
 
-const API_BASE = normalizeApiBaseUrl(sanitizeApiBaseForRuntime(API_BASE_RAW));
+const API_BASE = normalizeApiBaseUrl(API_BASE_RAW);
 
 function getRuntimeApiBase() {
   const currentHostname = getCurrentHostname();
@@ -178,188 +141,17 @@ function getRuntimeApiBase() {
     return DEFAULT_API_BASE;
   }
 
-  return normalizeApiBaseUrl(sanitizeApiBaseForRuntime(API_BASE_RAW || API_BASE));
+  return normalizeApiBaseUrl(API_BASE_RAW || API_BASE);
 }
 
 function buildApiRequestUrl(url = "") {
   const runtimeBase = getRuntimeApiBase().replace(/\/+$/, "");
-  const safeRuntimeBase =
-    isBrowserProductionHost(getCurrentHostname()) || isLocalhostApiUrl(runtimeBase)
-      ? DEFAULT_API_BASE
-      : runtimeBase;
-
   const path = String(url || "").startsWith("/")
     ? String(url || "")
     : `/${String(url || "")}`;
 
-  const requestUrl = `${safeRuntimeBase}${path}`.replace("/api/api", "/api");
-
-  if (isBrowserProductionHost(getCurrentHostname()) && isLocalhostApiUrl(requestUrl)) {
-    return buildProductionDirectApiRequestUrl(path);
-  }
-
-  return requestUrl;
+  return `${runtimeBase}${path}`.replace("/api/api", "/api");
 }
-
-
-function buildProductionDirectApiRequestUrl(url = "") {
-  const path = String(url || "").startsWith("/")
-    ? String(url || "")
-    : `/${String(url || "")}`;
-
-  return `${DEFAULT_API_BASE}${path}`.replace("/api/api", "/api");
-}
-
-function shouldUseProductionDirectApi() {
-  return isBrowserProductionHost(getCurrentHostname());
-}
-
-async function fetchJsonDirect(url = "", options = {}) {
-  const requestUrl = shouldUseProductionDirectApi()
-    ? buildProductionDirectApiRequestUrl(url)
-    : buildApiRequestUrl(url);
-
-  const res = await fetch(requestUrl, {
-    method: options.method || "GET",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      ...(options.headers || {}),
-    },
-    ...(options.body !== undefined ? { body: options.body } : {}),
-  });
-
-  if (!res.ok) {
-    throw new Error(`DIRECT_SHOP_API_${res.status}`);
-  }
-
-  return await res.json();
-}
-
-function getAllShopItemsFromResponse(response, params = {}) {
-  return normalizeShopResponseShape(response, params).items || [];
-}
-
-function makeBroadShopParams(params = {}) {
-  const categoryParams = makeCategoryParams(params);
-
-  return {
-    ...categoryParams,
-    limit: params.limit || 300,
-    page: params.page || 1,
-  };
-}
-
-function makeMapSafeShopParams(params = {}) {
-  const categoryParams = makeCategoryParams(params);
-
-  const safeParams = {
-    ...params,
-    ...categoryParams,
-    limit: params.limit || 300,
-  };
-
-  delete safeParams.undefined;
-  delete safeParams.null;
-
-  return Object.fromEntries(
-    Object.entries(safeParams).filter(([_, value]) => value !== undefined && value !== null && value !== "")
-  );
-}
-
-async function loadProductionMapSafeShops(params = {}) {
-  const safeParams = makeMapSafeShopParams(params);
-  const broadParams = makeBroadShopParams(params);
-
-  const queries = Array.from(
-    new Set(
-      [
-        new URLSearchParams(safeParams).toString(),
-        new URLSearchParams(broadParams).toString(),
-        new URLSearchParams(makeCategoryParams(params)).toString(),
-      ].filter(Boolean)
-    )
-  );
-
-  const endpoints = queries.length
-    ? queries.map((query) => `/shops?${query}`)
-    : ["/shops"];
-
-  const results = await Promise.allSettled(
-    endpoints.map((endpoint) => fetchJsonDirect(endpoint))
-  );
-
-  return mergeShopArrays(
-    results
-      .filter((result) => result.status === "fulfilled")
-      .flatMap((result) => getAllShopItemsFromResponse(result.value, params))
-      .map((shop) => normalizeShopResponseItem(shop, params))
-  );
-}
-
-
-function getLocalDirectApiBase() {
-  const currentHostname = getCurrentHostname();
-
-  if (!isBrowserLocalHost(currentHostname) || isBrowserProductionHost(currentHostname)) {
-    return "";
-  }
-
-  return "http://localhost:10000/api";
-}
-
-function buildLocalDirectApiRequestUrl(url = "") {
-  const localBase = getLocalDirectApiBase();
-
-  if (!localBase) {
-    return "";
-  }
-
-  const path = String(url || "").startsWith("/")
-    ? String(url || "")
-    : `/${String(url || "")}`;
-
-  return `${localBase}${path}`.replace("/api/api", "/api");
-}
-
-function shouldRetryLocalDirectApi(url = "", options = {}, response = null) {
-  const method = String(options.method || "GET").toUpperCase();
-
-  if (method === "GET") {
-    return false;
-  }
-
-  if (!isBrowserLocalHost(getCurrentHostname())) {
-    return false;
-  }
-
-  if (!String(url || "").startsWith("/shops")) {
-    return false;
-  }
-
-  if (!response) {
-    return true;
-  }
-
-  return response.status === 404 || response.status === 502 || response.status === 503;
-}
-
-async function retryLocalDirectApi(url = "", fetchOptions = {}, options = {}) {
-  const directUrl = buildLocalDirectApiRequestUrl(url);
-
-  if (!directUrl) {
-    return null;
-  }
-
-  console.warn("SHOP API LOCAL DIRECT RETRY:", directUrl);
-
-  return await fetchWithTimeout(
-    directUrl,
-    fetchOptions,
-    Number(options.timeout || MUTATION_TIMEOUT_MS)
-  );
-}
-
 
 function isApiBaseLocalHost() {
   try {
@@ -589,24 +381,6 @@ function normalizeTextKey(value) {
     .toLowerCase()
     .replace(/\s/g, "")
     .trim();
-}
-
-
-function normalizeRegionName(value) {
-  const text = String(value || "").trim();
-
-  if (!text) return "";
-  if (text === "경남" || text === "경상남도") return "경상남도";
-  if (text === "경북" || text === "경상북도") return "경상북도";
-  if (text === "전남" || text === "전라남도") return "전라남도";
-  if (text === "전북" || text === "전라북도" || text === "전북특별자치도") return "전라북도";
-  if (text === "충남" || text === "충청남도") return "충청남도";
-  if (text === "충북" || text === "충청북도") return "충청북도";
-  if (text === "경기" || text === "경기도") return "경기도";
-  if (text === "강원" || text === "강원도" || text === "강원특별자치도") return "강원도";
-  if (text === "제주" || text === "제주도" || text === "제주특별자치도") return "제주도";
-
-  return text;
 }
 
 function normalizeShopCategory(value) {
@@ -1329,17 +1103,16 @@ function mergeShopObjects(base = {}, next = {}) {
     businessHours: next.businessHours || next.openingHours || next.hours || base.businessHours || base.openingHours || base.hours || "",
     openingHours: next.openingHours || next.businessHours || next.hours || base.openingHours || base.businessHours || base.hours || "",
     hours: next.hours || next.businessHours || next.openingHours || base.hours || base.businessHours || base.openingHours || "",
-    region: normalizeRegionName(
+    region: normalizeShopRegionName(
       next.region ||
         next.sido ||
         next.province ||
         base.region ||
         base.sido ||
         base.province ||
-        getShopAddressRegion(next.address || next.roadAddress || next.fullAddress || base.address || base.roadAddress || base.fullAddress || "")
+        getShopAddressRegion(next.address || next.roadAddress || next.fullAddress || base.address || base.roadAddress || base.fullAddress || ""),
+      next.address || next.roadAddress || next.fullAddress || base.address || base.roadAddress || base.fullAddress || ""
     ),
-    sido: normalizeRegionName(next.sido || next.region || base.sido || base.region || ""),
-    province: normalizeRegionName(next.province || next.region || base.province || base.region || ""),
     district:
       next.district ||
       next.sigungu ||
@@ -1738,14 +1511,14 @@ function normalizeResponseData(data) {
 function getShopAddressRegion(address = "") {
   const text = String(address || "");
 
-  if (text.includes("서울")) return "서울";
-  if (text.includes("부산")) return "부산";
-  if (text.includes("대구")) return "대구";
-  if (text.includes("인천")) return "인천";
-  if (text.includes("광주")) return "광주";
-  if (text.includes("대전")) return "대전";
-  if (text.includes("울산")) return "울산";
-  if (text.includes("세종")) return "세종";
+  if (text.includes("서울")) return "서울특별시";
+  if (text.includes("부산")) return "부산광역시";
+  if (text.includes("대구")) return "대구광역시";
+  if (text.includes("인천")) return "인천광역시";
+  if (text.includes("광주")) return "광주광역시";
+  if (text.includes("대전")) return "대전광역시";
+  if (text.includes("울산")) return "울산광역시";
+  if (text.includes("세종")) return "세종특별자치시";
   if (text.includes("경기")) return "경기도";
   if (text.includes("강원")) return "강원도";
   if (text.includes("충북") || text.includes("충청북도")) return "충청북도";
@@ -1754,11 +1527,37 @@ function getShopAddressRegion(address = "") {
   if (text.includes("전남") || text.includes("전라남도")) return "전라남도";
   if (text.includes("경북") || text.includes("경상북도")) return "경상북도";
   if (text.includes("경남") || text.includes("경상남도")) return "경상남도";
-  if (text.includes("제주")) return "제주도";
+  if (text.includes("제주")) return "제주특별자치도";
 
   if (text.includes("김해시")) return "경상남도";
 
   return "";
+}
+
+function normalizeShopRegionName(region = "", address = "") {
+  const source = String(region || "").trim();
+  const fromAddress = getShopAddressRegion(address);
+
+  if (!source) return fromAddress;
+  if (source === "서울") return "서울특별시";
+  if (source === "부산") return "부산광역시";
+  if (source === "대구") return "대구광역시";
+  if (source === "인천") return "인천광역시";
+  if (source === "광주") return "광주광역시";
+  if (source === "대전") return "대전광역시";
+  if (source === "울산") return "울산광역시";
+  if (source === "세종") return "세종특별자치시";
+  if (source === "경기") return "경기도";
+  if (source === "강원") return "강원도";
+  if (source === "충북") return "충청북도";
+  if (source === "충남") return "충청남도";
+  if (source === "전북") return "전라북도";
+  if (source === "전남") return "전라남도";
+  if (source === "경북") return "경상북도";
+  if (source === "경남") return "경상남도";
+  if (source === "제주") return "제주특별자치도";
+
+  return source || fromAddress;
 }
 
 function getShopAddressDistrict(address = "") {
@@ -1829,14 +1628,16 @@ function normalizeShopResponseItem(shop = {}, params = {}) {
 
   const categoryPayload = normalizeShopCategoryPayload(shop, params);
 
-  const region =
+  const region = normalizeShopRegionName(
     shop.region ||
-    shop.sido ||
-    shop.province ||
-    shop.state ||
-    shop.area ||
-    getShopAddressRegion(address) ||
-    getShopAddressRegion(locationText);
+      shop.sido ||
+      shop.province ||
+      shop.state ||
+      shop.area ||
+      getShopAddressRegion(address) ||
+      getShopAddressRegion(locationText),
+    address || locationText
+  );
 
   const district =
     shop.district ||
@@ -1862,9 +1663,7 @@ function normalizeShopResponseItem(shop = {}, params = {}) {
     roadAddress: shop.roadAddress || shop.address || shop.fullAddress || locationText || address,
     fullAddress: shop.fullAddress || shop.address || shop.roadAddress || locationText || address,
     locationText: shop.locationText || locationText || address,
-    region: normalizeRegionName(region),
-    sido: normalizeRegionName(shop.sido || shop.region || region),
-    province: normalizeRegionName(shop.province || shop.region || region),
+    region,
     district,
     dong,
     lat,
@@ -1888,58 +1687,36 @@ function normalizeShopResponseShape(data, params = {}) {
 
   if (Array.isArray(items)) {
     const normalizedItems = items.map((shop) => normalizeShopResponseItem(shop, params));
-    const categoryFilteredItems = filterShopsByCategory(normalizedItems, params);
-    const sourceItems =
-      categoryFilteredItems.length > 0
-        ? categoryFilteredItems
-        : shouldUseProductionDirectApi() && getCategoryFromParams(params) === "massage"
-        ? normalizedItems
-        : categoryFilteredItems;
-
     const mergedItems = filterShopsByCategory(
       filterDeletedShops(
         mergeShopArrays([
-          ...sourceItems,
+          ...filterShopsByCategory(normalizedItems, params),
         ])
       ),
       params
     );
 
     if (data && typeof data === "object" && !Array.isArray(data)) {
-      const finalItems =
-        mergedItems.length > 0
-          ? mergedItems
-          : shouldUseProductionDirectApi() && getCategoryFromParams(params) === "massage"
-          ? filterDeletedShops(mergeShopArrays(sourceItems))
-          : mergedItems;
-
       return {
         ...data,
         ok: data.ok !== false,
-        shops: finalItems,
-        list: finalItems,
-        items: finalItems,
-        data: finalItems,
-        total: Number(data.total ?? data.count ?? finalItems.length),
-        count: Number(data.count ?? data.total ?? finalItems.length),
+        shops: mergedItems,
+        list: mergedItems,
+        items: mergedItems,
+        data: mergedItems,
+        total: Number(data.total ?? data.count ?? mergedItems.length),
+        count: Number(data.count ?? data.total ?? mergedItems.length),
       };
     }
 
-    const finalItems =
-      mergedItems.length > 0
-        ? mergedItems
-        : shouldUseProductionDirectApi() && getCategoryFromParams(params) === "massage"
-        ? filterDeletedShops(mergeShopArrays(sourceItems))
-        : mergedItems;
-
     return {
       ok: true,
-      shops: finalItems,
-      list: finalItems,
-      items: finalItems,
-      data: finalItems,
-      total: finalItems.length,
-      count: finalItems.length,
+      shops: mergedItems,
+      list: mergedItems,
+      items: mergedItems,
+      data: mergedItems,
+      total: mergedItems.length,
+      count: mergedItems.length,
     };
   }
 
@@ -2012,6 +1789,7 @@ function getStorageSafeShop(shop = {}) {
 
   return {
     ...shop,
+    region: normalizeShopRegionName(shop.region || shop.sido || shop.province || "", shop.address || shop.roadAddress || shop.fullAddress || ""),
     premium,
     premiumType,
     isPremium: premium,
@@ -2157,16 +1935,6 @@ function getDeletedShopIdentityValues(shop = {}) {
 
 function isDeletedShop(shop = {}) {
   try {
-    if (
-      shouldUseProductionDirectApi() &&
-      shop &&
-      typeof shop === "object" &&
-      (shop._id || shop.id) &&
-      !isLocalShopId(shop._id || shop.id)
-    ) {
-      return false;
-    }
-
     const deletedIds = getDeletedShopIds();
 
     if (!deletedIds.length) {
@@ -2253,6 +2021,29 @@ function getLocalShops(params = {}) {
     const legacySessionPublic = parseStorageArray(sessionStorage, LOCAL_SHOP_STORAGE_KEY);
     const legacySessionAdmin = parseStorageArray(sessionStorage, LOCAL_ADMIN_SHOP_STORAGE_KEY);
 
+    const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
+    const storageMirrorKeys = [
+      "noma_admin_shops",
+      "noma_local_shops",
+      "noma_admin_shop_backup",
+      "nora_admin_shop_backup",
+      "nora_admin_shops",
+      "nora_local_shops",
+      category ? `noma_admin_shops_${category}` : "",
+      category ? `noma_local_shops_${category}` : "",
+      category ? `noma_admin_shop_backup_${category}` : "",
+      category ? `nora_admin_shops_${category}` : "",
+      category ? `nora_local_shops_${category}` : "",
+      category ? `nora_admin_shop_backup_${category}` : "",
+    ].filter(Boolean);
+
+    const mirrorLocalItems = storageMirrorKeys.flatMap((key) =>
+      parseStorageArray(localStorage, key)
+    );
+    const mirrorSessionItems = storageMirrorKeys.flatMap((key) =>
+      parseStorageArray(sessionStorage, key)
+    );
+
     return filterShopsByCategory(
       filterDeletedShops(
         mergeShopArrays([
@@ -2265,6 +2056,8 @@ function getLocalShops(params = {}) {
           ...legacySessionPublic,
           ...legacySavedAdmin,
           ...legacySessionAdmin,
+          ...mirrorLocalItems,
+          ...mirrorSessionItems,
         ]).map((shop) => applyShopImageBank(shop))
       ),
       params
@@ -2554,64 +2347,6 @@ function getFallbackByUrl(url, params = {}) {
     total: shops.length,
     count: shops.length,
   };
-}
-
-
-function normalizeCreatedShopResult(result = {}, fallbackShop = {}, params = {}) {
-  const rawShop =
-    result?.shop ||
-    result?.data ||
-    result?.item ||
-    (Array.isArray(result?.shops) ? result.shops[0] : null) ||
-    (Array.isArray(result?.items) ? result.items[0] : null) ||
-    (Array.isArray(result?.list) ? result.list[0] : null) ||
-    fallbackShop ||
-    {};
-
-  const shop = mergeShopObjects(
-    normalizeShopPayload(fallbackShop || {}),
-    normalizeShopPayload(rawShop || {})
-  );
-
-  const categoryParams =
-    Object.keys(makeCategoryParams(shop)).length
-      ? makeCategoryParams(shop)
-      : makeCategoryParams(params);
-
-  const saved = mergeShopArrays([
-    ...getLocalShops(categoryParams),
-    shop,
-  ]);
-
-  LOCAL_SHOP_MEMORY = saved;
-  saveLocalShops(saved, categoryParams);
-
-  return {
-    ok: true,
-    ...(result && typeof result === "object" && !Array.isArray(result) ? result : {}),
-    shop,
-    data: shop,
-    item: shop,
-    shops: saved,
-    list: saved,
-    items: saved,
-    total: saved.length,
-    count: saved.length,
-  };
-}
-
-function makeMutationFallbackResult(url, options = {}) {
-  const method = String(options.method || "GET").toUpperCase();
-
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    const localMutation = handleLocalMutation(url, options);
-
-    if (localMutation) {
-      return localMutation;
-    }
-  }
-
-  return null;
 }
 
 function shouldUseShopFallback(url, options = {}) {
@@ -2987,50 +2722,22 @@ async function request(url, options = {}) {
       fetchOptions.body = options.body;
     }
 
-    const builtRequestUrl = buildApiRequestUrl(url);
-    const requestUrl =
-      isBrowserProductionHost(getCurrentHostname()) && isLocalhostApiUrl(builtRequestUrl)
-        ? buildProductionDirectApiRequestUrl(url)
-        : builtRequestUrl;
+    const requestUrl = buildApiRequestUrl(url);
 
     console.log("SHOP API REQUEST:", requestUrl);
 
     const method = String(fetchOptions.method || "GET").toUpperCase();
     const isMutation = method !== "GET";
 
-    let res = isMutation
+    const res = isMutation
       ? await fetchWithTimeout(requestUrl, fetchOptions, MUTATION_TIMEOUT_MS)
       : await fetch(requestUrl, fetchOptions);
-
-    if (shouldRetryLocalDirectApi(url, options, res)) {
-      try {
-        const directRes = await retryLocalDirectApi(url, fetchOptions, options);
-
-        if (directRes) {
-          res = directRes;
-        }
-      } catch (directError) {
-        console.warn("SHOP API LOCAL DIRECT RETRY FAIL:", directError?.message || directError);
-      }
-    }
 
     let data = {};
 
     try {
       data = await res.json();
     } catch (e) {
-      const mutationFallback = makeMutationFallbackResult(url, options);
-
-      if (mutationFallback) {
-        console.warn("SHOP API NON JSON MUTATION FALLBACK");
-        return mutationFallback;
-      }
-
-      if (shouldUseShopFallback(url, options)) {
-        console.warn("SHOP API NON JSON FALLBACK");
-        return getFallbackByUrl(url, options.categoryParams || makeCategoryParams({ url }));
-      }
-
       data = {};
     }
 
@@ -3094,10 +2801,8 @@ async function request(url, options = {}) {
     }
 
     if (!res.ok || data?.ok === false) {
-      const mutationFallback = makeMutationFallbackResult(url, options);
-
-      if (mutationFallback) {
-        return mutationFallback;
+      if (shouldUseLocalMutation(url, options)) {
+        return handleLocalMutation(url, options);
       }
 
       if (shouldUseShopFallback(url, options)) {
@@ -3129,93 +2834,17 @@ async function request(url, options = {}) {
         return nextResult;
       }
 
-      if (shouldUseProductionDirectApi() && (url === "/shops" || url.startsWith("/shops?"))) {
-        try {
-          const directItems = await loadProductionMapSafeShops(requestCategoryParams);
-
-          if (Array.isArray(directItems) && directItems.length > 0) {
-            const directResult = normalizeShopResponseShape(
-              {
-                ok: true,
-                items: directItems,
-                shops: directItems,
-                list: directItems,
-                data: directItems,
-                total: directItems.length,
-                count: directItems.length,
-              },
-              requestCategoryParams
-            );
-
-            saveLocalShops(directResult.items, requestCategoryParams);
-
-            return directResult;
-          }
-        } catch (directError) {
-          console.warn("SHOP API PRODUCTION DIRECT LIST RETRY FAIL:", directError?.message || directError);
-        }
-      }
-
-      return getFallbackByUrl(url, requestCategoryParams);
+      return nextResult;
     }
 
     return data && typeof data === "object" && !Array.isArray(data)
       ? data
       : normalized;
   } catch (err) {
-    const method = String(options.method || "GET").toUpperCase();
-
-    if (shouldRetryLocalDirectApi(url, options, null)) {
-      try {
-        const token = getToken();
-
-        const headers = {
-          "Content-Type": "application/json",
-          ...(options.headers || {}),
-        };
-
-        if (token && isValidTokenValue(token) && !isLocalFallbackToken(token)) {
-          headers.Authorization = `Bearer ${token}`;
-        }
-
-        const directRes = await retryLocalDirectApi(
-          url,
-          {
-            method,
-            credentials: "include",
-            headers,
-            ...(options.body !== undefined
-              ? {
-                  body: options.body,
-                }
-              : {}),
-          },
-          options
-        );
-
-        if (directRes) {
-          const directData = await directRes.json().catch(() => ({}));
-
-          if (directRes.ok && directData?.ok !== false) {
-            return directData;
-          }
-        }
-      } catch (directError) {
-        console.warn("SHOP API LOCAL DIRECT CATCH RETRY FAIL:", directError?.message || directError);
-      }
-    }
-
-    if (shouldUseShopFallback(url, options)) {
-      console.warn("SHOP API FALLBACK:", err?.message || err);
-      return getFallbackByUrl(url, options.categoryParams || makeCategoryParams({ url }));
-    }
-
     console.error("SHOP API ERROR:", err);
 
-    const mutationFallback = makeMutationFallbackResult(url, options);
-
-    if (mutationFallback) {
-      return mutationFallback;
+    if (shouldUseLocalMutation(url, options)) {
+      return handleLocalMutation(url, options);
     }
 
     if (shouldUseShopFallback(url, options)) {
@@ -3276,17 +2905,16 @@ function normalizeShopPayload(payload = {}) {
     nextPayload.address ||
     "";
 
-  nextPayload.region = normalizeRegionName(
+  nextPayload.region = normalizeShopRegionName(
     nextPayload.region ||
       nextPayload.sido ||
       nextPayload.province ||
       nextPayload.state ||
       nextPayload.area ||
       getShopAddressRegion(nextPayload.address) ||
-      getShopAddressRegion(nextPayload.locationText)
+      getShopAddressRegion(nextPayload.locationText),
+    nextPayload.address || nextPayload.locationText
   );
-  nextPayload.sido = normalizeRegionName(nextPayload.sido || nextPayload.region);
-  nextPayload.province = normalizeRegionName(nextPayload.province || nextPayload.region);
 
   nextPayload.district =
     nextPayload.district ||
@@ -3420,10 +3048,8 @@ function normalizeShopPayload(payload = {}) {
 
 export const shopApi = {
   getList: async (params = {}) => {
-    const cleanParams = makeMapSafeShopParams(
-      Object.fromEntries(
-        Object.entries(params).filter(([_, v]) => v !== undefined && v !== null && v !== "")
-      )
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([_, v]) => v !== undefined && v !== null && v !== "")
     );
 
     const query = new URLSearchParams(cleanParams).toString();
@@ -3432,40 +3058,21 @@ export const shopApi = {
       categoryParams: cleanParams,
     });
 
-    const primaryResult = normalizeShopResponseShape(res, cleanParams);
+    const responseShape = normalizeShopApiResponse(res);
+    const normalized = normalizeShopResponseShape(responseShape, cleanParams);
 
-    if (shouldUseProductionDirectApi()) {
-      try {
-        const directItems = await loadProductionMapSafeShops(cleanParams);
-        const mergedItems = mergeShopArrays([
-          ...directItems,
-          ...(Array.isArray(primaryResult.items) ? primaryResult.items : []),
-        ]);
-
-        if (mergedItems.length > 0) {
-          const finalResult = normalizeShopResponseShape(
-            {
-              ...primaryResult,
-              items: mergedItems,
-              shops: mergedItems,
-              list: mergedItems,
-              data: mergedItems,
-              total: mergedItems.length,
-              count: mergedItems.length,
-            },
-            cleanParams
-          );
-
-          saveLocalShops(finalResult.items, cleanParams);
-
-          return finalResult;
-        }
-      } catch (directError) {
-        console.warn("SHOP API PRODUCTION DIRECT GETLIST FAIL:", directError?.message || directError);
-      }
+    if (
+      (!Array.isArray(normalized?.items) || normalized.items.length === 0) &&
+      (!Array.isArray(normalized?.shops) || normalized.shops.length === 0) &&
+      (!Array.isArray(normalized?.list) || normalized.list.length === 0)
+    ) {
+      return normalizeShopResponseShape(
+        getFallbackByUrl(query ? `/shops?${query}` : `/shops`, cleanParams),
+        cleanParams
+      );
     }
 
-    return primaryResult;
+    return normalized;
   },
 
   getDetail: async (id, params = {}) => {
@@ -3597,63 +3204,38 @@ export const shopApi = {
 
   create: async (payload) => {
     const normalizedPayload = normalizeShopPayload(payload);
-    const categoryParams =
-      Object.keys(makeCategoryParams(normalizedPayload)).length
-        ? makeCategoryParams(normalizedPayload)
-        : makeCategoryParams({
-            ...normalizedPayload,
-            category: "massage",
-          });
-
-    const createPayload = {
-      ...normalizedPayload,
-      ...categoryParams,
-      name:
-        normalizedPayload.name ||
-        normalizedPayload.shopName ||
-        normalizedPayload.title ||
-        `노라 등록 업체 ${new Date().toLocaleString("ko-KR")}`,
-      address:
-        normalizedPayload.address ||
-        normalizedPayload.roadAddress ||
-        normalizedPayload.fullAddress ||
-        normalizedPayload.locationText ||
-        "주소 없음",
-      lat: normalizedPayload.lat || normalizedPayload.location?.lat || 0,
-      lng: normalizedPayload.lng || normalizedPayload.location?.lng || 0,
-      visible: normalizedPayload.visible !== false,
-      approved: normalizedPayload.approved !== false,
-      isReservable: normalizedPayload.isReservable !== false,
-      status: normalizedPayload.status || "active",
-    };
-
-    createPayload.shopName = createPayload.shopName || createPayload.name;
-    createPayload.title = createPayload.title || createPayload.name;
-    createPayload.roadAddress = createPayload.roadAddress || createPayload.address;
-    createPayload.fullAddress = createPayload.fullAddress || createPayload.address;
-    createPayload.location = {
-      ...(createPayload.location || {}),
-      lat: createPayload.lat,
-      lng: createPayload.lng,
-    };
-
-    const localResult = createLocalShop(createPayload, categoryParams);
-    const networkPayload = getNetworkSafeShop(createPayload);
+    const categoryParams = makeCategoryParams(normalizedPayload);
+    const localResult = createLocalShop(normalizedPayload, categoryParams);
+    const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery("/shops", categoryParams);
 
-    try {
-      const res = await request(requestUrl, {
-        method: "POST",
-        body: JSON.stringify(networkPayload),
-        categoryParams,
+    request(requestUrl, {
+      method: "POST",
+      body: JSON.stringify(networkPayload),
+      categoryParams,
+    })
+      .then((res) => {
+        const createdShop =
+          res?.shop ||
+          res?.data ||
+          res?.item ||
+          networkPayload;
+
+        createLocalShop(
+          {
+            ...createdShop,
+            ...normalizedPayload,
+            _id: createdShop?._id || createdShop?.id || localResult?.shop?._id || localResult?.shop?.id,
+            id: createdShop?.id || createdShop?._id || localResult?.shop?.id || localResult?.shop?._id,
+          },
+          categoryParams
+        );
+      })
+      .catch((e) => {
+        console.warn("SHOP CREATE SERVER SYNC SKIP:", e.message);
       });
 
-      return normalizeCreatedShopResult(res, localResult?.shop || networkPayload, categoryParams);
-    } catch (e) {
-      console.warn("SHOP CREATE SERVER SYNC SKIP:", e.message);
-
-      return normalizeCreatedShopResult(localResult, localResult?.shop || networkPayload, categoryParams);
-    }
+    return localResult;
   },
 
   update: async (id, payload, params = {}) => {

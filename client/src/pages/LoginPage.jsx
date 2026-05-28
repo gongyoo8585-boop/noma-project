@@ -357,7 +357,7 @@ function LoginPage({ navigate, setUser }) {
 
       const base =
         window.__ENV__?.API_BASE_URL ||
-        "http://localhost:10000/api";
+        "https://api.nora365.co.kr/api";
 
       const res = await fetch(`${base}/auth/kakao/login`);
 

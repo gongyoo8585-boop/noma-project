@@ -16,7 +16,7 @@ const API = axios.create({
   baseURL:
     process.env.REACT_APP_API_URL ||
     window.__ENV__?.API_BASE_URL ||
-    "http://localhost:10000/api",
+    "https://api.nora365.co.kr/api",
 
   timeout: 10000,
 });

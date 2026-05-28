@@ -7,7 +7,6 @@
 👉 중복 connect / 중복 close / 중복 timer 방지
 👉 Atlas / local Mongo 모두 대응
 👉 기존 export 기능 유지
-👉 SIGINT / SIGTERM 직접 close 제거: 중복 shutdown 충돌 방지
 ===================================================== */
 
 const mongoose = require("mongoose");
@@ -69,7 +68,7 @@ const DB_STATE =
     lastRetryAt: null,
     retryTimer: null,
     shuttingDown: false,
-    connectPromise: null,
+    connectPromise: null
   };
 
 global.__NORA_DB_STATE__ = DB_STATE;
@@ -81,7 +80,7 @@ const READY_STATE = {
   0: "disconnected",
   1: "connected",
   2: "connecting",
-  3: "disconnecting",
+  3: "disconnecting"
 };
 
 function now() {
@@ -118,7 +117,7 @@ function getMongoOptions() {
     family: 4,
     autoIndex: false,
     autoCreate: false,
-    bufferCommands: false,
+    bufferCommands: false
   };
 
   const dbName = ENV.DB_NAME || process.env.DB_NAME || "";
@@ -218,13 +217,6 @@ function scheduleRetry() {
       console.error("❌ RETRY CONNECT ERROR:", error.message);
     }
   }, delay);
-
-  if (
-    DB_STATE.retryTimer &&
-    typeof DB_STATE.retryTimer.unref === "function"
-  ) {
-    DB_STATE.retryTimer.unref();
-  }
 }
 
 /* =====================================================
@@ -283,7 +275,6 @@ async function connectDB() {
 
       DB_STATE.connected = true;
       DB_STATE.connecting = false;
-      DB_STATE.shuttingDown = false;
       DB_STATE.lastConnectedAt = now();
       DB_STATE.retryCount = 0;
       DB_STATE.lastErrorMessage = "";
@@ -357,7 +348,6 @@ if (!global.__NORA_DB_EVENTS__) {
   mongoose.connection.on("connected", () => {
     DB_STATE.connected = true;
     DB_STATE.connecting = false;
-    DB_STATE.shuttingDown = false;
     DB_STATE.lastConnectedAt = now();
     DB_STATE.retryCount = 0;
     DB_STATE.lastErrorMessage = "";
@@ -399,7 +389,6 @@ if (!global.__NORA_DB_EVENTS__) {
   mongoose.connection.on("reconnected", () => {
     DB_STATE.connected = true;
     DB_STATE.connecting = false;
-    DB_STATE.shuttingDown = false;
     DB_STATE.lastConnectedAt = now();
     DB_STATE.retryCount = 0;
     DB_STATE.lastErrorMessage = "";
@@ -427,7 +416,7 @@ function getDBHealth() {
     lastErrorMessage: DB_STATE.lastErrorMessage,
     lastConnectedAt: DB_STATE.lastConnectedAt,
     lastRetryAt: DB_STATE.lastRetryAt,
-    uptime: DB_STATE.lastConnectedAt ? now() - DB_STATE.lastConnectedAt : 0,
+    uptime: DB_STATE.lastConnectedAt ? now() - DB_STATE.lastConnectedAt : 0
   };
 }
 
@@ -445,9 +434,6 @@ function getDBUptime() {
 
 /* =====================================================
 🔥 GRACEFUL SHUTDOWN
-기존 closeDB export는 유지.
-단, 이 모듈에서 process SIGINT/SIGTERM handler 직접 등록은 하지 않음.
-중복 shutdown handler는 db.js / server.js / app.js / index.js 쪽과 충돌 가능성이 있음.
 ===================================================== */
 async function closeDB() {
   try {
@@ -473,23 +459,33 @@ async function closeDB() {
   }
 }
 
+if (!global.__DB_SHUTDOWN_HANDLERS__) {
+  global.__DB_SHUTDOWN_HANDLERS__ = true;
+
+  process.once("SIGINT", async () => {
+    await closeDB();
+    process.exit(0);
+  });
+
+  process.once("SIGTERM", async () => {
+    await closeDB();
+    process.exit(0);
+  });
+}
+
 /* =====================================================
 🔥 AUTO MONITOR
 ===================================================== */
 if (!global.__DB_MONITOR__) {
   global.__DB_MONITOR__ = true;
 
-  const monitorTimer = setInterval(() => {
+  setInterval(() => {
     syncStateFromMongoose();
 
     if (!DB_STATE.connected && !DB_STATE.shuttingDown) {
       console.warn("⚠️ DB NOT CONNECTED");
     }
   }, Number(process.env.DB_MONITOR_INTERVAL_MS || 10000));
-
-  if (monitorTimer && typeof monitorTimer.unref === "function") {
-    monitorTimer.unref();
-  }
 }
 
 /* =====================================================
@@ -503,7 +499,7 @@ module.exports = {
   getDBStatus,
   getDBUptime,
   ensureDBConnection,
-  waitForConnection,
+  waitForConnection
 };
 
 console.log("🔥 DATABASE CONFIG READY");

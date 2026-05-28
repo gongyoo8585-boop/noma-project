@@ -1,14 +1,14 @@
 "use strict";
 
 /* =====================================================
-🔥 SHOP RANKING SERVICE (NORA PRODUCTION SAFE FINAL)
-✔ Mongo reconnect storm 방지
-✔ concurrent refresh 방지
-✔ DB unstable 상태 query 차단
-✔ Mongo full scan / memory sort 부하 방지
-✔ hot cache interval stabilization
-✔ PM2 restart safe
-✔ 기존 export/function 유지
+🔥 SHOP RANKING SERVICE (NORA PRODUCTION SAFE)
+✔ 실제 구조 기준 경로 수정
+✔ ../models/Shop 오류 제거
+✔ 기존 export 함수명 유지
+✔ DB/모델 미연결 시 서버 부팅 실패 방지
+✔ DB 연결 완료 전 Shop.find() 차단
+✔ refreshHotCache 자동 실행 시 DB 미연결이면 fallback 반환
+✔ 기존 랭킹 로직 의미 유지
 ===================================================== */
 
 const mongoose = require("mongoose");
@@ -17,12 +17,7 @@ function safeRequire(modulePath) {
   try {
     return require(modulePath);
   } catch (error) {
-    console.warn(
-      "[shop.ranking.service] require fail:",
-      modulePath,
-      error.message
-    );
-
+    console.warn("[shop.ranking.service] require fail:", modulePath, error.message);
     return null;
   }
 }
@@ -38,10 +33,8 @@ const Shop =
 /* =====================================================
 🔥 SAFE UTILS
 ===================================================== */
-
 function safeNum(value, fallback = 0) {
   const number = Number(value);
-
   return Number.isFinite(number) ? number : fallback;
 }
 
@@ -52,7 +45,6 @@ function now() {
 function safeDate(value) {
   try {
     const time = new Date(value).getTime();
-
     return Number.isFinite(time) ? time : 0;
   } catch (_) {
     return 0;
@@ -79,89 +71,41 @@ function isDBReady() {
   return mongoose.connection && mongoose.connection.readyState === 1;
 }
 
-/* =====================================================
-🔥 ENV
-===================================================== */
-
 const DB_STABLE_DELAY_MS = Math.max(
-  3000,
+  1000,
   Number(process.env.RANKING_DB_STABLE_DELAY_MS || 5000)
 );
-
 const HOT_CACHE_INTERVAL_MS = Math.max(
-  60000,
-  Number(process.env.RANKING_HOT_CACHE_INTERVAL_MS || 60000)
+  10000,
+  Number(process.env.RANKING_HOT_CACHE_INTERVAL_MS || 30000)
 );
-
 const HOT_CACHE_INITIAL_DELAY_MS = Math.max(
-  15000,
+  DB_STABLE_DELAY_MS,
   Number(process.env.RANKING_HOT_CACHE_INITIAL_DELAY_MS || 15000)
 );
-
 const RANKING_QUERY_TIMEOUT_MS = Math.max(
   1000,
-  Number(process.env.RANKING_QUERY_TIMEOUT_MS || 2000)
+  Number(process.env.RANKING_QUERY_TIMEOUT_MS || 5000)
 );
-
-const RANKING_QUERY_COOLDOWN_MS = Math.max(
-  15000,
-  Number(process.env.RANKING_QUERY_COOLDOWN_MS || 30000)
-);
-
-const RANKING_MAX_DOCS = Math.max(
-  20,
-  Math.min(300, Number(process.env.RANKING_MAX_DOCS || 100))
-);
-
-/* =====================================================
-🔥 DB STABILITY
-===================================================== */
 
 let lastDbConnectedAt = isDBReady() ? now() : 0;
-
 let refreshHotCacheRunning = false;
-
 let lastRefreshHotCacheAt = 0;
-
-let consecutiveDbFailures = 0;
-
-let dbCooldownUntil = 0;
-
-let queryRunning = false;
-
-let queryCooldownUntil = 0;
 
 function markDbConnected() {
   lastDbConnectedAt = now();
-
-  consecutiveDbFailures = 0;
-
-  dbCooldownUntil = 0;
-
-  queryCooldownUntil = 0;
-
-  console.log("🟢 DB EVENT: connected");
 }
 
 function markDbDisconnected() {
   lastDbConnectedAt = 0;
-
-  dbCooldownUntil = now() + RANKING_QUERY_COOLDOWN_MS;
-
-  queryCooldownUntil = now() + RANKING_QUERY_COOLDOWN_MS;
-
-  console.warn("🟡 DB DISCONNECTED");
 }
 
 if (!global.__NORA_RANKING_DB_EVENTS__) {
   global.__NORA_RANKING_DB_EVENTS__ = true;
 
   mongoose.connection.on("connected", markDbConnected);
-
   mongoose.connection.on("reconnected", markDbConnected);
-
   mongoose.connection.on("disconnected", markDbDisconnected);
-
   mongoose.connection.on("error", markDbDisconnected);
 }
 
@@ -171,93 +115,67 @@ function isDBStable() {
   }
 
   if (!lastDbConnectedAt) {
-    return false;
-  }
-
-  if (dbCooldownUntil > now()) {
-    return false;
-  }
-
-  if (queryCooldownUntil > now()) {
+    lastDbConnectedAt = now();
     return false;
   }
 
   return now() - lastDbConnectedAt >= DB_STABLE_DELAY_MS;
 }
 
-function activateDbCooldown() {
-  consecutiveDbFailures += 1;
-
-  const backoff = Math.min(
-    120000,
-    Math.max(
-      RANKING_QUERY_COOLDOWN_MS,
-      consecutiveDbFailures * RANKING_QUERY_COOLDOWN_MS
-    )
-  );
-
-  dbCooldownUntil = now() + backoff;
-
-  queryCooldownUntil = now() + backoff;
-
-  console.warn(`🔄 DB RETRY IN ${backoff}ms`);
-}
-
 function isMongoTransientError(error) {
-  const message = String(
-    error && error.message ? error.message : error || ""
-  ).toLowerCase();
+  const message = String(error && error.message ? error.message : error || "");
 
   return (
     message.includes("before initial connection is complete") ||
-    message.includes("buffercommands = false") ||
+    message.includes("bufferCommands = false") ||
+    message.includes("connection") ||
     message.includes("timed out") ||
-    message.includes("server selection") ||
     message.includes("not connected") ||
     message.includes("disconnected") ||
-    message.includes("topology") ||
-    message.includes("connection") ||
-    message.includes("pool") ||
-    message.includes("sort exceeded memory limit")
+    message.includes("topology")
   );
 }
 
-function createTimeoutError(ms) {
-  const error = new Error(`ranking query timeout after ${ms}ms`);
-
-  error.code = "RANKING_QUERY_TIMEOUT";
-
-  return error;
-}
-
-async function withQueryTimeout(query, timeoutMs) {
-  let timeoutId = null;
-
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(createTimeoutError(timeoutMs));
-    }, timeoutMs);
-
-    if (timeoutId && typeof timeoutId.unref === "function") {
-      timeoutId.unref();
-    }
-  });
-
-  try {
-    return await Promise.race([
-      Promise.resolve(query),
-      timeoutPromise,
-    ]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
+function fallbackShopList(limit = FALLBACK_SHOPS.length) {
+  return FALLBACK_SHOPS.slice(0, normalizeLimit(limit, FALLBACK_SHOPS.length));
 }
 
 /* =====================================================
-🔥 FALLBACK
+🔥 CACHE SYSTEM
 ===================================================== */
+const CACHE = new Map();
+const MAX_CACHE = 500;
+
+function cacheSet(key, data, ttl = 5000) {
+  if (CACHE.size > MAX_CACHE) {
+    CACHE.clear();
+  }
+
+  CACHE.set(key, {
+    data,
+    expire: now() + ttl,
+  });
+}
+
+function cacheGet(key) {
+  const cached = CACHE.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (now() > cached.expire) {
+    CACHE.delete(key);
+    return null;
+  }
+
+  return cached.data;
+}
+
+/* =====================================================
+🔥 MEMORY FALLBACK
+===================================================== */
+let HOT_CACHE = [];
 
 const FALLBACK_SHOPS = [
   {
@@ -285,58 +203,9 @@ const FALLBACK_SHOPS = [
   },
 ];
 
-function fallbackShopList(limit = FALLBACK_SHOPS.length) {
-  return FALLBACK_SHOPS.slice(
-    0,
-    normalizeLimit(limit, FALLBACK_SHOPS.length)
-  );
-}
-
 /* =====================================================
-🔥 CACHE
+🔥 METRIC SYSTEM
 ===================================================== */
-
-const CACHE = new Map();
-
-const MAX_CACHE = 500;
-
-function cacheSet(key, data, ttl = 10000) {
-  if (CACHE.size > MAX_CACHE) {
-    CACHE.clear();
-  }
-
-  CACHE.set(key, {
-    data,
-    expire: now() + ttl,
-  });
-}
-
-function cacheGet(key) {
-  const cached = CACHE.get(key);
-
-  if (!cached) {
-    return null;
-  }
-
-  if (now() > cached.expire) {
-    CACHE.delete(key);
-
-    return null;
-  }
-
-  return cached.data;
-}
-
-/* =====================================================
-🔥 MEMORY CACHE
-===================================================== */
-
-let HOT_CACHE = fallbackShopList(10);
-
-/* =====================================================
-🔥 METRIC
-===================================================== */
-
 const METRIC = {
   totalRankCalls: 0,
   cacheHits: 0,
@@ -344,14 +213,11 @@ const METRIC = {
   lastExecTime: 0,
   fallbackCalls: 0,
   dbNotReadySkips: 0,
-  queryTimeouts: 0,
-  queryBusySkips: 0,
 };
 
 /* =====================================================
 🔥 SCORE
 ===================================================== */
-
 function calcBaseScore(shop) {
   const item = normalizeShop(shop);
 
@@ -400,7 +266,6 @@ function calcQualityScore(shop) {
 
 function calcFreshness(shop) {
   const item = normalizeShop(shop);
-
   const updated = safeDate(item.updatedAt || item.createdAt);
 
   if (!updated) {
@@ -414,11 +279,9 @@ function calcFreshness(shop) {
 
 function calcAdBoost(shop) {
   const item = normalizeShop(shop);
-
   const currentTime = now();
 
   const start = safeDate(item.adStartedAt);
-
   const end = safeDate(item.adEndedAt);
 
   if (start && end && currentTime >= start && currentTime <= end) {
@@ -431,26 +294,25 @@ function calcAdBoost(shop) {
 function calcDistanceScore(shop, lat, lng) {
   const item = normalizeShop(shop);
 
-  if (lat == null || lng == null) {
+  if (lat === null || lat === undefined || lng === null || lng === undefined) {
     return 0;
   }
 
   const shopLat =
     item.lat ??
     item.latitude ??
-    (item.location && item.location.lat);
+    (item.location && typeof item.location === "object" ? item.location.lat : null);
 
   const shopLng =
     item.lng ??
     item.longitude ??
-    (item.location && item.location.lng);
+    (item.location && typeof item.location === "object" ? item.location.lng : null);
 
-  if (shopLat == null || shopLng == null) {
+  if (shopLat === null || shopLat === undefined || shopLng === null || shopLng === undefined) {
     return 0;
   }
 
   const dx = safeNum(shopLat) - safeNum(lat);
-
   const dy = safeNum(shopLng) - safeNum(lng);
 
   const distance = Math.sqrt(dx * dx + dy * dy) * 111;
@@ -467,15 +329,20 @@ function calcPersonalScore(shop, user = {}) {
 
   let score = 0;
 
-  if (
-    Array.isArray(user.favorites) &&
-    user.favorites.includes(String(item._id || item.id))
-  ) {
+  if (Array.isArray(user.favorites) && user.favorites.includes(String(item._id || item.id))) {
     score += 50;
   }
 
   if (user.recentRegion && user.recentRegion === item.region) {
     score += 10;
+  }
+
+  if (
+    Array.isArray(user.preferredTags) &&
+    Array.isArray(item.tags) &&
+    user.preferredTags.some((tag) => item.tags.includes(tag))
+  ) {
+    score += 20;
   }
 
   return score;
@@ -508,141 +375,61 @@ function calcFinalScore(shop) {
 }
 
 /* =====================================================
-🔥 QUERY
+🔥 QUERY HELPERS
 ===================================================== */
-
 function normalizeFilter(filter = {}) {
-  return {
+  const query = {
     isDeleted: false,
     visible: true,
     approved: true,
     ...filter,
   };
+
+  return query;
 }
 
-function normalizeProjection() {
-  return {
-    name: 1,
-    shopName: 1,
-    title: 1,
-    region: 1,
-    sido: 1,
-    province: 1,
-    district: 1,
-    city: 1,
-    address: 1,
-    serviceTypes: 1,
-    serviceType: 1,
-    category: 1,
-    tags: 1,
-    lat: 1,
-    lng: 1,
-    latitude: 1,
-    longitude: 1,
-    location: 1,
-    visible: 1,
-    approved: 1,
-    isDeleted: 1,
-    premium: 1,
-    isPremium: 1,
-    premiumActive: 1,
-    bestBadge: 1,
-    ratingAvg: 1,
-    likeCount: 1,
-    viewCount: 1,
-    reservationCount: 1,
-    clickCount: 1,
-    shareCount: 1,
-    adScore: 1,
-    reportCount: 1,
-    bounceRate: 1,
-    conversionRate: 1,
-    reviewCount: 1,
-    adStartedAt: 1,
-    adEndedAt: 1,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-}
-
-async function findShops(query = {}, limit = RANKING_MAX_DOCS) {
+async function findShops(query = {}) {
   if (!Shop || typeof Shop.find !== "function") {
     METRIC.fallbackCalls += 1;
-
     return FALLBACK_SHOPS;
   }
 
   if (!isDBStable()) {
+    METRIC.fallbackCalls += 1;
     METRIC.dbNotReadySkips += 1;
-    METRIC.fallbackCalls += 1;
-
-    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS;
+    return FALLBACK_SHOPS;
   }
-
-  if (queryRunning) {
-    METRIC.queryBusySkips += 1;
-    METRIC.fallbackCalls += 1;
-
-    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS;
-  }
-
-  queryRunning = true;
 
   try {
-    const safeLimit = Math.min(
-      RANKING_MAX_DOCS,
-      Math.max(normalizeLimit(limit, 20) * 5, 20)
-    );
-
-    const queryTask = Shop.find(query)
-      .select(normalizeProjection())
-      .limit(safeLimit)
-      .maxTimeMS(RANKING_QUERY_TIMEOUT_MS)
-      .lean()
-      .exec();
-
-    const items = await withQueryTimeout(
-      queryTask,
-      RANKING_QUERY_TIMEOUT_MS + 500
-    );
-
-    consecutiveDbFailures = 0;
-
-    return Array.isArray(items) ? items : [];
-  } catch (error) {
-    if (
-      error &&
-      (error.code === "RANKING_QUERY_TIMEOUT" || isMongoTransientError(error))
-    ) {
-      if (error.code === "RANKING_QUERY_TIMEOUT") {
-        METRIC.queryTimeouts += 1;
-      }
-
-      activateDbCooldown();
-
-      METRIC.dbNotReadySkips += 1;
+    if (!isDBStable()) {
       METRIC.fallbackCalls += 1;
-
-      return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS;
+      METRIC.dbNotReadySkips += 1;
+      return FALLBACK_SHOPS;
     }
 
-    console.error(
-      "[shop.ranking.service] find shops fail:",
-      error.message
-    );
+    const items = await Shop.find(query).maxTimeMS(RANKING_QUERY_TIMEOUT_MS).lean();
 
+    if (Array.isArray(items)) {
+      return items;
+    }
+
+    return [];
+  } catch (error) {
     METRIC.fallbackCalls += 1;
 
-    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS;
-  } finally {
-    queryRunning = false;
+    if (isMongoTransientError(error)) {
+      METRIC.dbNotReadySkips += 1;
+      return FALLBACK_SHOPS;
+    }
+
+    console.error("[shop.ranking.service] find shops fail:", error.message);
+    return FALLBACK_SHOPS;
   }
 }
 
 /* =====================================================
-🔥 CORE RANK
+🔥 CORE RANK ENGINE
 ===================================================== */
-
 async function rankShops({
   user = null,
   lat = null,
@@ -668,51 +455,53 @@ async function rankShops({
 
   if (cached) {
     METRIC.cacheHits += 1;
-
     return cached;
   }
 
   const query = normalizeFilter(filter);
 
-  const shops = await findShops(query, normalizedLimit);
+  const shops = await findShops(query);
 
-  const ranked = shops
-    .map((shop) => {
-      const item = normalizeShop(shop);
+  const ranked = shops.map((shop) => {
+    const item = normalizeShop(shop);
+    const base = calcFinalScore(item);
+    const distance = calcDistanceScore(item, lat, lng);
+    const personal = calcPersonalScore(item, user);
 
-      const base = calcFinalScore(item);
+    const finalScore = base + distance + personal;
 
-      const distance = calcDistanceScore(item, lat, lng);
+    return {
+      ...item,
+      finalScore,
+      scoreBreakdown: {
+        base,
+        distance,
+        personal,
+      },
+    };
+  });
 
-      const personal = calcPersonalScore(item, user);
-
-      return {
-        ...item,
-        finalScore: base + distance + personal,
-      };
-    })
+  const result = ranked
     .sort((a, b) => safeNum(b.finalScore) - safeNum(a.finalScore))
     .slice(0, normalizedLimit);
 
-  cacheSet(cacheKey, ranked);
+  cacheSet(cacheKey, result);
 
   const elapsed = now() - startTime;
 
   METRIC.lastExecTime = elapsed;
 
-  if (elapsed > 5000 && isDBStable()) {
+  if (elapsed > 500 && isDBStable()) {
     METRIC.slowQueries += 1;
-
-    console.warn(`SLOW RANK: ${elapsed}ms`);
+    console.warn("SLOW RANK:", `${elapsed}ms`);
   }
 
-  return ranked;
+  return result;
 }
 
 /* =====================================================
-🔥 CATEGORY
+🔥 CATEGORY / REGION
 ===================================================== */
-
 async function rankByService(serviceType, opts = {}) {
   return rankShops({
     ...opts,
@@ -722,6 +511,7 @@ async function rankByService(serviceType, opts = {}) {
         { serviceTypes: serviceType },
         { serviceType },
         { category: serviceType },
+        { shopCategory: serviceType },
       ],
     },
   });
@@ -736,6 +526,7 @@ async function rankByRegion(region, opts = {}) {
         { region },
         { sido: region },
         { province: region },
+        { address: { $regex: region, $options: "i" } },
       ],
     },
   });
@@ -744,57 +535,94 @@ async function rankByRegion(region, opts = {}) {
 /* =====================================================
 🔥 TRENDING
 ===================================================== */
-
 async function getTrending(limit = 20) {
-  const normalizedLimit = normalizeLimit(limit, 20);
-
-  const shops = await findShops(
-    {
-      isDeleted: false,
-    },
-    normalizedLimit
-  );
+  const shops = await findShops({
+    isDeleted: false,
+  });
 
   return shops
-    .map((shop) => ({
-      ...normalizeShop(shop),
-      trendScore:
-        calcTrendScore(shop) + calcFreshness(shop),
-    }))
+    .map((shop) => {
+      const item = normalizeShop(shop);
+
+      return {
+        ...item,
+        trendScore: calcTrendScore(item) + calcFreshness(item),
+      };
+    })
     .sort((a, b) => safeNum(b.trendScore) - safeNum(a.trendScore))
-    .slice(0, normalizedLimit);
+    .slice(0, normalizeLimit(limit, 20));
 }
 
 /* =====================================================
 🔥 ADS
 ===================================================== */
-
 async function getAds(limit = 10) {
-  return rankShops({
-    limit,
-    filter: {
-      premium: true,
-    },
-  });
+  if (!Shop || typeof Shop.find !== "function" || !isDBStable()) {
+    METRIC.fallbackCalls += 1;
+    if (!isDBStable()) {
+      METRIC.dbNotReadySkips += 1;
+    }
+
+    return FALLBACK_SHOPS.slice(0, normalizeLimit(limit, 10));
+  }
+
+  const currentTime = now();
+
+  try {
+    if (!isDBStable()) {
+      METRIC.fallbackCalls += 1;
+      METRIC.dbNotReadySkips += 1;
+      return FALLBACK_SHOPS.slice(0, normalizeLimit(limit, 10));
+    }
+
+    const shops = await Shop.find({
+      isDeleted: false,
+      adStartedAt: {
+        $lte: new Date(currentTime),
+      },
+      adEndedAt: {
+        $gte: new Date(currentTime),
+      },
+    }).maxTimeMS(RANKING_QUERY_TIMEOUT_MS).lean();
+
+    return shops
+      .map((shop) => {
+        const item = normalizeShop(shop);
+
+        return {
+          ...item,
+          adScoreFinal: calcAdBoost(item) + calcBaseScore(item) + calcQualityScore(item),
+        };
+      })
+      .sort((a, b) => safeNum(b.adScoreFinal) - safeNum(a.adScoreFinal))
+      .slice(0, normalizeLimit(limit, 10));
+  } catch (error) {
+    if (isMongoTransientError(error)) {
+      METRIC.fallbackCalls += 1;
+      METRIC.dbNotReadySkips += 1;
+      return FALLBACK_SHOPS.slice(0, normalizeLimit(limit, 10));
+    }
+
+    console.error("[shop.ranking.service] get ads fail:", error.message);
+    return FALLBACK_SHOPS.slice(0, normalizeLimit(limit, 10));
+  }
 }
 
 /* =====================================================
 🔥 HOT CACHE
 ===================================================== */
-
 async function refreshHotCache() {
   if (refreshHotCacheRunning) {
-    return HOT_CACHE;
+    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS.slice(0, 10);
   }
 
   if (!isDBStable()) {
     METRIC.dbNotReadySkips += 1;
-
+    HOT_CACHE = FALLBACK_SHOPS.slice(0, 10);
     return HOT_CACHE;
   }
 
   refreshHotCacheRunning = true;
-
   lastRefreshHotCacheAt = now();
 
   try {
@@ -804,13 +632,8 @@ async function refreshHotCache() {
 
     return HOT_CACHE;
   } catch (error) {
-    if (!isMongoTransientError(error)) {
-      console.warn(
-        "[shop.ranking.service] refresh hot cache fail:",
-        error.message
-      );
-    }
-
+    console.warn("[shop.ranking.service] refresh hot cache fail:", error.message);
+    HOT_CACHE = FALLBACK_SHOPS.slice(0, 10);
     return HOT_CACHE;
   } finally {
     refreshHotCacheRunning = false;
@@ -819,54 +642,48 @@ async function refreshHotCache() {
 
 function scheduleRefreshHotCache() {
   if (!isDBStable()) {
-    return;
+    METRIC.dbNotReadySkips += 1;
+    HOT_CACHE = HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS.slice(0, 10);
+    return HOT_CACHE;
   }
 
-  if (queryRunning || refreshHotCacheRunning) {
-    return;
+  if (refreshHotCacheRunning) {
+    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS.slice(0, 10);
   }
 
-  if (
-    now() - lastRefreshHotCacheAt <
-    HOT_CACHE_INTERVAL_MS
-  ) {
-    return;
+  if (now() - lastRefreshHotCacheAt < DB_STABLE_DELAY_MS) {
+    return HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS.slice(0, 10);
   }
 
-  refreshHotCache().catch((error) => {
+  return refreshHotCache().catch((error) => {
     if (!isMongoTransientError(error)) {
-      console.warn(
-        "[shop.ranking.service] hot cache schedule fail:",
-        error.message
-      );
+      console.warn("[shop.ranking.service] hot cache schedule fail:", error.message);
     }
+
+    HOT_CACHE = HOT_CACHE.length ? HOT_CACHE : FALLBACK_SHOPS.slice(0, 10);
+    return HOT_CACHE;
   });
 }
 
 if (!global.__NORA_RANKING_HOT_CACHE__) {
   global.__NORA_RANKING_HOT_CACHE__ = true;
 
-  const initialTimer = setTimeout(() => {
-    scheduleRefreshHotCache();
-  }, HOT_CACHE_INITIAL_DELAY_MS);
+  const hotCacheInitialTimer = setTimeout(scheduleRefreshHotCache, HOT_CACHE_INITIAL_DELAY_MS);
 
-  if (typeof initialTimer.unref === "function") {
-    initialTimer.unref();
+  if (hotCacheInitialTimer && typeof hotCacheInitialTimer.unref === "function") {
+    hotCacheInitialTimer.unref();
   }
 
-  const intervalTimer = setInterval(() => {
-    scheduleRefreshHotCache();
-  }, HOT_CACHE_INTERVAL_MS);
+  const hotCacheTimer = setInterval(scheduleRefreshHotCache, HOT_CACHE_INTERVAL_MS);
 
-  if (typeof intervalTimer.unref === "function") {
-    intervalTimer.unref();
+  if (hotCacheTimer && typeof hotCacheTimer.unref === "function") {
+    hotCacheTimer.unref();
   }
 }
 
 /* =====================================================
 🔥 RECOMMEND
 ===================================================== */
-
 async function recommend(user, opts = {}) {
   return rankShops({
     user,
@@ -875,9 +692,8 @@ async function recommend(user, opts = {}) {
 }
 
 /* =====================================================
-🔥 DEBUG
+🔥 DEBUG / METRIC
 ===================================================== */
-
 function debugMetrics() {
   return {
     ...METRIC,
@@ -885,25 +701,17 @@ function debugMetrics() {
     shopModel: !!Shop,
     dbReady: isDBReady(),
     dbStable: isDBStable(),
-    dbState: mongoose.connection
-      ? mongoose.connection.readyState
-      : 0,
-    dbCooldownUntil,
-    queryCooldownUntil,
-    consecutiveDbFailures,
-    queryRunning,
-    refreshHotCacheRunning,
-    hotCache: HOT_CACHE.length,
+    dbState: mongoose.connection ? mongoose.connection.readyState : 0,
+    dbStableDelayMs: DB_STABLE_DELAY_MS,
     rankingQueryTimeoutMs: RANKING_QUERY_TIMEOUT_MS,
-    rankingQueryCooldownMs: RANKING_QUERY_COOLDOWN_MS,
-    rankingMaxDocs: RANKING_MAX_DOCS,
+    hotCache: HOT_CACHE.length,
+    refreshHotCacheRunning,
   };
 }
 
 /* =====================================================
 🔥 AUTO CLEAN
 ===================================================== */
-
 if (!global.__RANKING_CLEAN__) {
   global.__RANKING_CLEAN__ = true;
 
@@ -911,9 +719,9 @@ if (!global.__RANKING_CLEAN__) {
     if (CACHE.size > MAX_CACHE) {
       CACHE.clear();
     }
-  }, 60000);
+  }, 30000);
 
-  if (typeof cleanTimer.unref === "function") {
+  if (cleanTimer && typeof cleanTimer.unref === "function") {
     cleanTimer.unref();
   }
 }
@@ -921,7 +729,6 @@ if (!global.__RANKING_CLEAN__) {
 /* =====================================================
 🔥 EXPORT
 ===================================================== */
-
 module.exports = {
   rankShops,
   rankByService,

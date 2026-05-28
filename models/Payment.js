@@ -56,32 +56,27 @@ const paymentSchema = new mongoose.Schema(
   {
     userId: {
       type: String,
-      required: true,
-      index: true
+      required: true
     },
 
     shopId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     placeId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     reservationId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     orderId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     amount: {
@@ -92,8 +87,7 @@ const paymentSchema = new mongoose.Schema(
 
     currency: {
       type: String,
-      default: "KRW",
-      index: true
+      default: "KRW"
     },
 
     title: {
@@ -112,8 +106,7 @@ const paymentSchema = new mongoose.Schema(
     method: {
       type: String,
       enum: ["kakao"],
-      default: "kakao",
-      index: true
+      default: "kakao"
     },
 
     status: {
@@ -129,32 +122,27 @@ const paymentSchema = new mongoose.Schema(
         "expired",
         "verifying"
       ],
-      default: "ready",
-      index: true
+      default: "ready"
     },
 
     tid: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     partnerOrderId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     partnerUserId: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     paymentKey: {
       type: String,
-      default: "",
-      index: true
+      default: ""
     },
 
     redirectUrl: {
@@ -169,44 +157,37 @@ const paymentSchema = new mongoose.Schema(
 
     approvedAt: {
       type: Date,
-      default: null,
-      index: true
+      default: null
     },
 
     cancelledAt: {
       type: Date,
-      default: null,
-      index: true
+      default: null
     },
 
     failedAt: {
       type: Date,
-      default: null,
-      index: true
+      default: null
     },
 
     refundedAt: {
       type: Date,
-      default: null,
-      index: true
+      default: null
     },
 
     expireAt: {
       type: Date,
-      default: null,
-      index: true
+      default: null
     },
 
     isExpired: {
       type: Boolean,
-      default: false,
-      index: true
+      default: false
     },
 
     verified: {
       type: Boolean,
-      default: false,
-      index: true
+      default: false
     },
 
     lastVerifiedAt: {
@@ -282,8 +263,7 @@ const paymentSchema = new mongoose.Schema(
 
     source: {
       type: String,
-      default: "api",
-      index: true
+      default: "api"
     },
 
     device: {
@@ -293,8 +273,7 @@ const paymentSchema = new mongoose.Schema(
 
     isDeleted: {
       type: Boolean,
-      default: false,
-      index: true
+      default: false
     },
 
     deletedAt: {
@@ -375,6 +354,8 @@ const paymentSchema = new mongoose.Schema(
   {
     timestamps: true,
     minimize: false,
+    autoIndex: false,
+    autoCreate: false,
     toJSON: {
       virtuals: true,
       transform: (doc, ret) => {
@@ -390,6 +371,9 @@ const paymentSchema = new mongoose.Schema(
   }
 );
 
+paymentSchema.set("autoIndex", false);
+paymentSchema.set("autoCreate", false);
+
 /* =====================================================
 🔥 VIRTUAL
 ===================================================== */
@@ -400,22 +384,6 @@ paymentSchema.virtual("isPaid").get(function () {
 paymentSchema.virtual("isActivePayment").get(function () {
   return !this.isDeleted && !["failed", "cancelled", "expired", "refunded"].includes(this.status);
 });
-
-/* =====================================================
-🔥 INDEX
-===================================================== */
-paymentSchema.index({ userId: 1, createdAt: -1 });
-paymentSchema.index({ shopId: 1, createdAt: -1 });
-paymentSchema.index({ placeId: 1, createdAt: -1 });
-paymentSchema.index({ reservationId: 1, createdAt: -1 });
-paymentSchema.index({ orderId: 1, isDeleted: 1 });
-paymentSchema.index({ partnerOrderId: 1, isDeleted: 1 });
-paymentSchema.index({ paymentKey: 1, isDeleted: 1 });
-paymentSchema.index({ tid: 1, createdAt: -1 });
-paymentSchema.index({ status: 1, createdAt: -1 });
-paymentSchema.index({ approvedAt: -1, status: 1 });
-paymentSchema.index({ expireAt: 1, status: 1 });
-paymentSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });
 
 /* =====================================================
 🔥 INTERNAL HELPERS
@@ -677,7 +645,7 @@ paymentSchema.methods.setRedirectUrl = function (url = "") {
 paymentSchema.methods.setCustomerInfo = function ({ name = "", email = "", phone = "" } = {}) {
   this.customerName = safeStr(name);
   this.customerEmail = safeStr(email).toLowerCase();
-  this.customerPhone = safeStr(콜);
+  this.customerPhone = safeStr(phone);
   return this.save();
 };
 
@@ -687,7 +655,7 @@ paymentSchema.methods.setAdminMemo = function (memo = "") {
 };
 
 paymentSchema.methods.setInternalNote = function (note = "") {
-  this.internalNote = safeStr(음표);
+  this.internalNote = safeStr(note);
   return this.save();
 };
 
@@ -965,9 +933,7 @@ paymentSchema.statics.cleanDeleted = function (days = 30) {
 🔥 AUTO EXPIRE
 ===================================================== */
 if (!global.__PAYMENT_MODEL_EXPIRE__) {
-  global.__PAYMENT_MODEL_EXPIRE__ = true;
-
-  setInterval(async () => {
+  global.__PAYMENT_MODEL_EXPIRE__ = setInterval(async () => {
     try {
       const Payment = mongoose.models.Payment;
       if (!Payment) return;
@@ -987,6 +953,13 @@ if (!global.__PAYMENT_MODEL_EXPIRE__) {
       );
     } catch (_) {}
   }, 60000);
+
+  if (
+    global.__PAYMENT_MODEL_EXPIRE__ &&
+    typeof global.__PAYMENT_MODEL_EXPIRE__.unref === "function"
+  ) {
+    global.__PAYMENT_MODEL_EXPIRE__.unref();
+  }
 }
 
 /* =====================================================

@@ -2,34 +2,35 @@
 
 import axios from "axios";
 
-/**
- * =====================================================
- * 🔥 AUTH API (ULTRA FINAL - PATCHED)
- * ✔ 기존 기능 100% 유지
- * ✔ 401 리다이렉트 루프 방지 (signup 포함)
- * ✔ authToken 대응
- * ✔ user 제거 안정화
- * ✔ admin/shop API 401 로그아웃 방지
- * ✔ adminToken/jwt 동시 대응
- * ✔ 🔥 login 시 user 자동 저장 추가
- * ✔ 🔥 admin/dashboard 무한 반복 수정
- * ✔ 최소 수정만 적용
- * ✔ 🔥 중복 토큰 충돌 수정
- * =====================================================
- */
+const isLocalHost =
+  typeof window !== "undefined" &&
+  (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
 
-/* =========================
-🔥 AXIOS INSTANCE
-========================= */
+const API_BASE_URL =
+  (
+    typeof window !== "undefined" &&
+    window.__ENV__ &&
+    window.__ENV__.API_BASE_URL
+  ) ||
+  (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    (
+      import.meta.env.VITE_API_BASE_URL ||
+      import.meta.env.VITE_API_URL
+    )
+  ) ||
+  "https://api.nora365.co.kr/api";
+
 const API = axios.create({
-  baseURL:
-    process.env.REACT_APP_API_URL ||
-    window.__ENV__?.API_BASE_URL ||
-    "http://localhost:10000/api",
+  baseURL: API_BASE_URL,
   timeout: 10000,
+  withCredentials: true,
 });
 
-/* 🔥 baseURL 이중 /api 방어 */
 try {
   if (API.defaults.baseURL?.includes("/api/api")) {
     API.defaults.baseURL =
@@ -45,11 +46,7 @@ try {
   }
 } catch {}
 
-/* =========================
-🔥 최소 추가
-========================= */
 function extractUser(data = {}) {
-
   return (
     data?.user ||
     data?.data?.user ||
@@ -58,18 +55,14 @@ function extractUser(data = {}) {
 }
 
 function saveUser(user) {
-
   if (!user) return;
 
   try {
-
     localStorage.setItem(
       "user",
       JSON.stringify(user)
     );
-
   } catch (e) {
-
     console.warn(
       "SAVE USER ERROR:",
       e.message
@@ -77,9 +70,7 @@ function saveUser(user) {
   }
 }
 
-/* 🔥 최소 추가 */
 function extractToken(data = {}) {
-
   return (
     data?.token ||
     data?.accessToken ||
@@ -95,27 +86,20 @@ function extractToken(data = {}) {
   );
 }
 
-/* 🔥 최소 추가 */
 function saveToken(token) {
-
   if (!token) return;
 
   try {
-
-    /* 🔥 기존 중복 토큰 제거 */
     localStorage.removeItem("token");
     localStorage.removeItem("accessToken");
     localStorage.removeItem("authToken");
     localStorage.removeItem("jwt");
 
-    /* 🔥 adminToken 하나만 유지 */
     localStorage.setItem(
       "adminToken",
       token
     );
-
   } catch (e) {
-
     console.warn(
       "SAVE TOKEN ERROR:",
       e.message
@@ -123,13 +107,8 @@ function saveToken(token) {
   }
 }
 
-/* =========================
-🔥 REQUEST INTERCEPTOR
-========================= */
 API.interceptors.request.use(
   (config) => {
-
-    /* 🔥 핵심 수정 */
     const token =
       localStorage.getItem("adminToken") ||
       localStorage.getItem("token") ||
@@ -141,7 +120,6 @@ API.interceptors.request.use(
       config.headers || {};
 
     if (token) {
-
       config.headers.Authorization =
         `Bearer ${token}`;
 
@@ -155,16 +133,9 @@ API.interceptors.request.use(
   (err) => Promise.reject(err)
 );
 
-/* =========================
-🔥 RESPONSE INTERCEPTOR
-========================= */
 API.interceptors.response.use(
-
   (res) => {
-
-    /* 🔥 핵심 수정 */
     try {
-
       const user =
         extractUser(
           res?.data
@@ -174,7 +145,6 @@ API.interceptors.response.use(
         saveUser(user);
       }
 
-      /* 🔥 최소 추가 */
       const token =
         extractToken(
           res?.data
@@ -183,9 +153,7 @@ API.interceptors.response.use(
       if (token) {
         saveToken(token);
       }
-
     } catch (e) {
-
       console.warn(
         "AUTO USER SAVE ERROR:",
         e.message
@@ -196,7 +164,6 @@ API.interceptors.response.use(
   },
 
   (err) => {
-
     const status =
       err.response?.status;
 
@@ -206,7 +173,6 @@ API.interceptors.response.use(
       err.message ||
       "AUTH_API_ERROR";
 
-    /* 🔥 최소 추가: 서버 에러는 인증 에러로 강제 변환 방지 */
     if (status >= 500) {
       return Promise.reject(
         new Error(message)
@@ -214,8 +180,6 @@ API.interceptors.response.use(
     }
 
     if (status === 401) {
-
-      /* 🔥 최소 추가 */
       const requestUrl =
         err?.config?.url || "";
 
@@ -229,12 +193,10 @@ API.interceptors.response.use(
         requestUrl.includes("/shops") ||
         requestUrl.includes("/shop");
 
-      /* 🔥 핵심 수정 */
       if (
         isAuthRequest &&
         !isAdminRequest
       ) {
-
         localStorage.removeItem("token");
         localStorage.removeItem("accessToken");
         localStorage.removeItem("authToken");
@@ -242,7 +204,6 @@ API.interceptors.response.use(
         localStorage.removeItem("jwt");
         localStorage.removeItem("user");
 
-        /* 🔥 핵심 수정: signup 포함해서 리다이렉트 제한 */
         const path =
           window.location.pathname;
 
@@ -250,7 +211,6 @@ API.interceptors.response.use(
           path !== "/login" &&
           path !== "/signup"
         ) {
-
           alert("로그인이 필요합니다.");
 
           window.location.href =
@@ -265,22 +225,15 @@ API.interceptors.response.use(
   }
 );
 
-/* =========================
-🔥 AUTH API
-========================= */
 const authApi = {
-
   async login(data) {
-
     const res =
       await API.post(
         "/auth/login",
         data
       );
 
-    /* 🔥 핵심 수정 */
     try {
-
       const user =
         extractUser(res);
 
@@ -288,16 +241,13 @@ const authApi = {
         saveUser(user);
       }
 
-      /* 🔥 최소 추가 */
       const token =
         extractToken(res);
 
       if (token) {
         saveToken(token);
       }
-
     } catch (e) {
-
       console.warn(
         "LOGIN USER SAVE ERROR:",
         e.message
@@ -315,8 +265,6 @@ const authApi = {
   },
 
   logout() {
-
-    /* 🔥 최소 추가 */
     localStorage.removeItem("token");
     localStorage.removeItem("accessToken");
     localStorage.removeItem("authToken");
@@ -355,13 +303,9 @@ const authApi = {
   },
 
   safeGetMe: async () => {
-
     try {
-
       return await authApi.getMe();
-
     } catch {
-
       return {
         ok: false,
         user: null,

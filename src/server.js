@@ -111,6 +111,53 @@ function safeRequire(relativePath, label = relativePath) {
   }
 }
 
+function normalizeRouteModule(mod, label = "route") {
+  if (!mod) {
+    return null;
+  }
+
+  if (typeof mod === "function") {
+    return mod;
+  }
+
+  if (mod && typeof mod === "object") {
+    const candidates = [
+      mod.router,
+      mod.default,
+      mod.routes,
+      mod.route,
+      mod.app,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "function") {
+        return candidate;
+      }
+    }
+  }
+
+  console.error(
+    "[ROUTE MODULE INVALID]",
+    label,
+    mod && typeof mod === "object" ? Object.keys(mod) : typeof mod
+  );
+
+  return null;
+}
+
+function loadRouteModule(candidates, label) {
+  for (const candidate of candidates) {
+    const mod = safeRequire(candidate, candidate);
+    const route = normalizeRouteModule(mod, label);
+
+    if (route) {
+      return route;
+    }
+  }
+
+  return null;
+}
+
 let dbModule = null;
 
 function getDbModule() {
@@ -120,50 +167,134 @@ function getDbModule() {
 
   dbModule =
     safeRequire("config/database", "config/database") ||
+    safeRequire("config/db", "config/db") ||
     safeRequire("db", "db");
 
   return dbModule;
 }
 
-const User = safeRequire("models/User", "models/User");
-const Shop = safeRequire("models/Shop", "models/Shop");
+let User = null;
+let Shop = null;
+let authRoutes = null;
+let adminRoutes = null;
+let shopRoutes = null;
+let userRoutes = null;
+let reservationRoutes = null;
+let reviewRoutes = null;
+let paymentRoutes = null;
+let paymentVerifyRoutes = null;
+let applicationModulesLoaded = false;
+let applicationRoutesMounted = false;
 
-const authRoutes =
-  safeRequire("routes/auth/auth.routes", "routes/auth/auth.routes") ||
-  safeRequire("routes/auth.routes", "routes/auth.routes");
+function loadApplicationModules({ includeDbRoutes = false } = {}) {
+  if (applicationModulesLoaded && (!includeDbRoutes || shopRoutes)) {
+    return;
+  }
 
-const adminRoutes =
-  safeRequire("routes/admin/admin.routes", "routes/admin/admin.routes") ||
-  safeRequire("routes/admin.routes", "routes/admin.routes");
+  if (!User) {
+    User = safeRequire("models/User", "models/User");
+  }
 
-const shopRoutes =
-  safeRequire("routes/shop/shop.routes", "routes/shop/shop.routes") ||
-  safeRequire("routes/shop_routes", "routes/shop_routes");
+  if (!Shop) {
+    Shop = safeRequire("models/Shop", "models/Shop");
+  }
 
-const userRoutes =
-  safeRequire("routes/user/user.routes", "routes/user/user.routes") ||
-  safeRequire("routes/user.routes", "routes/user.routes");
+  if (!authRoutes) {
+    authRoutes = loadRouteModule(
+      [
+        "server/routes/auth/auth.routes",
+        "server/routes/auth.routes",
+        "routes/auth.routes",
+        "routes/auth/auth.routes",
+      ],
+      "authRoutes"
+    );
+  }
 
-const reservationRoutes =
-  safeRequire(
-    "routes/reservation/reservation.routes",
-    "routes/reservation/reservation.routes"
-  ) || safeRequire("routes/reservation.routes", "routes/reservation.routes");
+  if (!adminRoutes) {
+    adminRoutes = loadRouteModule(
+      [
+        "routes/admin/admin.routes",
+        "routes/admin.routes",
+        "server/routes/admin/admin.routes",
+        "server/routes/admin.routes",
+      ],
+      "adminRoutes"
+    );
+  }
 
-const reviewRoutes =
-  safeRequire("routes/etc/review.routes", "routes/etc/review.routes") ||
-  safeRequire("routes/review/review.routes", "routes/review/review.routes") ||
-  safeRequire("routes/review.routes", "routes/review.routes");
+  if (includeDbRoutes && !shopRoutes) {
+    shopRoutes = loadRouteModule(
+      [
+        "routes/shop/shop.routes",
+        "routes/shop_routes",
+        "server/routes/shop.routes",
+        "server/routes/shop/shop.routes",
+      ],
+      "shopRoutes"
+    );
+  }
 
-const paymentRoutes =
-  safeRequire("routes/payment/payment.routes", "routes/payment/payment.routes") ||
-  safeRequire("routes/payment.routes", "routes/payment.routes");
+  if (!userRoutes) {
+    userRoutes = loadRouteModule(
+      [
+        "routes/user/user.routes",
+        "routes/user.routes",
+        "server/routes/user.routes",
+        "server/routes/user/user.routes",
+      ],
+      "userRoutes"
+    );
+  }
 
-const paymentVerifyRoutes =
-  safeRequire(
-    "routes/payment/payment.verify.routes",
-    "routes/payment/payment.verify.routes"
-  ) || safeRequire("routes/payment.verify.routes", "routes/payment.verify.routes");
+  if (!reservationRoutes) {
+    reservationRoutes = loadRouteModule(
+      [
+        "routes/reservation/reservation.routes",
+        "routes/reservation.routes",
+        "server/routes/reservation.routes",
+        "server/routes/reservation/reservation.routes",
+      ],
+      "reservationRoutes"
+    );
+  }
+
+  if (!reviewRoutes) {
+    reviewRoutes = loadRouteModule(
+      [
+        "routes/etc/review.routes",
+        "routes/review/review.routes",
+        "routes/review.routes",
+        "server/routes/review.routes",
+      ],
+      "reviewRoutes"
+    );
+  }
+
+  if (!paymentRoutes) {
+    paymentRoutes = loadRouteModule(
+      [
+        "routes/payment/payment.routes",
+        "routes/payment.routes",
+        "server/routes/payment.routes",
+      ],
+      "paymentRoutes"
+    );
+  }
+
+  if (!paymentVerifyRoutes) {
+    paymentVerifyRoutes = loadRouteModule(
+      [
+        "routes/payment/payment.verify.routes",
+        "routes/payment.verify.routes",
+        "server/routes/payment.verify.routes",
+      ],
+      "paymentVerifyRoutes"
+    );
+  }
+
+  applicationModulesLoaded = true;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -173,11 +304,7 @@ app.disable("x-powered-by");
 
 const PORT = Number(process.env.PORT) || 10000;
 const HOST = process.env.HOST || "0.0.0.0";
-const JWT_SECRET =
-  process.env.JWT_SECRET ||
-  process.env.JWT_ACCESS_SECRET ||
-  process.env.JWT_REFRESH_SECRET ||
-  "nora-runtime-secret";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const CORS_ORIGIN_LIST = String(
   process.env.CORS_ORIGIN_LIST ||
@@ -245,14 +372,15 @@ const io = new Server(server, {
   path: process.env.SOCKET_PATH || "/ws",
 });
 
-if (!process.env.JWT_SECRET && !process.env.JWT_ACCESS_SECRET && !process.env.JWT_REFRESH_SECRET) {
-  console.warn("⚠️ JWT_SECRET 없음 - runtime fallback secret active");
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET 없음");
+  process.exit(1);
 }
 
 const CACHE = new Map();
 let REQUEST_COUNT = 0;
 let isStarting = false;
-const CREATED_SHOPS_MEMORY = [];
+let dbConnectPromise = null;
 
 process.on("uncaughtException", (error) => {
   console.error("❌ UNCAUGHT EXCEPTION:", error);
@@ -362,32 +490,13 @@ async function connectDatabase() {
     return true;
   }
 
-  if (mongoose.connection.readyState === 2) {
-    return false;
+  if (dbConnectPromise) {
+    await dbConnectPromise;
+    return isDbReady();
   }
 
-  const mongoUri = getMongoUri();
-
-  if (mongoUri) {
-    console.log("🔌 DB CONNECT TRY:", maskMongoUri(mongoUri));
-
-    await mongoose.connect(mongoUri, {
-      dbName: process.env.DB_NAME || undefined,
-      autoIndex: false,
-      autoCreate: false,
-      serverSelectionTimeoutMS: Number(
-        process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
-          process.env.MONGO_CONNECT_TIMEOUT_MS ||
-          10000
-      ),
-      socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
-      maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
-      minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
-      maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
-      heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
-    });
-
-    return isDbReady();
+  if (mongoose.connection.readyState === 2) {
+    return false;
   }
 
   const dbFallbackModule = getDbModule();
@@ -396,12 +505,56 @@ async function connectDatabase() {
     dbFallbackModule &&
     typeof dbFallbackModule.ensureDBConnection === "function"
   ) {
-    await dbFallbackModule.ensureDBConnection();
+    dbConnectPromise = Promise.resolve()
+      .then(() => dbFallbackModule.ensureDBConnection())
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
     return isDbReady();
   }
 
   if (dbFallbackModule && typeof dbFallbackModule.connectDB === "function") {
-    await dbFallbackModule.connectDB();
+    dbConnectPromise = Promise.resolve()
+      .then(() => dbFallbackModule.connectDB())
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
+    return isDbReady();
+  }
+
+  const mongoUri = getMongoUri();
+
+  if (mongoUri) {
+    console.log("🔌 DB CONNECT TRY:", maskMongoUri(mongoUri));
+
+    dbConnectPromise = mongoose
+      .connect(mongoUri, {
+        dbName: process.env.DB_NAME || undefined,
+        autoIndex: String(process.env.MONGOOSE_AUTO_INDEX || "false") === "true",
+        autoCreate: String(process.env.MONGOOSE_AUTO_CREATE || "false") === "true",
+        bufferCommands: false,
+        serverSelectionTimeoutMS: Number(
+          process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
+            process.env.MONGO_CONNECT_TIMEOUT_MS ||
+            10000
+        ),
+        connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000),
+        socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
+        maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
+        minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
+        maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
+        heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
+        retryWrites: true,
+      })
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
     return isDbReady();
   }
 
@@ -431,9 +584,10 @@ async function ensureDbReady() {
     }
 
     const startedAt = Date.now();
+    const waitTimeoutMs = Number(process.env.MONGO_WAIT_TIMEOUT_MS || 15000);
 
     while (!isDbReady()) {
-      if (Date.now() - startedAt > 15000) {
+      if (Date.now() - startedAt > waitTimeoutMs) {
         return false;
       }
 
@@ -485,20 +639,20 @@ app.use(
 app.use(morgan("dev"));
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(cookieParser());
 
 app.use(
   express.json({
-    limit: process.env.JSON_BODY_LIMIT || "50mb",
+    limit: "10mb",
   })
 );
 
 app.use(
   express.urlencoded({
     extended: true,
-    limit: process.env.URLENCODED_BODY_LIMIT || "50mb",
+    limit: "10mb",
   })
 );
 
@@ -539,8 +693,7 @@ app.use("/api", (req, res, next) => {
 
     if (
       req.originalUrl.includes("/health") ||
-      req.originalUrl.includes("/system/status") ||
-      req.originalUrl.startsWith("/api/shops")
+      req.originalUrl.includes("/system/status")
     ) {
       return next();
     }
@@ -638,1109 +791,70 @@ app.get("/api/system/routes", (req, res) => {
   });
 });
 
-app.get("/api/shops/health", (req, res) => {
-  ok(res, {
-    status: "UP",
-    db: mongoose.connection.readyState,
-    dbReady: isDbReady(),
-    shopModel: !!Shop,
-    shopRoutes: !!shopRoutes,
-    fallbackCount: DEFAULT_SHOPS.length,
-  });
-});
+function mountRoute(mountPath, routeModule, label) {
+  if (typeof routeModule !== "function") {
+    console.error(
+      "[ROUTE MOUNT SKIPPED]",
+      label,
+      routeModule && typeof routeModule === "object"
+        ? Object.keys(routeModule)
+        : typeof routeModule
+    );
 
-if (authRoutes) {
-  app.use("/api/auth", authRoutes);
-  console.log("🔥 authRoutes mounted");
-}
-
-if (adminRoutes) {
-  app.use("/api/admin", adminRoutes);
-  console.log("🔥 adminRoutes mounted");
-}
-
-if (userRoutes) {
-  app.use("/api/users", userRoutes);
-  console.log("🔥 userRoutes mounted");
-}
-
-if (reservationRoutes) {
-  app.use("/api/reservations", reservationRoutes);
-  console.log("🔥 reservationRoutes mounted");
-}
-
-
-function escapeRegexText(value = "") {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getPublicRegionFromAddress(address = "") {
-  const text = String(address || "");
-
-  if (text.includes("경상남도") || text.includes("경남") || text.includes("김해시")) {
-    return "경상남도";
+    return false;
   }
 
-  if (text.includes("서울")) return "서울";
-  if (text.includes("부산")) return "부산";
-  if (text.includes("대구")) return "대구";
-  if (text.includes("인천")) return "인천";
-  if (text.includes("광주")) return "광주";
-  if (text.includes("대전")) return "대전";
-  if (text.includes("울산")) return "울산";
-  if (text.includes("세종")) return "세종";
-  if (text.includes("경기")) return "경기도";
-  if (text.includes("강원")) return "강원도";
-  if (text.includes("충북") || text.includes("충청북도")) return "충청북도";
-  if (text.includes("충남") || text.includes("충청남도")) return "충청남도";
-  if (text.includes("전북") || text.includes("전라북도") || text.includes("전북특별자치도")) return "전라북도";
-  if (text.includes("전남") || text.includes("전라남도")) return "전라남도";
-  if (text.includes("경북") || text.includes("경상북도")) return "경상북도";
-  if (text.includes("제주")) return "제주도";
-
-  return "";
+  app.use(mountPath, routeModule);
+  console.log(`🔥 ${label} mounted`);
+  return true;
 }
 
-function getPublicDistrictFromAddress(address = "") {
-  const text = String(address || "");
-
-  if (text.includes("김해시")) {
-    return "김해시";
+function mountApplicationRoutes() {
+  if (applicationRoutesMounted) {
+    return;
   }
 
-  const match = text.match(/[가-힣]+(시|군|구)/);
-
-  return match ? match[0] : "";
-}
-
-function getPublicDongFromAddress(address = "") {
-  const text = String(address || "");
-  const match = text.match(/[가-힣]+(동|읍|면)/);
-
-  return match ? match[0] : "";
-}
-
-function getPublicFallbackCoords(address = "", region = "", district = "") {
-  const text = `${address || ""} ${region || ""} ${district || ""}`;
-
-  if (text.includes("삼계동")) {
-    return {
-      lat: 35.2613,
-      lng: 128.871,
-    };
+  if (authRoutes) {
+    mountRoute("/api/auth", authRoutes, "authRoutes");
   }
 
-  if (text.includes("김해시") || text.includes("김해")) {
-    return {
-      lat: 35.2281,
-      lng: 128.8896,
-    };
+  if (adminRoutes) {
+    mountRoute("/api/admin", adminRoutes, "adminRoutes");
   }
 
-  return {
-    lat: "",
-    lng: "",
-  };
-}
-
-function normalizePublicStatus(value) {
-  const text = String(value || "").trim();
-
-  if (!text || text === "영업중" || text.toLowerCase() === "open") {
-    return "active";
+  if (userRoutes) {
+    mountRoute("/api/users", userRoutes, "userRoutes");
   }
 
-  return text;
-}
-
-function normalizePublicVisible(value, fallback = true) {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
+  if (reservationRoutes) {
+    mountRoute("/api/reservations", reservationRoutes, "reservationRoutes");
   }
 
-  if (typeof value === "boolean") {
-    return value;
-  }
+  if (shopRoutes) {
+    if (mountRoute("/api/shops", shopRoutes, "shopRoutes")) {
+      app.use("/api/shops", (err, req, res, next) => {
+        console.error("SHOP ROUTE ERROR:", err);
 
-  const text = String(value).toLowerCase().trim();
-
-  return !["false", "0", "no", "n", "hidden", "disabled", "deleted"].includes(text);
-}
-
-function normalizePublicCategory(item = {}) {
-  return (
-    item.category ||
-    item.shopCategory ||
-    item.serviceType ||
-    item.businessType ||
-    item.adminCategory ||
-    "massage"
-  );
-}
-
-function isHiddenPublicShop(item = {}) {
-  const status = String(item.status || "active").toLowerCase();
-
-  return (
-    item.isDeleted === true ||
-    item.deleted === true ||
-    item.visible === false ||
-    item.approved === false ||
-    status === "deleted" ||
-    status === "inactive" ||
-    status === "disabled" ||
-    status === "hidden" ||
-    status === "closed"
-  );
-}
-
-function isPublicPremiumShop(item = {}) {
-  const premiumType = String(item.premiumType || "").toLowerCase();
-
-  return (
-    item.premium === true ||
-    item.isPremium === true ||
-    item.premiumActive === true ||
-    premiumType === "premium" ||
-    premiumType === "vip"
-  );
-}
-
-function toPublicNumber(value) {
-  if (value === null || value === undefined || value === "") {
-    return "";
-  }
-
-  const number = Number(String(value).replaceAll(",", "").trim());
-
-  return Number.isFinite(number) ? number : "";
-}
-
-function isValidPublicCoord(lat, lng) {
-  return (
-    Number.isFinite(Number(lat)) &&
-    Number.isFinite(Number(lng)) &&
-    Number(lat) !== 0 &&
-    Number(lng) !== 0
-  );
-}
-
-function getPublicDistanceBase(req = {}) {
-  return {
-    lat: toPublicNumber(
-      req.query?.lat ||
-        req.query?.userLat ||
-        req.query?.latitude ||
-        req.query?.currentLat ||
-        req.query?.mapLat
-    ),
-    lng: toPublicNumber(
-      req.query?.lng ||
-        req.query?.userLng ||
-        req.query?.longitude ||
-        req.query?.currentLng ||
-        req.query?.mapLng
-    ),
-  };
-}
-
-function calcPublicDistanceKm(fromLat, fromLng, toLat, toLng) {
-  const lat1 = Number(fromLat);
-  const lng1 = Number(fromLng);
-  const lat2 = Number(toLat);
-  const lng2 = Number(toLng);
-
-  if (!isValidPublicCoord(lat1, lng1) || !isValidPublicCoord(lat2, lng2)) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  const earthRadiusKm = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const rLat1 = (lat1 * Math.PI) / 180;
-  const rLat2 = (lat2 * Math.PI) / 180;
-
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rLat1) *
-      Math.cos(rLat2) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-
-  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function formatPublicDistance(distanceKm) {
-  if (!Number.isFinite(distanceKm)) {
-    return "";
-  }
-
-  return `${Math.max(0.1, distanceKm).toFixed(1)}km`;
-}
-
-function sortPublicShopsByPremiumAndDistance(items = [], req = {}) {
-  const base = getPublicDistanceBase(req);
-  const hasBase = isValidPublicCoord(base.lat, base.lng);
-
-  return (Array.isArray(items) ? items : [])
-    .map((shop, index) => {
-      const normalized = normalizePublicShopItem(shop);
-      const lat = toPublicNumber(normalized.lat || normalized.location?.lat);
-      const lng = toPublicNumber(normalized.lng || normalized.location?.lng);
-      const distanceKm = hasBase
-        ? calcPublicDistanceKm(base.lat, base.lng, lat, lng)
-        : Number.isFinite(Number(normalized.distanceKm))
-          ? Number(normalized.distanceKm)
-          : Number.POSITIVE_INFINITY;
-
-      return {
-        ...normalized,
-        premium: isPublicPremiumShop(normalized),
-        isPremium: isPublicPremiumShop(normalized),
-        premiumActive: isPublicPremiumShop(normalized),
-        distanceKm,
-        distance: Number.isFinite(distanceKm)
-          ? formatPublicDistance(distanceKm)
-          : normalized.distance || "",
-        sortIndex: index,
-      };
-    })
-    .filter((shop) => shop && !isHiddenPublicShop(shop))
-    .sort((a, b) => {
-      const aPremiumRank = isPublicPremiumShop(a) ? 0 : 1;
-      const bPremiumRank = isPublicPremiumShop(b) ? 0 : 1;
-
-      if (aPremiumRank !== bPremiumRank) {
-        return aPremiumRank - bPremiumRank;
-      }
-
-      const aDistance = Number.isFinite(Number(a.distanceKm))
-        ? Number(a.distanceKm)
-        : Number.POSITIVE_INFINITY;
-      const bDistance = Number.isFinite(Number(b.distanceKm))
-        ? Number(b.distanceKm)
-        : Number.POSITIVE_INFINITY;
-
-      if (aDistance !== bDistance) {
-        return aDistance - bDistance;
-      }
-
-      return Number(a.sortIndex || 0) - Number(b.sortIndex || 0);
-    });
-}
-
-
-async function getPublicShopQuery(req) {
-  const query = {};
-
-  const rawRegion = String(req.query.region || "").trim();
-  const rawDistrict = String(req.query.district || "").trim();
-  const rawDong = String(req.query.dong || "").trim();
-  const rawKeyword = String(
-    req.query.keyword || req.query.q || req.query.search || ""
-  ).trim();
-
-  const regionAliases = {
-    경남: ["경남", "경상남도"],
-    경상남도: ["경남", "경상남도"],
-    서울: ["서울", "서울특별시"],
-    부산: ["부산", "부산광역시"],
-    대구: ["대구", "대구광역시"],
-    인천: ["인천", "인천광역시"],
-    광주: ["광주", "광주광역시"],
-    대전: ["대전", "대전광역시"],
-    울산: ["울산", "울산광역시"],
-    세종: ["세종", "세종특별자치시"],
-    경기: ["경기", "경기도"],
-    강원: ["강원", "강원도", "강원특별자치도"],
-    충북: ["충북", "충청북도"],
-    충남: ["충남", "충청남도"],
-    전북: ["전북", "전라북도", "전북특별자치도"],
-    전남: ["전남", "전라남도"],
-    경북: ["경북", "경상북도"],
-    제주: ["제주", "제주특별자치도"],
-  };
-
-  const andConditions = [];
-
-  if (rawRegion && rawRegion !== "지역") {
-    const values = regionAliases[rawRegion] || [rawRegion];
-
-    andConditions.push({
-      $or: [
-        { region: { $in: values } },
-        { sido: { $in: values } },
-        { province: { $in: values } },
-        { address: { $regex: values.join("|"), $options: "i" } },
-        { roadAddress: { $regex: values.join("|"), $options: "i" } },
-        { fullAddress: { $regex: values.join("|"), $options: "i" } },
-      ],
-    });
-  }
-
-  if (rawDistrict && rawDistrict !== "구") {
-    andConditions.push({
-      $or: [
-        { district: rawDistrict },
-        { sigungu: rawDistrict },
-        { city: rawDistrict },
-        { address: { $regex: rawDistrict, $options: "i" } },
-        { roadAddress: { $regex: rawDistrict, $options: "i" } },
-        { fullAddress: { $regex: rawDistrict, $options: "i" } },
-      ],
-    });
-  }
-
-  if (rawDong && rawDong !== "전체") {
-    andConditions.push({
-      $or: [
-        { dong: rawDong },
-        { neighborhood: rawDong },
-        { town: rawDong },
-        { address: { $regex: rawDong, $options: "i" } },
-        { roadAddress: { $regex: rawDong, $options: "i" } },
-        { fullAddress: { $regex: rawDong, $options: "i" } },
-      ],
-    });
-  }
-
-  if (rawKeyword) {
-    andConditions.push({
-      $or: [
-        { name: { $regex: rawKeyword, $options: "i" } },
-        { shopName: { $regex: rawKeyword, $options: "i" } },
-        { title: { $regex: rawKeyword, $options: "i" } },
-        { address: { $regex: rawKeyword, $options: "i" } },
-        { roadAddress: { $regex: rawKeyword, $options: "i" } },
-        { fullAddress: { $regex: rawKeyword, $options: "i" } },
-        { region: { $regex: rawKeyword, $options: "i" } },
-        { district: { $regex: rawKeyword, $options: "i" } },
-        { dong: { $regex: rawKeyword, $options: "i" } },
-      ],
-    });
-  }
-
-  if (andConditions.length) {
-    query.$and = andConditions;
-  }
-
-  return query;
-}
-
-function normalizePublicShopItem(shop) {
-  const item = shop && typeof shop.toObject === "function" ? shop.toObject() : shop || {};
-
-  const address =
-    item.address ||
-    item.roadAddress ||
-    item.fullAddress ||
-    item.locationText ||
-    item.addr ||
-    "";
-
-  const region =
-    item.region ||
-    item.sido ||
-    item.province ||
-    getPublicRegionFromAddress(address) ||
-    "";
-
-  const district =
-    item.district ||
-    item.sigungu ||
-    item.city ||
-    getPublicDistrictFromAddress(address) ||
-    "";
-
-  const dong =
-    item.dong ||
-    item.neighborhood ||
-    item.town ||
-    getPublicDongFromAddress(address) ||
-    "";
-
-  const fallbackCoords = getPublicFallbackCoords(address, region, district);
-
-  const lat =
-    item.lat ||
-    item.latitude ||
-    item.y ||
-    (item.location && typeof item.location === "object"
-      ? item.location.lat || item.location.y
-      : "") ||
-    (item.geo && Array.isArray(item.geo.coordinates)
-      ? item.geo.coordinates[1]
-      : "") ||
-    fallbackCoords.lat;
-
-  const lng =
-    item.lng ||
-    item.longitude ||
-    item.x ||
-    (item.location && typeof item.location === "object"
-      ? item.location.lng || item.location.x
-      : "") ||
-    (item.geo && Array.isArray(item.geo.coordinates)
-      ? item.geo.coordinates[0]
-      : "") ||
-    fallbackCoords.lng;
-
-  const category = normalizePublicCategory(item);
-  const status = normalizePublicStatus(item.status);
-  const premium = isPublicPremiumShop(item);
-
-  return {
-    ...item,
-    _id: item._id || item.id,
-    id: item.id || item._id,
-    name: item.name || item.shopName || item.title || "이름 없음",
-    shopName: item.shopName || item.name || item.title || "이름 없음",
-    title: item.title || item.name || item.shopName || "이름 없음",
-    address,
-    roadAddress: item.roadAddress || address,
-    fullAddress: item.fullAddress || address,
-    locationText: item.locationText || address,
-    region,
-    sido: item.sido || region,
-    province: item.province || region,
-    district,
-    sigungu: item.sigungu || district,
-    city: item.city || district,
-    dong,
-    category,
-    shopCategory: item.shopCategory || category,
-    serviceType: item.serviceType || category,
-    businessType: item.businessType || category,
-    adminCategory: item.adminCategory || category,
-    status,
-    visible: normalizePublicVisible(item.visible, true),
-    approved: normalizePublicVisible(item.approved, true),
-    isReservable: normalizePublicVisible(item.isReservable, true),
-    premium,
-    isPremium: premium,
-    premiumActive: premium,
-    lat,
-    lng,
-    latitude: lat,
-    longitude: lng,
-    location:
-      item.location && typeof item.location === "object"
-        ? {
-            ...item.location,
-            lat: lat || item.location.lat || "",
-            lng: lng || item.location.lng || "",
-          }
-        : {
-            lat,
-            lng,
-          },
-    geo:
-      item.geo ||
-      (lat !== "" && lng !== ""
-        ? {
-            type: "Point",
-            coordinates: [Number(lng), Number(lat)],
-          }
-        : undefined),
-    images: Array.isArray(item.images) ? item.images : [],
-    photos: Array.isArray(item.photos) ? item.photos : [],
-    imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls : [],
-  };
-}
-
-function sendPublicShops(res, items, source = "db", req = null) {
-  const memoryItems = Array.isArray(CREATED_SHOPS_MEMORY)
-    ? CREATED_SHOPS_MEMORY
-    : [];
-
-  const sourceItems =
-    Array.isArray(items) && items.length > 0
-      ? [...memoryItems, ...items]
-      : memoryItems.length > 0
-        ? memoryItems
-        : DEFAULT_SHOPS;
-
-  const uniqueMap = new Map();
-
-  sourceItems.forEach((shop) => {
-    const normalized = normalizePublicShopItem(shop);
-    const key =
-      String(normalized._id || normalized.id || "").trim() ||
-      `${normalized.name || ""}_${normalized.address || ""}`;
-
-    if (!uniqueMap.has(key)) {
-      uniqueMap.set(key, normalized);
-    } else {
-      uniqueMap.set(key, {
-        ...uniqueMap.get(key),
-        ...normalized,
-      });
-    }
-  });
-
-  const shops = sortPublicShopsByPremiumAndDistance(
-    Array.from(uniqueMap.values()),
-    req || {}
-  );
-
-  return ok(res, {
-    items: shops,
-    list: shops,
-    shops,
-    data: shops,
-    total: shops.length,
-    count: shops.length,
-    source:
-      Array.isArray(items) && items.length > 0
-        ? source
-        : memoryItems.length > 0
-          ? "memory"
-          : "local-fallback",
-  });
-}
-
-app.get(
-  [
-    "/api/shops",
-    "/api/shops/",
-    "/api/shops/list",
-    "/api/shops/all",
-    "/api/shops/search",
-    "/api/shops/nearby/list",
-    "/api/shops/near/list",
-    "/api/shops/cache/list",
-    "/api/shops/recommend/v2",
-  ],
-  async (req, res, next) => {
-    try {
-      if (!Shop) {
-        return sendPublicShops(res, DEFAULT_SHOPS, "local-fallback", req);
-      }
-
-      const ready = isDbReady() || (await ensureDbReady());
-
-      if (!ready) {
-        return sendPublicShops(res, DEFAULT_SHOPS, "local-fallback", req);
-      }
-
-      const query = await getPublicShopQuery(req);
-      const items = await Shop.find(query)
-        .sort({
-          premium: -1,
-          isPremium: -1,
-          updatedAt: -1,
-          createdAt: -1,
-          _id: -1,
-        })
-        .limit(Number(req.query.limit || 300))
-        .lean();
-
-      if (!items.length) {
-        const allItems = await Shop.find({})
-          .sort({
-            premium: -1,
-            isPremium: -1,
-            updatedAt: -1,
-            createdAt: -1,
-            _id: -1,
-          })
-          .limit(Number(req.query.limit || 300))
-          .lean();
-
-        if (allItems.length) {
-          return sendPublicShops(res, allItems, "db-all", req);
+        if (req.method === "GET") {
+          return normalizeShopFallbackResponse(res);
         }
 
-        return sendPublicShops(res, DEFAULT_SHOPS, "local-fallback", req);
-      }
-
-      return sendPublicShops(res, items, "db", req);
-    } catch (err) {
-      console.error("PUBLIC SHOP LIST ERROR:", err && err.stack ? err.stack : err);
-
-      return sendPublicShops(res, DEFAULT_SHOPS, "local-fallback", req);
+        return fail(res, 500, err?.message || "SHOP_ROUTE_ERROR");
+      });
     }
   }
-);
 
-
-function parseNumberOrEmpty(value) {
-  if (value === null || value === undefined || value === "") {
-    return "";
+  if (reviewRoutes) {
+    mountRoute("/api/reviews", reviewRoutes, "reviewRoutes");
   }
 
-  const number = Number(String(value).replaceAll(",", "").trim());
-
-  return Number.isFinite(number) ? number : "";
-}
-
-function normalizeTextArray(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  if (paymentRoutes) {
+    mountRoute("/api/payments", paymentRoutes, "paymentRoutes");
   }
 
-  if (typeof value === "string") {
-    return value
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
+  if (paymentVerifyRoutes) {
+    mountRoute("/api/payment/verify", paymentVerifyRoutes, "paymentVerifyRoutes");
   }
-
-  return [];
-}
-
-function normalizePriceArray(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => Number(String(item).replaceAll(",", "").replaceAll("원", "").trim()))
-      .filter((item) => Number.isFinite(item));
-  }
-
-  if (typeof value === "string") {
-    return value
-      .split(",")
-      .map((item) => Number(String(item).replaceAll(",", "").replaceAll("원", "").trim()))
-      .filter((item) => Number.isFinite(item));
-  }
-
-  return [];
-}
-
-function makeLocalShopId() {
-  return `local-shop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function normalizeCreatedShopPayload(body = {}) {
-  const source = body && typeof body === "object" ? body : {};
-
-  const name =
-    source.name ||
-    source.shopName ||
-    source.title ||
-    source.businessName ||
-    source.storeName ||
-    "업체명 없음";
-
-  const address =
-    source.address ||
-    source.roadAddress ||
-    source.fullAddress ||
-    source.locationText ||
-    source.addr ||
-    source.addressName ||
-    "";
-
-  const region =
-    source.region ||
-    source.sido ||
-    source.province ||
-    source.state ||
-    source.area ||
-    (String(address).includes("경상남도") || String(address).includes("김해시")
-      ? "경상남도"
-      : "");
-
-  const district =
-    source.district ||
-    source.sigungu ||
-    source.city ||
-    source.gu ||
-    source.county ||
-    (String(address).includes("김해시") ? "김해시" : "");
-
-  const dong =
-    source.dong ||
-    source.neighborhood ||
-    source.town ||
-    source.eupmyeondong ||
-    source.areaDong ||
-    "";
-
-  const fallbackCoords = getPublicFallbackCoords(address, region, district);
-
-  const lat =
-    parseNumberOrEmpty(source.lat) ||
-    parseNumberOrEmpty(source.latitude) ||
-    parseNumberOrEmpty(source.y) ||
-    (source.location && typeof source.location === "object"
-      ? parseNumberOrEmpty(source.location.lat) || parseNumberOrEmpty(source.location.y)
-      : "") ||
-    (source.geo && Array.isArray(source.geo.coordinates)
-      ? parseNumberOrEmpty(source.geo.coordinates[1])
-      : "") ||
-    fallbackCoords.lat;
-
-  const lng =
-    parseNumberOrEmpty(source.lng) ||
-    parseNumberOrEmpty(source.longitude) ||
-    parseNumberOrEmpty(source.x) ||
-    (source.location && typeof source.location === "object"
-      ? parseNumberOrEmpty(source.location.lng) || parseNumberOrEmpty(source.location.x)
-      : "") ||
-    (source.geo && Array.isArray(source.geo.coordinates)
-      ? parseNumberOrEmpty(source.geo.coordinates[0])
-      : "") ||
-    fallbackCoords.lng;
-
-  const images = Array.from(
-    new Set(
-      []
-        .concat(Array.isArray(source.images) ? source.images : [])
-        .concat(Array.isArray(source.photos) ? source.photos : [])
-        .concat(Array.isArray(source.imageUrls) ? source.imageUrls : [])
-        .concat(Array.isArray(source.gallery) ? source.gallery : [])
-        .concat(
-          [
-            source.representativeImage,
-            source.mainImage,
-            source.thumbnail,
-            source.coverImage,
-            source.image,
-            source.imageUrl,
-            source.photo,
-            source.picture,
-          ].filter(Boolean)
-        )
-        .map((image) => String(image || "").trim())
-        .filter(Boolean)
-    )
-  );
-
-  const representativeImage =
-    source.representativeImage ||
-    source.mainImage ||
-    source.thumbnail ||
-    source.coverImage ||
-    source.image ||
-    source.imageUrl ||
-    images[0] ||
-    "";
-
-  const category =
-    source.category ||
-    source.shopCategory ||
-    source.serviceType ||
-    source.businessType ||
-    source.adminCategory ||
-    "massage";
-
-  const premium =
-    source.premium === true ||
-    source.isPremium === true ||
-    source.premiumType === "premium" ||
-    source.premiumType === "vip";
-
-  return {
-    ...source,
-    name,
-    shopName: source.shopName || name,
-    title: source.title || name,
-    businessName: source.businessName || name,
-    storeName: source.storeName || name,
-    address,
-    roadAddress: source.roadAddress || address,
-    fullAddress: source.fullAddress || address,
-    locationText: source.locationText || address,
-    region,
-    sido: source.sido || region,
-    province: source.province || region,
-    district,
-    sigungu: source.sigungu || district,
-    city: source.city || district,
-    dong,
-    category,
-    shopCategory: source.shopCategory || category,
-    serviceType: source.serviceType || category,
-    businessType: source.businessType || category,
-    adminCategory: source.adminCategory || category,
-    phone: source.phone || source.tel || "",
-    tel: source.tel || source.phone || "",
-    virtualPhone: source.virtualPhone || source.fakePhone || source.callNumber || "",
-    fakePhone: source.fakePhone || source.virtualPhone || source.callNumber || "",
-    callNumber: source.callNumber || source.virtualPhone || source.fakePhone || source.phone || "",
-    businessHours: source.businessHours || source.openingHours || source.hours || "",
-    openingHours: source.openingHours || source.businessHours || source.hours || "",
-    hours: source.hours || source.businessHours || source.openingHours || "",
-    description: source.description || source.desc || "",
-    courses: normalizeTextArray(source.courses),
-    courseList: normalizeTextArray(source.courseList || source.courses),
-    serviceTypes: normalizeTextArray(source.serviceTypes || source.tags),
-    tags: normalizeTextArray(source.tags),
-    price: normalizePriceArray(source.price),
-    originalPrice: normalizePriceArray(source.originalPrice),
-    lat,
-    lng,
-    latitude: lat,
-    longitude: lng,
-    location:
-      source.location && typeof source.location === "object"
-        ? {
-            ...source.location,
-            lat,
-            lng,
-          }
-        : {
-            lat,
-            lng,
-          },
-    geo:
-      source.geo ||
-      (lat !== "" && lng !== ""
-        ? {
-            type: "Point",
-            coordinates: [Number(lng), Number(lat)],
-          }
-        : undefined),
-    status: source.status || "active",
-    visible: source.visible !== false,
-    approved: source.approved !== false,
-    isReservable: source.isReservable !== false,
-    premium,
-    isPremium: premium,
-    premiumType: source.premiumType || (premium ? "premium" : "normal"),
-    images,
-    photos: images,
-    imageUrls: images,
-    gallery: images,
-    representativeImage,
-    mainImage: representativeImage,
-    thumbnail: representativeImage,
-    coverImage: representativeImage,
-  };
-}
-
-function buildSchemaSafeShopPayload(payload = {}) {
-  if (!Shop || !Shop.schema || !Shop.schema.paths) {
-    return payload;
-  }
-
-  const paths = Shop.schema.paths;
-  const safePayload = {};
-
-  Object.keys(paths).forEach((key) => {
-    if (["_id", "__v", "createdAt", "updatedAt"].includes(key)) {
-      return;
-    }
-
-    if (payload[key] !== undefined) {
-      safePayload[key] = payload[key];
-    }
-  });
-
-  Object.keys(paths).forEach((key) => {
-    if (safePayload[key] !== undefined || ["_id", "__v", "createdAt", "updatedAt"].includes(key)) {
-      return;
-    }
-
-    const schemaType = paths[key];
-    const isRequired =
-      schemaType &&
-      typeof schemaType.isRequired === "boolean" &&
-      schemaType.isRequired === true;
-
-    if (!isRequired) {
-      return;
-    }
-
-    const lowerKey = key.toLowerCase();
-
-    if (lowerKey.includes("name") || lowerKey.includes("title")) {
-      safePayload[key] = payload.name || payload.shopName || "업체명 없음";
-      return;
-    }
-
-    if (lowerKey.includes("address") || lowerKey.includes("addr")) {
-      safePayload[key] = payload.address || "";
-      return;
-    }
-
-    if (lowerKey.includes("phone") || lowerKey.includes("tel")) {
-      safePayload[key] = payload.phone || "";
-      return;
-    }
-
-    if (lowerKey.includes("category") || lowerKey.includes("type")) {
-      safePayload[key] = payload.category || "massage";
-      return;
-    }
-
-    if (lowerKey.includes("status")) {
-      safePayload[key] = payload.status || "active";
-      return;
-    }
-
-    if (schemaType.instance === "Boolean") {
-      safePayload[key] = false;
-      return;
-    }
-
-    if (schemaType.instance === "Number") {
-      safePayload[key] = 0;
-      return;
-    }
-
-    if (schemaType.instance === "Array") {
-      safePayload[key] = [];
-      return;
-    }
-
-    if (schemaType.instance === "ObjectID") {
-      return;
-    }
-
-    safePayload[key] = "";
-  });
-
-  return Object.keys(safePayload).length ? safePayload : payload;
-}
-
-function makeLocalCreatedShop(payload = {}, message = "SHOP_CREATED_LOCAL") {
-  const id = makeLocalShopId();
-  const shop = normalizePublicShopItem({
-    _id: id,
-    id,
-    ...payload,
-    localFallback: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-
-  CREATED_SHOPS_MEMORY.unshift(shop);
-
-  if (CREATED_SHOPS_MEMORY.length > 300) {
-    CREATED_SHOPS_MEMORY.length = 300;
-  }
-
-  return {
-    ok: true,
-    shop,
-    data: shop,
-    item: shop,
-    shops: CREATED_SHOPS_MEMORY,
-    items: CREATED_SHOPS_MEMORY,
-    list: CREATED_SHOPS_MEMORY,
-    total: CREATED_SHOPS_MEMORY.length,
-    count: CREATED_SHOPS_MEMORY.length,
-    source: "local-fallback",
-    message,
-  };
-}
-
-async function createPublicShop(req, res, next) {
-  try {
-    const payload = normalizeCreatedShopPayload(req.body || {});
-
-    if (!payload.name || payload.name === "업체명 없음") {
-      payload.name = `노라 등록 업체 ${new Date().toLocaleString("ko-KR", {
-        timeZone: "Asia/Seoul",
-      })}`;
-      payload.shopName = payload.shopName || payload.name;
-      payload.title = payload.title || payload.name;
-    }
-
-    if (!Shop) {
-      return res.json(makeLocalCreatedShop(payload, "SHOP_CREATED_LOCAL_NO_MODEL"));
-    }
-
-    const ready = isDbReady() || (await ensureDbReady());
-
-    if (!ready) {
-      return res.json(makeLocalCreatedShop(payload, "SHOP_CREATED_LOCAL_DB_NOT_READY"));
-    }
-
-    let created = null;
-
-    try {
-      created = await Shop.create(payload);
-    } catch (firstError) {
-      console.error(
-        "PUBLIC SHOP CREATE PRIMARY ERROR:",
-        firstError && firstError.stack ? firstError.stack : firstError
-      );
-
-      const schemaSafePayload = buildSchemaSafeShopPayload(payload);
-
-      try {
-        created = await Shop.create(schemaSafePayload);
-      } catch (secondError) {
-        console.error(
-          "PUBLIC SHOP CREATE SCHEMA SAFE ERROR:",
-          secondError && secondError.stack ? secondError.stack : secondError
-        );
-
-        return res.json(
-          makeLocalCreatedShop(payload, secondError?.message || "SHOP_CREATED_LOCAL_AFTER_DB_ERROR")
-        );
-      }
-    }
-
-    const shop = normalizePublicShopItem(created);
-
-    CREATED_SHOPS_MEMORY.unshift(shop);
-
-    if (CREATED_SHOPS_MEMORY.length > 300) {
-      CREATED_SHOPS_MEMORY.length = 300;
-    }
-
-    return ok(res, {
-      shop,
-      data: shop,
-      item: shop,
-      shops: CREATED_SHOPS_MEMORY,
-      items: CREATED_SHOPS_MEMORY,
-      list: CREATED_SHOPS_MEMORY,
-      total: CREATED_SHOPS_MEMORY.length,
-      count: CREATED_SHOPS_MEMORY.length,
-      source: "db",
-      message: "SHOP_CREATED",
-    });
-  } catch (err) {
-    console.error("PUBLIC SHOP CREATE ERROR:", err && err.stack ? err.stack : err);
-
-    return res.json(
-      makeLocalCreatedShop(
-        normalizeCreatedShopPayload(req.body || {}),
-        err?.message || "SHOP_CREATED_LOCAL_AFTER_ERROR"
-      )
-    );
-  }
-}
-
-app.post("/api/shops", createPublicShop);
-
-
-if (shopRoutes) {
-  app.use("/api/shops", shopRoutes);
-
-  app.use("/api/shops", (err, req, res, next) => {
-    console.error("SHOP ROUTE ERROR:", err);
-
-    if (req.method === "GET") {
-      return normalizeShopFallbackResponse(res);
-    }
-
-    return fail(res, 500, err?.message || "SHOP_ROUTE_ERROR");
-  });
-
-  console.log("🔥 shopRoutes mounted");
-}
-
-if (reviewRoutes) {
-  app.use("/api/reviews", reviewRoutes);
-  console.log("🔥 reviewRoutes mounted");
-}
-
-if (paymentRoutes) {
-  app.use("/api/payments", paymentRoutes);
-  console.log("🔥 paymentRoutes mounted");
-}
-
-if (paymentVerifyRoutes) {
-  app.use("/api/payment/verify", paymentVerifyRoutes);
-  console.log("🔥 paymentVerifyRoutes mounted");
-}
-
-
 
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -1869,31 +983,34 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-if (!shopRoutes) {
-  app.get("/api/shops", async (req, res) => {
-    try {
-      if (!Shop) {
+  if (!shopRoutes) {
+    app.get("/api/shops", async (req, res) => {
+      try {
+        if (!Shop) {
+          return normalizeShopFallbackResponse(res);
+        }
+
+        if (!isDbReady()) {
+          return normalizeShopFallbackResponse(res);
+        }
+
+        const items = await Shop.find({}).limit(300).lean();
+
+        return ok(res, {
+          items,
+          list: items,
+          shops: items,
+          total: items.length,
+        });
+      } catch (err) {
+        console.error("SHOP ERROR:", err.message);
+
         return normalizeShopFallbackResponse(res);
       }
+    });
+  }
 
-      if (!isDbReady()) {
-        return normalizeShopFallbackResponse(res);
-      }
-
-      const items = await Shop.find({}).limit(300).lean();
-
-      return ok(res, {
-        items,
-        list: items,
-        shops: items,
-        total: items.length,
-      });
-    } catch (err) {
-      console.error("SHOP ERROR:", err.message);
-
-      return normalizeShopFallbackResponse(res);
-    }
-  });
+  applicationRoutesMounted = true;
 }
 
 io.on("connection", (socket) => {
@@ -1908,21 +1025,31 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get("*", (req, res, next) => {
-  if (req.originalUrl.startsWith("/api")) {
-    return next();
+let finalHandlersMounted = false;
+
+function mountFinalHandlers() {
+  if (finalHandlersMounted) {
+    return;
   }
 
-  return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
-});
+  app.get(/.*/, (req, res, next) => {
+    if (req.originalUrl.startsWith("/api")) {
+      return next();
+    }
 
-app.use((req, res) => fail(res, 404, "NOT_FOUND"));
+    return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
+  });
 
-app.use((err, req, res, next) => {
-  console.error("SERVER ERROR:", err);
+  app.use((req, res) => fail(res, 404, "NOT_FOUND"));
 
-  return fail(res, 500, "SERVER_ERROR");
-});
+  app.use((err, req, res, next) => {
+    console.error("SERVER ERROR:", err);
+
+    return fail(res, 500, "SERVER_ERROR");
+  });
+
+  finalHandlersMounted = true;
+}
 
 let isServerListening = false;
 
@@ -1961,14 +1088,29 @@ async function start() {
       console.warn("⚠️ DB NOT CONNECTED - LOCAL FALLBACK ACTIVE");
     }
 
+    loadApplicationModules({ includeDbRoutes: isDbReady() });
+    mountApplicationRoutes();
+    mountFinalHandlers();
     startServer();
   } catch (e) {
     console.error("❌ START ERROR:", e);
 
+    loadApplicationModules({ includeDbRoutes: false });
+    mountApplicationRoutes();
+    mountFinalHandlers();
     startServer();
 
     console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
   }
 }
 
-start();
+if (require.main === module) {
+  start();
+}
+
+module.exports = {
+  app,
+  server,
+  io,
+  start,
+};

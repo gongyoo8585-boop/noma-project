@@ -18,10 +18,6 @@ async function connectDB() {
   return null;
 }
 
-async function ensureDBConnection() {
-  return connectDB();
-}
-
 async function closeDB() {
   if (typeof database.closeDB === "function") {
     return database.closeDB();
@@ -56,7 +52,6 @@ function getDBStatus() {
 
 module.exports = {
   connectDB,
-  ensureDBConnection,
   closeDB,
   isDBConnected,
   getDBStatus

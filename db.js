@@ -521,26 +521,12 @@ function getDBHealth() {
 
 /* ========================= */
 /* graceful shutdown */
+/* 기존 export / 연결 기능은 유지.
+   단, 이 파일에서 SIGINT 직접 close는 제거.
+   server.js / app.js / index.js / config/database.js 등
+   다른 종료 핸들러와 중복되어 DB CONNECTION CLOSED가
+   의도치 않게 발생할 수 있음. */
 /* ========================= */
-process.on(
-  "SIGINT",
-  async () => {
-    console.log(
-      "🛑 서버 종료 중..."
-    );
-
-    try {
-      await mongoose.connection.close();
-    } catch (e) {
-      console.error(
-        "❌ DB CLOSE ERROR:",
-        e.message
-      );
-    }
-
-    process.exit(0);
-  }
-);
 
 /* ========================= */
 /* debug */

@@ -26,7 +26,7 @@ const API_BASE_RAW =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     import.meta.env.VITE_API_URL) ||
-  "http://localhost:10000/api";
+  "https://api.nora365.co.kr/api";
 
 const API_BASE = String(API_BASE_RAW)
   .replace("/api/api", "/api")

@@ -8,43 +8,100 @@
 /* =====================================================
 🔥 SAFE REQUIRE
 ===================================================== */
-function safeRequire(path) {
-  try { return require(path); }
-  catch (e) {
-    console.warn("[reservation.service] require fail:", path);
+function safeRequire(path, options = {}) {
+  const { silent = false } = options;
+
+  try {
+    return require(path);
+  } catch (e) {
+    if (!silent) {
+      console.warn("[reservation.service] require fail:", path);
+    }
+
     return null;
   }
+}
+
+/* =====================================================
+🔥 OPTIONAL SERVICE FALLBACKS
+===================================================== */
+function createNoopCacheService() {
+  return {
+    get() {},
+    set() {},
+    del() {},
+    delete() {},
+    clear() {},
+  };
+}
+
+function createNoopQueueService() {
+  return {
+    add() {},
+    push() {},
+    enqueue() {},
+  };
+}
+
+function createNoopNotifyService() {
+  return {
+    pushAsync() {},
+    send() {},
+    notify() {},
+  };
+}
+
+function createNoopAnalyticsService() {
+  return {
+    track() {},
+    event() {},
+  };
 }
 
 /* =====================================================
 🔥 MODELS
 ===================================================== */
 const Reservation =
-  safeRequire("../models/Reservation") ||
-  safeRequire("../../models/Reservation");
+  safeRequire("../models/Reservation", { silent: true }) ||
+  safeRequire("../../models/Reservation", { silent: true }) ||
+  safeRequire("../../server/models/Reservation", { silent: true }) ||
+  safeRequire("../../modules/reservation/models/Reservation", { silent: true });
 
 const User =
-  safeRequire("../../models/User");
+  safeRequire("../../models/User", { silent: true }) ||
+  safeRequire("../../server/models/User", { silent: true });
 
 const Shop =
-  safeRequire("../../models/Shop");
+  safeRequire("../../models/Shop", { silent: true }) ||
+  safeRequire("../../server/models/Shop", { silent: true }) ||
+  safeRequire("../models/Shop", { silent: true });
 
 /* =====================================================
 🔥 SERVICES
 ===================================================== */
 const cacheService =
-  safeRequire("./cacheService") ||
-  safeRequire("../../services/cacheService");
+  safeRequire("./cacheService", { silent: true }) ||
+  safeRequire("../../services/cacheService", { silent: true }) ||
+  safeRequire("../../services/cache.service", { silent: true }) ||
+  createNoopCacheService();
 
 const queueService =
-  safeRequire("./queue.service") ||
-  safeRequire("../../services/queue.service");
+  safeRequire("./queue.service", { silent: true }) ||
+  safeRequire("../../services/queue.service", { silent: true }) ||
+  safeRequire("../../services/queueService", { silent: true }) ||
+  createNoopQueueService();
 
 const notifyService =
-  safeRequire("../../services/notifyService");
+  safeRequire("./notifyService", { silent: true }) ||
+  safeRequire("../services/notifyService", { silent: true }) ||
+  safeRequire("../../services/notifyService", { silent: true }) ||
+  safeRequire("../../services/notificationService", { silent: true }) ||
+  createNoopNotifyService();
 
 const analyticsService =
-  safeRequire("./analyticsService");
+  safeRequire("./analyticsService", { silent: true }) ||
+  safeRequire("../../services/analyticsService", { silent: true }) ||
+  createNoopAnalyticsService();
 
 /* =====================================================
 🔥 CONSTANTS
@@ -89,6 +146,12 @@ function now() {
   return new Date();
 }
 
+function assertReservationModel() {
+  if (!Reservation) {
+    throw new Error("RESERVATION_MODEL_NOT_FOUND");
+  }
+}
+
 /* =====================================================
 🔥 LOCK (중복 예약 방지)
 ===================================================== */
@@ -111,6 +174,7 @@ class ReservationService {
   🔥 CREATE RESERVATION
   ===================================================== */
   async create({ userId, shopId, date, time, people = 1 }) {
+    assertReservationModel();
 
     if (!isValidId(userId)) throw new Error("INVALID_USER");
     if (!isValidId(shopId)) throw new Error("INVALID_SHOP");
@@ -144,15 +208,15 @@ class ReservationService {
       createdAt: now()
     });
 
-    cacheService?.del?.("reservation:list");
+    cacheService.del("reservation:list");
 
-    notifyService?.pushAsync?.({
+    notifyService.pushAsync({
       userId,
       type: "reservation_created",
       message: "예약이 생성되었습니다."
     });
 
-    analyticsService?.track?.("reservation_create", {
+    analyticsService.track("reservation_create", {
       userId,
       shopId
     });
@@ -164,6 +228,7 @@ class ReservationService {
   🔥 GET USER RESERVATIONS
   ===================================================== */
   async getUserReservations(userId, { page = 1, limit = 20 } = {}) {
+    assertReservationModel();
 
     const cacheKey = `user:${userId}:${page}:${limit}`;
     const cached = cacheGet(cacheKey);
@@ -184,6 +249,8 @@ class ReservationService {
   🔥 GET ONE
   ===================================================== */
   async getById(id) {
+    assertReservationModel();
+
     if (!isValidId(id)) throw new Error("INVALID_ID");
 
     return Reservation.findById(id);
@@ -193,6 +260,7 @@ class ReservationService {
   🔥 CANCEL
   ===================================================== */
   async cancel(reservationId, userId) {
+    assertReservationModel();
 
     const r = await Reservation.findById(reservationId);
     if (!r) throw new Error("NOT_FOUND");
@@ -206,7 +274,7 @@ class ReservationService {
 
     await r.save();
 
-    notifyService?.pushAsync?.({
+    notifyService.pushAsync({
       userId,
       type: "reservation_cancel",
       message: "예약이 취소되었습니다."
@@ -219,6 +287,7 @@ class ReservationService {
   🔥 ADMIN APPROVE
   ===================================================== */
   async approve(reservationId) {
+    assertReservationModel();
 
     const r = await Reservation.findById(reservationId);
     if (!r) throw new Error("NOT_FOUND");
@@ -233,6 +302,7 @@ class ReservationService {
   🔥 ADMIN REJECT
   ===================================================== */
   async reject(reservationId) {
+    assertReservationModel();
 
     const r = await Reservation.findById(reservationId);
     if (!r) throw new Error("NOT_FOUND");
@@ -247,6 +317,7 @@ class ReservationService {
   🔥 RESCHEDULE
   ===================================================== */
   async reschedule(reservationId, { date, time }) {
+    assertReservationModel();
 
     const r = await Reservation.findById(reservationId);
     if (!r) throw new Error("NOT_FOUND");
@@ -266,6 +337,8 @@ class ReservationService {
   🔥 ADMIN LIST
   ===================================================== */
   async list({ page = 1, limit = 50 } = {}) {
+    assertReservationModel();
+
     return Reservation.find()
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
@@ -276,6 +349,7 @@ class ReservationService {
   🔥 STATS
   ===================================================== */
   async getStats() {
+    assertReservationModel();
 
     const total = await Reservation.countDocuments();
     const confirmed = await Reservation.countDocuments({ status: "confirmed" });
@@ -292,6 +366,7 @@ class ReservationService {
   🔥 ADVANCED ANALYTICS
   ===================================================== */
   async getAdvancedStats() {
+    assertReservationModel();
 
     const result = await Reservation.aggregate([
       {
@@ -309,6 +384,7 @@ class ReservationService {
   🔥 BULK CANCEL
   ===================================================== */
   async bulkCancel(ids = []) {
+    assertReservationModel();
 
     const result = await Reservation.updateMany(
       { _id: { $in: ids } },
@@ -322,6 +398,7 @@ class ReservationService {
   🔥 CLEANUP (EXPIRED)
   ===================================================== */
   async cleanupExpired() {
+    assertReservationModel();
 
     const nowTime = new Date();
 
@@ -345,6 +422,9 @@ class ReservationService {
     return {
       cacheSize: CACHE.size,
       lockSize: CREATE_LOCK.size,
+      modelReady: !!Reservation,
+      userModelReady: !!User,
+      shopModelReady: !!Shop,
       time: now()
     };
   }

@@ -1,39 +1,43 @@
 "use strict";
 
-// 🔥 process 에러 방어 (최상단 최소 추가)
-if (typeof process === "undefined") {
+import axios from "axios";
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.process === "undefined"
+) {
   window.process = { env: {} };
 }
 
-import axios from "axios";
+const isLocalHost =
+  typeof window !== "undefined" &&
+  (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
 
-/**
- * =====================================================
- * 🔥 PAYMENT API (ULTRA FINAL - PATCHED STABLE)
- * ✔ 기존 기능 100% 유지
- * ✔ 서버 라우트 100% 일치 유지
- * ✔ null 응답 방어 유지
- * ✔ 네트워크 에러 안정성 유지
- * ✔ baseURL 이중 /api 방어 추가
- * ✔ 상세/상태 API 안정성 강화
- * ✔ 429 과다 요청 방지 최소 추가
- * ✔ 401 alert 반복 방지 최소 추가
- * ✔ admin list / stats fallback 추가
- * ✔ 기존 함수명 유지
- * ✔ 기존 API 호출 방식 유지
- * ✔ 최소 수정만 적용
- * =====================================================
- */
+const API_BASE_URL =
+  (
+    typeof window !== "undefined" &&
+    window.__ENV__ &&
+    window.__ENV__.API_BASE_URL
+  ) ||
+  (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    (
+      import.meta.env.VITE_API_BASE_URL ||
+      import.meta.env.VITE_API_URL
+    )
+  ) ||
+  "https://api.nora365.co.kr/api";
 
 const API = axios.create({
-  baseURL:
-    process.env.REACT_APP_API_URL ||
-    window.__ENV__?.API_BASE_URL ||
-    "http://localhost:10000/api",
+  baseURL: API_BASE_URL,
   timeout: 10000,
+  withCredentials: true,
 });
 
-/* 🔥 최소 추가: /api/api 방어 */
 try {
   if (API.defaults.baseURL?.includes("/api/api")) {
     API.defaults.baseURL = API.defaults.baseURL.replace(
@@ -50,9 +54,6 @@ try {
   console.error("PAYMENT BASE URL FIX ERROR:", e);
 }
 
-/* =========================
-🔥 429 / 중복 요청 방어
-========================= */
 let authAlertShown = false;
 let lastAdminListAt = 0;
 let lastStatsAt = 0;
@@ -74,9 +75,6 @@ let statsCache = {
   data: [],
 };
 
-/* =========================
-🔥 PARAM CLEAN
-========================= */
 function cleanParams(params = {}) {
   try {
     return Object.fromEntries(
@@ -92,17 +90,14 @@ function cleanParams(params = {}) {
   }
 }
 
-/* =========================
-🔥 요청 인터셉터 (JWT)
-========================= */
 API.interceptors.request.use(
   (config) => {
     try {
       const token =
+        localStorage.getItem("adminToken") ||
         localStorage.getItem("token") ||
         localStorage.getItem("accessToken") ||
         localStorage.getItem("authToken") ||
-        localStorage.getItem("adminToken") ||
         localStorage.getItem("jwt");
 
       if (
@@ -122,9 +117,6 @@ API.interceptors.request.use(
   (err) => Promise.reject(err)
 );
 
-/* =========================
-🔥 응답 인터셉터
-========================= */
 API.interceptors.response.use(
   (res) => res?.data ?? res,
   (err) => {
@@ -170,18 +162,12 @@ API.interceptors.response.use(
   }
 );
 
-/* =========================
-🔥 ID 검증 (최소 추가)
-========================= */
 function requireId(id, name = "id") {
   if (!id) {
     throw new Error(`${name} 필요`);
   }
 }
 
-/* =========================
-🔥 EMPTY RESPONSE
-========================= */
 function emptyPaymentList() {
   return {
     ok: true,
@@ -191,13 +177,7 @@ function emptyPaymentList() {
   };
 }
 
-/* =========================
-🔥 API 정의 (서버와 100% 일치)
-========================= */
 const paymentApi = {
-  /* =========================
-  카카오 결제
-  ========================= */
   kakaoReady(data) {
     return API.post("/payments/kakao/ready", data);
   },
@@ -210,18 +190,12 @@ const paymentApi = {
     return API.post("/payments/kakao/cancel", data);
   },
 
-  /* =========================
-  사용자
-  ========================= */
   getMyList(params = {}) {
     return API.get("/payments/me", {
       params: cleanParams(params),
     });
   },
 
-  /* =========================
-  관리자
-  ========================= */
   async getAdminList(params = {}) {
     try {
       const now = Date.now();
@@ -276,18 +250,12 @@ const paymentApi = {
     }
   },
 
-  /* =========================
-  상세
-  ========================= */
   getDetail(id) {
     requireId(id, "paymentId");
 
     return API.get(`/payments/${id}`);
   },
 
-  /* =========================
-  상태 조회
-  ========================= */
   getStatus(id) {
     requireId(id, "paymentId");
 
@@ -296,9 +264,6 @@ const paymentApi = {
     );
   },
 
-  /* =========================
-  환불 (관리자)
-  ========================= */
   refund(id, data = {}) {
     requireId(id, "paymentId");
 
@@ -308,16 +273,10 @@ const paymentApi = {
     );
   },
 
-  /* =========================
-  최소 추가: 실패 처리
-  ========================= */
   fail(data = {}) {
     return API.post("/payments/fail", data);
   },
 
-  /* =========================
-  최소 추가: webhook
-  ========================= */
   webhook(data = {}) {
     return API.post(
       "/payments/webhook",
@@ -325,9 +284,6 @@ const paymentApi = {
     );
   },
 
-  /* =========================
-  최소 추가: 안전 조회
-  ========================= */
   async safeGetAdminList(
     params = {}
   ) {
@@ -350,9 +306,6 @@ const paymentApi = {
     }
   },
 
-  /* =========================
-  최소 추가: 런타임 재검증
-  ========================= */
   _ensureBaseURL: (() => {
     try {
       if (

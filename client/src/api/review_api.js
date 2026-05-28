@@ -15,7 +15,7 @@
 /* 🔥 API BASE URL (완전 고정 안정) */
 const BASE_URL =
   (typeof window !== "undefined" && window.__ENV__?.API_BASE_URL) ||
-  "http://localhost:10000";
+  "https://api.nora365.co.kr/api";
 
 /* 🔥 [추가] process 참조 안전 가드 (Vite 오류 방지) */
 if (typeof window !== "undefined" && typeof window.process === "undefined") {

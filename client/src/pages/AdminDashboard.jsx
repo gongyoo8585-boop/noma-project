@@ -9,7 +9,6 @@ import Loading from "../components/common/Loading";
 import ErrorMessage from "../components/common/ErrorMessage";
 import EmptyState from "../components/common/EmptyState";
 
-/* 🔥 최소 추가 */
 import AdminLayout from "../components/admin/AdminLayout";
 
 import ShopAdminPage from "./admin/ShopAdminPage";
@@ -20,29 +19,27 @@ import ReviewAdminPage from "./admin/ReviewAdminPage";
 import ReportAdminPage from "./admin/ReportAdminPage";
 import AdminAnalyticsPage from "./AdminAnalyticsPage";
 
-/**
- * =====================================================
- * 🔥 ADMIN DASHBOARD PAGE
- * ✔ Router 충돌 제거 유지
- * ✔ 관리자 통합 유지
- * ✔ dashboard fetch 안전 처리
- * ✔ 기존 구조 유지
- * ✔ 기존 기능 유지
- * ✔ 🔥 무한 로딩 방지 최소 수정
- * ✔ 🔥 AUTH_TOKEN_REQUIRED 수정
- * ✔ 🔥 로그인 안된 경우 /login 이동
- * ✔ 🔥 관리자 페이지 중첩 렌더링 충돌 제거
- * =====================================================
- */
-
-const API_BASE =
-  window.__ENV__?.API_BASE_URL ||
-  (typeof import.meta !==
-    "undefined" &&
+const API_BASE_RAW =
+  (
+    window.__ENV__ &&
+    window.__ENV__.API_BASE_URL
+  ) ||
+  (
+    typeof import.meta !==
+      "undefined" &&
     import.meta.env &&
-    import.meta.env
-      .VITE_API_URL) ||
-  "http://localhost:10000/api";
+    (
+      import.meta.env
+        .VITE_API_URL ||
+      import.meta.env
+        .VITE_API_BASE_URL
+    )
+  ) ||
+  "https://api.nora365.co.kr/api";
+
+const API_BASE = String(API_BASE_RAW)
+  .replace("/api/api", "/api")
+  .replace(/\/+$/, "");
 
 const EMPTY_DASHBOARD_DATA =
   {
@@ -83,9 +80,6 @@ function getAdminToken() {
   );
 }
 
-/* =========================
-API
-========================= */
 async function fetchDashboard() {
 
   try {
@@ -93,10 +87,6 @@ async function fetchDashboard() {
     const token =
       getAdminToken();
 
-    /**
-     * 🔥 핵심 수정
-     * 로그인 안된 경우
-     */
     if (!token) {
 
       return {
@@ -118,7 +108,7 @@ async function fetchDashboard() {
     const timeout =
       setTimeout(() => {
         controller.abort();
-      }, 2500);
+      }, 5000);
 
     const res = await fetch(
       `${API_BASE}/admin/dashboard`,
@@ -147,9 +137,6 @@ async function fetchDashboard() {
       data = {};
     }
 
-    /**
-     * 🔥 인증 오류 처리
-     */
     if (
       res.status === 401 ||
       data?.msg ===
@@ -196,9 +183,6 @@ async function fetchDashboard() {
   }
 }
 
-/* =====================================================
-🔥 COMPONENT
-===================================================== */
 function AdminDashboard() {
 
   const [data, setData] =
@@ -215,13 +199,9 @@ function AdminDashboard() {
   const [initialized, setInitialized] =
     useState(false);
 
-  /* 🔥 최소 추가 */
   const [activeTab, setActiveTab] =
     useState("dashboard");
 
-  /* =========================
-  LOAD
-  ========================= */
   const load = async () => {
 
     try {
@@ -232,9 +212,6 @@ function AdminDashboard() {
       const res =
         await fetchDashboard();
 
-      /**
-       * 🔥 로그인 필요
-       */
       if (
         res?.authRequired
       ) {
@@ -287,9 +264,6 @@ function AdminDashboard() {
     }
   };
 
-  /* =========================
-  INIT
-  ========================= */
   useEffect(() => {
 
     if (initialized) {
@@ -300,9 +274,6 @@ function AdminDashboard() {
 
   }, [initialized]);
 
-  /* =========================
-  UI STATES
-  ========================= */
   if (loading) {
 
     return (
@@ -348,10 +319,9 @@ function AdminDashboard() {
 
       <div style={styles.page}>
         <h2 style={styles.title}>
-          📊 관리자 대시보드
+          📊 NORA 관리자 대시보드
         </h2>
 
-        {/* 🔥 최소 추가 */}
         <div style={styles.tabWrap}>
 
           <button
@@ -622,16 +592,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "shop" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               🏪 업체 관리
             </div>
 
@@ -641,16 +603,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "user" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               👤 회원 관리
             </div>
 
@@ -660,16 +614,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "reservation" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               📅 예약 관리
             </div>
 
@@ -679,16 +625,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "payment" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               💳 결제 관리
             </div>
 
@@ -698,16 +636,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "review" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               ⭐ 리뷰 관리
             </div>
 
@@ -717,16 +647,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "report" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               🚨 신고 관리
             </div>
 
@@ -736,16 +658,8 @@ function AdminDashboard() {
 
         {activeTab ===
           "analytics" && (
-          <div
-            style={
-              styles.adminSection
-            }
-          >
-            <div
-              style={
-                styles.sectionTitle
-              }
-            >
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
               📈 분석 / 통계
             </div>
 
@@ -758,9 +672,6 @@ function AdminDashboard() {
   );
 }
 
-/* =========================
-CARD
-========================= */
 function Card({
   title,
   value,
@@ -768,28 +679,17 @@ function Card({
 
   return (
     <div style={styles.card}>
-      <div
-        style={
-          styles.cardTitle
-        }
-      >
+      <div style={styles.cardTitle}>
         {title}
       </div>
 
-      <div
-        style={
-          styles.cardValue
-        }
-      >
+      <div style={styles.cardValue}>
         {value ?? 0}
       </div>
     </div>
   );
 }
 
-/* =========================
-LIST
-========================= */
 function List({
   items,
 }) {
@@ -810,9 +710,7 @@ function List({
         (item, idx) => (
           <div
             key={idx}
-            style={
-              styles.item
-            }
+            style={styles.item}
           >
             {item?.name ||
               item?.email ||
@@ -825,9 +723,6 @@ function List({
   );
 }
 
-/* =========================
-STYLE
-========================= */
 const styles = {
   page: {
     padding: 20,

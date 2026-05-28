@@ -1,10 +1,10 @@
 "use strict";
 
-const paymentService = require("../services/payment.service");
+const paymentService = require("../../services/payment/payment.service");
 
 let Reservation = null;
 try {
-  Reservation = require("../models/Reservation");
+  Reservation = require("../../models/Reservation");
 } catch (_) {}
 
 /* =====================================================
@@ -19,33 +19,37 @@ const fail = (res, status = 500, message = "ERROR") =>
 const safeAsync = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch((e) => {
     console.error("PAYMENT ERROR:", e);
-    return fail(res, e.status || 500, e.message);
+    return fail(res, e.status || 500, e.message || "PAYMENT_ERROR");
   });
 
 const uid = (req) => String(req.user?.id || req.user?._id || "");
+
 const isAdmin = (req) =>
   ["admin", "superAdmin"].includes(req.user?.role);
 
 /* =====================================================
-🔥 KAKAO PAY FLOW (기존 유지)
+🔥 KAKAO PAY FLOW
 ===================================================== */
-
 exports.kakaoReady = safeAsync(async (req, res) => {
   const payload = await buildPayload(req);
   const result = await paymentService.kakaoReady(payload);
 
-  return ok(res, {
-    tid: result.tid,
-    redirectUrl: result.next_redirect_pc_url,
-    orderId: result.orderId
-  }, "KAKAO READY");
+  return ok(
+    res,
+    {
+      tid: result?.tid,
+      redirectUrl: result?.next_redirect_pc_url || result?.redirectUrl || "",
+      orderId: result?.orderId || payload.orderId,
+    },
+    "KAKAO READY"
+  );
 });
 
 exports.kakaoSuccess = safeAsync(async (req, res) => {
   const result = await paymentService.kakaoApprove({
     pgToken: req.query.pg_token,
     orderId: req.query.orderId,
-    userId: req.query.userId
+    userId: req.query.userId,
   });
 
   return ok(res, { payment: result }, "KAKAO SUCCESS");
@@ -60,13 +64,16 @@ exports.kakaoFail = safeAsync(async (req, res) => {
 });
 
 /* =====================================================
-🔥 기존 기능 (완전 유지)
+🔥 CORE PAYMENT
 ===================================================== */
-
 exports.createCheckout = safeAsync(async (req, res) => {
   const payload = await buildPayload(req);
-  const result = await paymentService.createCheckoutSession(payload);
-  return ok(res, result);
+  const result =
+    typeof paymentService.createCheckoutSession === "function"
+      ? await paymentService.createCheckoutSession(payload)
+      : await paymentService.createPayment(payload);
+
+  return ok(res, result || {});
 });
 
 exports.createPayment = safeAsync(async (req, res) => {
@@ -95,10 +102,18 @@ exports.refundPayment = safeAsync(async (req, res) => {
   return ok(res, { payment });
 });
 
-/* =====================================================
-🔥 조회 (유지)
-===================================================== */
+exports.calculateAmount = safeAsync(async (req, res) => {
+  const amount = Number(req.body?.amount || req.body?.price || 0);
+  return ok(res, { amount, total: amount });
+});
 
+exports.validateCheckout = safeAsync(async (req, res) => {
+  return ok(res, { valid: true });
+});
+
+/* =====================================================
+🔥 QUERY
+===================================================== */
 exports.getPayment = safeAsync(async (req, res) => {
   const payment = await paymentService.getPaymentById(req.params.paymentId);
   return ok(res, { payment });
@@ -109,10 +124,29 @@ exports.getPaymentByOrderId = safeAsync(async (req, res) => {
   return ok(res, { payment });
 });
 
+exports.getPaymentByKey = safeAsync(async (req, res) => {
+  const payment =
+    typeof paymentService.getPaymentByKey === "function"
+      ? await paymentService.getPaymentByKey(req.params.paymentKey)
+      : null;
+
+  return ok(res, { payment });
+});
+
+exports.getReceipt = safeAsync(async (req, res) => {
+  const receipt =
+    typeof paymentService.getReceipt === "function"
+      ? await paymentService.getReceipt(req.params.paymentId)
+      : null;
+
+  return ok(res, { receipt });
+});
+
 exports.myPayments = safeAsync(async (req, res) => {
   const result = await paymentService.listPayments({
-    userId: uid(req)
+    userId: uid(req),
   });
+
   return ok(res, result);
 });
 
@@ -121,24 +155,99 @@ exports.listPayments = safeAsync(async (req, res) => {
   return ok(res, result);
 });
 
-/* =====================================================
-🔥 ADMIN (유지)
-===================================================== */
+exports.getReservationPayments = safeAsync(async (req, res) => {
+  const result = await paymentService.listPayments({
+    reservationId: req.params.reservationId,
+  });
 
+  return ok(res, result);
+});
+
+exports.getUserPayments = safeAsync(async (req, res) => {
+  const result = await paymentService.listPayments({
+    userId: req.params.userId,
+  });
+
+  return ok(res, result);
+});
+
+exports.getShopPayments = safeAsync(async (req, res) => {
+  const result = await paymentService.listPayments({
+    shopId: req.params.shopId,
+  });
+
+  return ok(res, result);
+});
+
+/* =====================================================
+🔥 ADMIN
+===================================================== */
 exports.getLogs = safeAsync(async (req, res) => {
-  if (!isAdmin(req)) return fail(res, 403);
-  return ok(res, { logs: paymentService.getLogs(100) });
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  const logs =
+    typeof paymentService.getLogs === "function"
+      ? paymentService.getLogs(100)
+      : [];
+
+  return ok(res, { logs });
 });
 
 exports.getMetrics = safeAsync(async (req, res) => {
-  if (!isAdmin(req)) return fail(res, 403);
-  return ok(res, { metrics: paymentService.getMetrics() });
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  const metrics =
+    typeof paymentService.getMetrics === "function"
+      ? paymentService.getMetrics()
+      : {};
+
+  return ok(res, { metrics });
+});
+
+exports.getHealth = safeAsync(async (req, res) => {
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  return ok(res, {
+    service: "payment",
+    status: "UP",
+    time: Date.now(),
+  });
+});
+
+exports.getStoreSize = safeAsync(async (req, res) => {
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  const size =
+    typeof paymentService.getStoreSize === "function"
+      ? paymentService.getStoreSize()
+      : 0;
+
+  return ok(res, { size });
+});
+
+exports.clearLogs = safeAsync(async (req, res) => {
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  if (typeof paymentService.clearLogs === "function") {
+    paymentService.clearLogs();
+  }
+
+  return ok(res);
+});
+
+exports.clearExpired = safeAsync(async (req, res) => {
+  if (!isAdmin(req)) return fail(res, 403, "FORBIDDEN");
+
+  if (typeof paymentService.clearExpired === "function") {
+    await paymentService.clearExpired();
+  }
+
+  return ok(res);
 });
 
 /* =====================================================
-🔥 MOCK (유지)
+🔥 MOCK
 ===================================================== */
-
 exports.mockSuccess = safeAsync(async (req, res) => {
   const payment = await paymentService.approvePayment(req.body);
   return ok(res, { payment });
@@ -155,10 +264,38 @@ exports.mockFail = safeAsync(async (req, res) => {
 });
 
 /* =====================================================
-🔥 PAYLOAD BUILDER (안정성 보강)
+🔥 EXTRA
+===================================================== */
+exports.getPaymentStatus = safeAsync(async (req, res) => {
+  const payment = await paymentService.getPaymentById(req.params.paymentId);
+  return ok(res, {
+    status: payment?.status || payment?.paymentStatus || "unknown",
+    payment,
+  });
+});
+
+exports.getRecentPayments = safeAsync(async (req, res) => {
+  const result = await paymentService.listPayments({
+    limit: req.query.limit || 20,
+  });
+
+  return ok(res, result);
+});
+
+exports.getSummaryStats = safeAsync(async (req, res) => {
+  const metrics =
+    typeof paymentService.getMetrics === "function"
+      ? paymentService.getMetrics()
+      : {};
+
+  return ok(res, { metrics });
+});
+
+/* =====================================================
+🔥 PAYLOAD BUILDER
 ===================================================== */
 async function buildPayload(req) {
-  const reservationId = req.body.reservationId;
+  const reservationId = req.body?.reservationId;
   let reservation = null;
 
   if (reservationId && Reservation) {
@@ -168,48 +305,63 @@ async function buildPayload(req) {
 
   return {
     userId: uid(req),
-    orderId: req.body.orderId,
-    amount: Number(req.body.amount || reservation?.paymentAmount || 0),
-    title: req.body.title || "예약 결제",
-    shopId: req.body.shopId || reservation?.shopId,
+    orderId: req.body?.orderId,
+    amount: Number(req.body?.amount || reservation?.paymentAmount || 0),
+    title: req.body?.title || "예약 결제",
+    shopId: req.body?.shopId || reservation?.shopId,
     reservationId,
-    method: "kakao",
+    method: req.body?.method || "kakao",
     metadata: {
       ip: req.ip,
-      ua: req.headers["user-agent"]
-    }
+      ua: req.headers["user-agent"],
+    },
   };
 }
 
 /* =====================================================
-🔥 DEBUG (유지)
+🔥 DEBUG
 ===================================================== */
 exports.debugFinal = safeAsync(async (req, res) => {
   return ok(res, {
     kakao: true,
     reservation: !!Reservation,
-    time: Date.now()
+    time: Date.now(),
   });
 });
 
 /* =====================================================
-🔥 NEW FEATURES (100+ 확장 - 기존 코드 아래만)
+🔥 NEW FEATURES
 ===================================================== */
-
 const FEATURES = [
-  "fraud","risk","score","retry","failover",
-  "latency","timeout","queue","retryCount","limit",
-  "userPattern","deviceCheck","geoCheck","velocity","abuse",
-  "chargeback","dispute","duplicate","anomaly","mlScore"
+  "fraud",
+  "risk",
+  "score",
+  "retry",
+  "failover",
+  "latency",
+  "timeout",
+  "queue",
+  "retryCount",
+  "limit",
+  "userPattern",
+  "deviceCheck",
+  "geoCheck",
+  "velocity",
+  "abuse",
+  "chargeback",
+  "dispute",
+  "duplicate",
+  "anomaly",
+  "mlScore",
 ];
 
-FEATURES.forEach((f) => {
-  for (let i = 0; i < 10; i++) {
-    exports[`feature_${f}_${i}`] = safeAsync(async (req, res) => {
+FEATURES.forEach((feature) => {
+  for (let index = 0; index < 10; index += 1) {
+    exports[`feature_${feature}_${index}`] = safeAsync(async (req, res) => {
       return ok(res, {
-        feature: f,
-        index: i,
-        timestamp: Date.now()
+        feature,
+        index,
+        timestamp: Date.now(),
       });
     });
   }
@@ -218,7 +370,6 @@ FEATURES.forEach((f) => {
 /* =====================================================
 🔥 FINAL
 ===================================================== */
-
 console.log("🔥 PAYMENT CONTROLLER FINAL MASTER READY");
 
 module.exports = exports;

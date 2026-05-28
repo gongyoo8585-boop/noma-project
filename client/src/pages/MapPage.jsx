@@ -89,15 +89,232 @@ const BUSAN_CITY_HALL_POSITION = {
 
 const LOCAL_SHOP_KEY = "noma_admin_shops";
 const LOCAL_PUBLIC_SHOP_KEY = "noma_local_shops";
+const LOCAL_MASSAGE_SHOP_KEY = "noma_admin_shops_massage";
+const LOCAL_PUBLIC_MASSAGE_SHOP_KEY = "noma_local_shops_massage";
+const LOCAL_SHOP_BACKUP_KEY = "noma_admin_shop_backup";
+const LOCAL_MASSAGE_SHOP_BACKUP_KEY = "noma_admin_shop_backup_massage";
+const NORA_LOCAL_SHOP_KEY = "nora_admin_shops";
+const NORA_LOCAL_PUBLIC_SHOP_KEY = "nora_local_shops";
+const NORA_LOCAL_MASSAGE_SHOP_KEY = "nora_admin_shops_massage";
+const NORA_LOCAL_PUBLIC_MASSAGE_SHOP_KEY = "nora_local_shops_massage";
+const NORA_LOCAL_SHOP_BACKUP_KEY = "nora_admin_shop_backup";
+const NORA_LOCAL_MASSAGE_SHOP_BACKUP_KEY = "nora_admin_shop_backup_massage";
 const SELECTED_SHOP_KEY = "noma_selected_shop";
 const DELETED_SHOP_KEY = "noma_deleted_shop_ids";
+const DELETED_MASSAGE_SHOP_KEY = "noma_deleted_shop_ids_massage";
 const INITIAL_VISIBLE_COUNT = 20;
 const VISIBLE_STEP = 12;
+const USE_LOCAL_SHOP_CACHE = true;
 
-const API_BASE_URL =
+const MAP_SHOP_CATEGORY_PARAMS = {
+  category: "massage",
+  shopCategory: "massage",
+  serviceType: "massage",
+  businessType: "massage",
+  adminCategory: "massage",
+};
+
+
+const KAKAO_MAP_SDK_SCRIPT_ID = "nora-kakao-map-sdk";
+const KAKAO_MAP_LOAD_TIMEOUT = Number(
+  import.meta.env.VITE_KAKAO_MAP_TIMEOUT ||
+    window.__ENV__?.VITE_KAKAO_MAP_TIMEOUT ||
+    window.__ENV__?.KAKAO_MAP_TIMEOUT ||
+    6500
+);
+
+const getKakaoMapAppKey = () =>
+  String(
+    window.__ENV__?.VITE_KAKAO_MAP_KEY ||
+      window.__ENV__?.VITE_KAKAO_JS_KEY ||
+      window.__ENV__?.VITE_KAKAO_JAVASCRIPT_KEY ||
+      window.__ENV__?.KAKAO_MAP_KEY ||
+      window.__ENV__?.KAKAO_JS_KEY ||
+      window.__ENV__?.KAKAO_JAVASCRIPT_KEY ||
+      import.meta.env.VITE_KAKAO_MAP_KEY ||
+      import.meta.env.VITE_KAKAO_JS_KEY ||
+      import.meta.env.VITE_KAKAO_JAVASCRIPT_KEY ||
+      import.meta.env.VITE_KAKAO_API_KEY ||
+      import.meta.env.VITE_KAKAO_APP_KEY ||
+      import.meta.env.KAKAO_JS_KEY ||
+      ""
+  ).trim();
+
+const isKakaoMapReady = () =>
+  typeof window !== "undefined" &&
+  !!window.kakao &&
+  !!window.kakao.maps &&
+  typeof window.kakao.maps.Map === "function";
+
+const getKakaoMapSdkSrc = () => {
+  const appKey = getKakaoMapAppKey();
+
+  if (!appKey) {
+    return "";
+  }
+
+  return `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(
+    appKey
+  )}&libraries=services,clusterer&autoload=false`;
+};
+
+const findKakaoMapScript = () => {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return (
+    document.getElementById(KAKAO_MAP_SDK_SCRIPT_ID) ||
+    Array.from(document.querySelectorAll("script")).find((script) =>
+      String(script.src || "").includes("dapi.kakao.com/v2/maps/sdk.js")
+    ) ||
+    null
+  );
+};
+
+const removeFailedKakaoMapScript = () => {
+  const script = findKakaoMapScript();
+
+  if (
+    script &&
+    script.parentNode &&
+    script.dataset?.noraLoaded !== "true"
+  ) {
+    script.dataset.noraLoadFailed = "true";
+    script.parentNode.removeChild(script);
+  }
+};
+
+const loadKakaoMapSdk = () =>
+  new Promise((resolve, reject) => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      reject(new Error("카카오맵을 브라우저에서만 사용할 수 있습니다."));
+      return;
+    }
+
+    if (isKakaoMapReady()) {
+      resolve(window.kakao);
+      return;
+    }
+
+    const src = getKakaoMapSdkSrc();
+
+    if (!src) {
+      reject(new Error("카카오맵 API 키가 설정되지 않았습니다."));
+      return;
+    }
+
+    const completeLoad = () => {
+      if (window.kakao?.maps?.load) {
+        window.kakao.maps.load(() => {
+          if (isKakaoMapReady()) {
+            const loadedScript = findKakaoMapScript();
+
+            if (loadedScript) {
+              loadedScript.dataset.noraLoaded = "true";
+              loadedScript.dataset.noraLoadState = "ready";
+              delete loadedScript.dataset.noraLoadFailed;
+            }
+
+            resolve(window.kakao);
+            return;
+          }
+
+          reject(new Error("카카오맵 로드 실패"));
+        });
+        return;
+      }
+
+      if (isKakaoMapReady()) {
+        resolve(window.kakao);
+        return;
+      }
+
+      reject(new Error("카카오맵 로드 실패"));
+    };
+
+    let script = findKakaoMapScript();
+
+    if (
+      script &&
+      script.src &&
+      script.src !== src &&
+      script.parentNode &&
+      script.dataset?.noraLoaded !== "true"
+    ) {
+      script.parentNode.removeChild(script);
+      script = null;
+    }
+
+    if (
+      script &&
+      script.dataset?.noraLoadFailed === "true" &&
+      script.parentNode
+    ) {
+      script.parentNode.removeChild(script);
+      script = null;
+    }
+
+    if (!script) {
+      script = document.createElement("script");
+      script.id = KAKAO_MAP_SDK_SCRIPT_ID;
+      script.async = true;
+      script.defer = true;
+      script.src = src;
+      script.dataset.noraKakaoMap = "true";
+      script.dataset.noraLoadState = "loading";
+      document.head.appendChild(script);
+    }
+
+    const timer = window.setTimeout(() => {
+      if (script) {
+        script.dataset.noraLoadFailed = "true";
+        script.dataset.noraLoadState = "timeout";
+      }
+
+      reject(new Error("카카오맵 로드 시간이 초과되었습니다."));
+    }, KAKAO_MAP_LOAD_TIMEOUT);
+
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      script.removeEventListener("load", handleLoad);
+      script.removeEventListener("error", handleError);
+    };
+
+    const handleLoad = () => {
+      cleanup();
+      completeLoad();
+    };
+
+    const handleError = () => {
+      if (script) {
+        script.dataset.noraLoadFailed = "true";
+        script.dataset.noraLoadState = "error";
+      }
+
+      cleanup();
+      reject(new Error("카카오맵 스크립트 로드 실패"));
+    };
+
+    script.addEventListener("load", handleLoad);
+    script.addEventListener("error", handleError);
+
+    if (window.kakao?.maps) {
+      cleanup();
+      completeLoad();
+    }
+  });
+
+const API_BASE_URL = String(
   import.meta.env.VITE_API_URL ||
-  import.meta.env.VITE_SERVER_URL ||
-  "http://localhost:5000";
+    import.meta.env.VITE_SERVER_URL ||
+    window.__ENV__?.API_BASE_URL ||
+    window.__ENV__?.VITE_API_URL ||
+    window.__ENV__?.VITE_SERVER_URL ||
+    "https://api.nora365.co.kr"
+)
+  .replace(/\/api\/?$/, "")
+  .replace(/\/+$/, "");
 
 const FALLBACK_SHOP_IMAGES = [
   "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=80",
@@ -309,11 +526,51 @@ function MapPage({ navigate }) {
   const [selectedImage, setSelectedImage] = useState("");
   const [myLocationMarker, setMyLocationMarker] = useState(null);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
+  const [mapReady, setMapReady] = useState(isKakaoMapReady());
+  const [mapLoadError, setMapLoadError] = useState("");
 
   const mapMoveLoadingRef = useRef(false);
   const userLocationLockRef = useRef(false);
   const userLocationFixedRef = useRef(false);
   const mountedRef = useRef(true);
+
+  const initializeKakaoMap = async () => {
+    try {
+      setMapLoadError("");
+
+      if (isKakaoMapReady()) {
+        setMapReady(true);
+        return true;
+      }
+
+      await loadKakaoMapSdk();
+
+      if (!mountedRef.current) {
+        return false;
+      }
+
+      setMapReady(true);
+      setMapLoadError("");
+
+      return true;
+    } catch (e) {
+      if (!mountedRef.current) {
+        return false;
+      }
+
+      setMapReady(false);
+      setMapLoadError(e?.message || "카카오맵 로드 실패");
+
+      return false;
+    }
+  };
+
+  const retryKakaoMapLoad = async () => {
+    removeFailedKakaoMapScript();
+    setMapReady(false);
+    setMapLoadError("");
+    await initializeKakaoMap();
+  };
 
   const normalizeSearchText = (value) =>
     String(value || "")
@@ -329,14 +586,28 @@ function MapPage({ navigate }) {
 
   const readDeletedShopIds = () => {
     try {
-      const localValue = JSON.parse(localStorage.getItem(DELETED_SHOP_KEY) || "[]");
-      const sessionValue = JSON.parse(sessionStorage.getItem(DELETED_SHOP_KEY) || "[]");
+      const readItems = (storage, key) => {
+        try {
+          const value = JSON.parse(storage.getItem(key) || "[]");
+
+          return Array.isArray(value) ? value : [];
+        } catch (e) {
+          return [];
+        }
+      };
+
+      const localValue = readItems(localStorage, DELETED_SHOP_KEY);
+      const localMassageValue = readItems(localStorage, DELETED_MASSAGE_SHOP_KEY);
+      const sessionValue = readItems(sessionStorage, DELETED_SHOP_KEY);
+      const sessionMassageValue = readItems(sessionStorage, DELETED_MASSAGE_SHOP_KEY);
 
       return Array.from(
         new Set(
           [
-            ...(Array.isArray(localValue) ? localValue : []),
-            ...(Array.isArray(sessionValue) ? sessionValue : []),
+            ...localValue,
+            ...localMassageValue,
+            ...sessionValue,
+            ...sessionMassageValue,
           ]
             .flatMap((value) => [
               String(value || "").trim(),
@@ -392,6 +663,27 @@ function MapPage({ navigate }) {
       return false;
     }
 
+    const rawId = String(shop?._id || shop?.id || shop?.shopId || "").trim();
+    const status = String(shop?.status || "active").toLowerCase();
+    const isPersistentApiShop =
+      !!rawId &&
+      !rawId.startsWith("local-") &&
+      !rawId.startsWith("fallback-") &&
+      !rawId.startsWith("local-noma-") &&
+      !rawId.startsWith("local-nora-");
+
+    if (
+      isPersistentApiShop &&
+      (status === "active" ||
+        status === "open" ||
+        status === "approved" ||
+        status === "enable" ||
+        status === "enabled" ||
+        status === "")
+    ) {
+      return false;
+    }
+
     const deletedSet = new Set(
       deletedIds
         .flatMap((value) => [
@@ -408,29 +700,101 @@ function MapPage({ navigate }) {
     Array.isArray(list) ? list.filter((shop) => !isDeletedShop(shop)) : [];
 
   const normalize = (res) => {
-    return Array.isArray(res)
-      ? res
-      : Array.isArray(res?.shops)
-      ? res.shops
-      : Array.isArray(res?.list)
-      ? res.list
-      : Array.isArray(res?.items)
-      ? res.items
-      : Array.isArray(res?.data)
-      ? res.data
-      : Array.isArray(res?.data?.shops)
-      ? res.data.shops
-      : Array.isArray(res?.data?.list)
-      ? res.data.list
-      : Array.isArray(res?.data?.items)
-      ? res.data.items
-      : Array.isArray(res?.data?.data)
-      ? res.data.data
-      : Array.isArray(res?.data?.data?.shops)
-      ? res.data.data.shops
-      : Array.isArray(res?.data?.data?.items)
-      ? res.data.data.items
-      : [];
+    const visited = new Set();
+    const queue = [res];
+    const emptyArrays = [];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (!current) {
+        continue;
+      }
+
+      if (Array.isArray(current)) {
+        if (current.length > 0) {
+          return current;
+        }
+
+        emptyArrays.push(current);
+        continue;
+      }
+
+      if (typeof current !== "object") {
+        continue;
+      }
+
+      if (visited.has(current)) {
+        continue;
+      }
+
+      visited.add(current);
+
+      if (
+        current._id ||
+        current.id ||
+        current.name ||
+        current.shopName ||
+        current.title
+      ) {
+        return [current];
+      }
+
+      const directKeys = [
+        "shops",
+        "list",
+        "items",
+        "data",
+        "rows",
+        "results",
+        "docs",
+        "records",
+        "content",
+      ];
+
+      for (const key of directKeys) {
+        if (Array.isArray(current[key])) {
+          if (current[key].length > 0) {
+            return current[key];
+          }
+
+          emptyArrays.push(current[key]);
+        }
+      }
+
+      for (const key of directKeys) {
+        if (
+          current[key] &&
+          typeof current[key] === "object" &&
+          !Array.isArray(current[key])
+        ) {
+          queue.push(current[key]);
+        }
+      }
+
+      if (
+        current.payload &&
+        typeof current.payload === "object"
+      ) {
+        queue.push(current.payload);
+      }
+
+      if (
+        current.result &&
+        typeof current.result === "object"
+      ) {
+        queue.push(current.result);
+      }
+
+      if (
+        current.response &&
+        typeof current.response === "object"
+      ) {
+        queue.push(current.response);
+      }
+    }
+
+    return emptyArrays.length > 0 ? emptyArrays[0] : [];
   };
 
   const getAddressRegion = (address = "") => {
@@ -452,6 +816,7 @@ function MapPage({ navigate }) {
     if (text.includes("전남") || text.includes("전라남도")) return "전남";
     if (text.includes("경북") || text.includes("경상북도")) return "경북";
     if (text.includes("경남") || text.includes("경상남도")) return "경남";
+    if (text.includes("김해시")) return "경남";
     if (text.includes("제주")) return "제주";
 
     return "";
@@ -588,11 +953,18 @@ function MapPage({ navigate }) {
       shop?.geo?.coordinates?.[0] ||
       "";
 
+    const locationTextValue =
+      typeof shop?.location === "string" ? shop.location : "";
+
     const address =
       shop?.address ||
       shop?.roadAddress ||
+      shop?.fullAddress ||
       shop?.locationText ||
       shop?.road_address_name ||
+      shop?.jibunAddress ||
+      shop?.addr ||
+      locationTextValue ||
       "";
 
     const normalizedLat = Number(lat) || "";
@@ -608,6 +980,9 @@ function MapPage({ navigate }) {
         shop?.address ||
         shop?.roadAddress ||
         shop?.road_address_name ||
+        shop?.jibunAddress ||
+        shop?.addr ||
+        locationTextValue ||
         address,
       locationText: shop?.locationText || address,
       region: shop?.region || getAddressRegion(address),
@@ -695,9 +1070,7 @@ function MapPage({ navigate }) {
 
           return (
             !isDeletedShop(shop) &&
-            !isFallbackSeedShop(shop) &&
             shop?.visible !== false &&
-            shop?.approved !== false &&
             (status === "active" ||
               status === "open" ||
               status === "approved" ||
@@ -911,37 +1284,77 @@ function MapPage({ navigate }) {
   };
 
   const readLocalShops = () => {
-    try {
-      const adminSaved = JSON.parse(localStorage.getItem(LOCAL_SHOP_KEY) || "[]");
-      const publicSaved = JSON.parse(localStorage.getItem(LOCAL_PUBLIC_SHOP_KEY) || "[]");
-      const adminSession = JSON.parse(sessionStorage.getItem(LOCAL_SHOP_KEY) || "[]");
-      const publicSession = JSON.parse(sessionStorage.getItem(LOCAL_PUBLIC_SHOP_KEY) || "[]");
+    if (!USE_LOCAL_SHOP_CACHE) {
+      return [];
+    }
 
-      return filterDeletedShops(
-        mergeShopLists(
-          mergeShopLists(
-            Array.isArray(publicSaved) ? publicSaved : [],
-            Array.isArray(adminSaved) ? adminSaved : []
-          ),
-          mergeShopLists(
-            Array.isArray(publicSession) ? publicSession : [],
-            Array.isArray(adminSession) ? adminSession : []
-          )
-        )
-      );
+    try {
+      const readItems = (storage, key) => {
+        try {
+          const value = JSON.parse(storage.getItem(key) || "[]");
+
+          return Array.isArray(value) ? value : [];
+        } catch (e) {
+          return [];
+        }
+      };
+
+      const storageKeys = [
+        LOCAL_SHOP_KEY,
+        LOCAL_PUBLIC_SHOP_KEY,
+        LOCAL_MASSAGE_SHOP_KEY,
+        LOCAL_PUBLIC_MASSAGE_SHOP_KEY,
+        LOCAL_SHOP_BACKUP_KEY,
+        LOCAL_MASSAGE_SHOP_BACKUP_KEY,
+        NORA_LOCAL_SHOP_KEY,
+        NORA_LOCAL_PUBLIC_SHOP_KEY,
+        NORA_LOCAL_MASSAGE_SHOP_KEY,
+        NORA_LOCAL_PUBLIC_MASSAGE_SHOP_KEY,
+        NORA_LOCAL_SHOP_BACKUP_KEY,
+        NORA_LOCAL_MASSAGE_SHOP_BACKUP_KEY,
+      ];
+
+      const localItems = storageKeys.flatMap((key) => readItems(localStorage, key));
+      const sessionItems = storageKeys.flatMap((key) => readItems(sessionStorage, key));
+
+      return filterDeletedShops(mergeShopLists(localItems, sessionItems));
     } catch (e) {
       return [];
     }
   };
 
   const saveLocalShops = (items) => {
+    if (!USE_LOCAL_SHOP_CACHE) {
+      return;
+    }
+
     try {
       const nextItems = filterDeletedShops(mergeShopLists([], ensureVisibleList(items)));
+      const storageText = JSON.stringify(nextItems);
+      const storageKeys = [
+        LOCAL_SHOP_KEY,
+        LOCAL_PUBLIC_SHOP_KEY,
+        LOCAL_MASSAGE_SHOP_KEY,
+        LOCAL_PUBLIC_MASSAGE_SHOP_KEY,
+        NORA_LOCAL_SHOP_KEY,
+        NORA_LOCAL_PUBLIC_SHOP_KEY,
+        NORA_LOCAL_MASSAGE_SHOP_KEY,
+        NORA_LOCAL_PUBLIC_MASSAGE_SHOP_KEY,
+      ];
 
-      localStorage.setItem(LOCAL_SHOP_KEY, JSON.stringify(nextItems));
-      localStorage.setItem(LOCAL_PUBLIC_SHOP_KEY, JSON.stringify(nextItems));
-      sessionStorage.setItem(LOCAL_SHOP_KEY, JSON.stringify(nextItems));
-      sessionStorage.setItem(LOCAL_PUBLIC_SHOP_KEY, JSON.stringify(nextItems));
+      storageKeys.forEach((key) => {
+        try {
+          localStorage.setItem(key, storageText);
+        } catch (e) {
+          console.warn("MAP SHOP LOCAL STORAGE SAVE ERROR:", e.message);
+        }
+
+        try {
+          sessionStorage.setItem(key, storageText);
+        } catch (e) {
+          console.warn("MAP SHOP SESSION STORAGE SAVE ERROR:", e.message);
+        }
+      });
 
       window.dispatchEvent(
         new CustomEvent("shops-updated", {
@@ -966,6 +1379,25 @@ function MapPage({ navigate }) {
     }
   };
 
+  const resolveShopRequest = async (requestPromise, localList = []) => {
+    const fallbackList = Array.isArray(localList) ? localList : [];
+
+    if (!fallbackList.length) {
+      return await requestPromise;
+    }
+
+    return await Promise.race([
+      requestPromise,
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            items: fallbackList,
+          });
+        }, 2500);
+      }),
+    ]);
+  };
+
   const filterRegionSearch = (list = []) => {
     const safeKeyword = String(keyword || "").trim().toLowerCase();
     const normalizedKeyword = normalizeSearchText(keyword);
@@ -982,16 +1414,26 @@ function MapPage({ navigate }) {
 
     return filterActiveShops(list).filter((shop) => {
       const name = String(shop?.name || "").toLowerCase();
-      const address = String(shop?.address || "").toLowerCase();
-      const shopRegion = String(shop?.region || "").toLowerCase();
-      const districtText = String(shop?.district || "").toLowerCase();
-      const dongText = String(shop?.dong || "").toLowerCase();
+      const address = String(
+        shop?.address ||
+          shop?.roadAddress ||
+          shop?.fullAddress ||
+          shop?.locationText ||
+          shop?.road_address_name ||
+          shop?.jibunAddress ||
+          shop?.addr ||
+          (typeof shop?.location === "string" ? shop.location : "") ||
+          ""
+      ).toLowerCase();
+      const shopRegion = String(shop?.region || getAddressRegion(address)).toLowerCase();
+      const districtText = String(shop?.district || getAddressDistrict(address)).toLowerCase();
+      const dongText = String(shop?.dong || getAddressDong(address)).toLowerCase();
 
       const normalizedName = normalizeSearchText(shop?.name);
-      const normalizedAddress = normalizeSearchText(shop?.address);
-      const normalizedRegion = normalizeSearchText(shop?.region);
-      const normalizedDistrict = normalizeSearchText(shop?.district);
-      const normalizedDong = normalizeSearchText(shop?.dong);
+      const normalizedAddress = normalizeSearchText(address);
+      const normalizedRegion = normalizeSearchText(shopRegion);
+      const normalizedDistrict = normalizeSearchText(districtText);
+      const normalizedDong = normalizeSearchText(dongText);
       const normalizedSafeDistrict = normalizeSearchText(safeDistrict);
       const normalizedSafeDong = normalizeSearchText(safeDong);
 
@@ -1667,20 +2109,12 @@ function MapPage({ navigate }) {
         );
       }
 
-      const res = await Promise.race([
-        shopApi.getList(),
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              items: localList,
-            });
-          }, 2500);
-        }),
-      ]);
+      const res = await resolveShopRequest(shopApi.getList(MAP_SHOP_CATEGORY_PARAMS), localList);
 
       const apiList = ensureVisibleList(res);
       const list = filterDeletedShops(mergeShopLists(apiList, localList));
-      const geocodedList = await hydrateShopCoordinates(list);
+      const safeList = list.length > 0 ? list : ensureVisibleList(FALLBACK_SHOPS);
+      const geocodedList = await hydrateShopCoordinates(safeList);
       const nextList =
         basePosition && isValidCoord(basePosition.lat, basePosition.lng)
           ? sortShopsByDistance(geocodedList, basePosition.lat, basePosition.lng)
@@ -1696,7 +2130,8 @@ function MapPage({ navigate }) {
       setVisibleCount(INITIAL_VISIBLE_COUNT);
     } catch (e) {
       const localList = ensureVisibleList(readLocalShops());
-      const geocodedList = await hydrateShopCoordinates(localList);
+      const safeList = localList.length > 0 ? localList : ensureVisibleList(FALLBACK_SHOPS);
+      const geocodedList = await hydrateShopCoordinates(safeList);
       const nextList =
         basePosition && isValidCoord(basePosition.lat, basePosition.lng)
           ? sortShopsByDistance(geocodedList, basePosition.lat, basePosition.lng)
@@ -1763,33 +2198,16 @@ function MapPage({ navigate }) {
         );
       }
 
-      const allRes = await Promise.race([
-        shopApi.getList(),
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              items: localList,
-            });
-          }, 2500);
-        }),
-      ]);
+      const allRes = await resolveShopRequest(shopApi.getList(MAP_SHOP_CATEGORY_PARAMS), localList);
 
       const allList = filterDeletedShops(mergeShopLists(ensureVisibleList(allRes), localList));
+      const safeAllList = allList.length > 0 ? allList : ensureVisibleList(FALLBACK_SHOPS);
 
       if (shopApi.getNearby) {
-        const res = await Promise.race([
-          shopApi.getNearby(latNum, lngNum),
-          new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({
-                items: allList,
-              });
-            }, 2500);
-          }),
-        ]);
+        const res = await resolveShopRequest(shopApi.getNearby(latNum, lngNum, MAP_SHOP_CATEGORY_PARAMS), safeAllList);
 
         const nearbyList = ensureVisibleList(res);
-        const mergedList = filterDeletedShops(filterActiveShops(mergeShopLists(nearbyList, allList)));
+        const mergedList = filterDeletedShops(filterActiveShops(mergeShopLists(nearbyList, safeAllList)));
         const geocodedList = await hydrateShopCoordinates(mergedList);
         const sortedList = sortShopsByDistance(geocodedList, latNum, lngNum);
 
@@ -1802,8 +2220,8 @@ function MapPage({ navigate }) {
           setSelectedImage("");
           setVisibleCount(INITIAL_VISIBLE_COUNT);
         }
-      } else if (allList.length > 0) {
-        const geocodedList = await hydrateShopCoordinates(allList);
+      } else if (safeAllList.length > 0) {
+        const geocodedList = await hydrateShopCoordinates(safeAllList);
         const sortedList = sortShopsByDistance(geocodedList, latNum, lngNum);
 
         if (mountedRef.current) {
@@ -1937,6 +2355,18 @@ function MapPage({ navigate }) {
   const handleMoreShops = () => {
     setVisibleCount((prev) => prev + VISIBLE_STEP);
   };
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    if (window.location.pathname !== "/") {
+      initializeKakaoMap();
+    }
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -2090,7 +2520,9 @@ function MapPage({ navigate }) {
       setLoading(true);
       setError("");
 
-      const params = {};
+      const params = {
+        ...MAP_SHOP_CATEGORY_PARAMS,
+      };
 
       if (keyword.trim()) {
         params.keyword = keyword.trim();
@@ -2116,46 +2548,20 @@ function MapPage({ navigate }) {
 
       const res =
         shopApi.search && keyword.trim()
-          ? await Promise.race([
-              shopApi.search(keyword),
-              new Promise((resolve) => {
-                setTimeout(() => {
-                  resolve({
-                    items: localList,
-                  });
-                }, 2500);
-              }),
-            ])
-          : await Promise.race([
-              shopApi.getList(params),
-              new Promise((resolve) => {
-                setTimeout(() => {
-                  resolve({
-                    items: localList,
-                  });
-                }, 2500);
-              }),
-            ]);
+          ? await resolveShopRequest(shopApi.search(keyword), localList)
+          : await resolveShopRequest(shopApi.getList(params), localList);
 
       const apiList = ensureVisibleList(res);
       const filteredApiList = filterRegionSearch(filterDeletedShops(mergeShopLists(apiList, localList)));
 
-      const fallbackRes = await Promise.race([
-        shopApi.getList(),
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              items: localList,
-            });
-          }, 2500);
-        }),
-      ]);
+      const fallbackRes = await resolveShopRequest(shopApi.getList(MAP_SHOP_CATEGORY_PARAMS), localList);
 
       const fallbackList = filterRegionSearch(
         filterDeletedShops(mergeShopLists(ensureVisibleList(fallbackRes), localList))
       );
+      const safeFallbackList = fallbackList.length > 0 ? fallbackList : filterRegionSearch(ensureVisibleList(FALLBACK_SHOPS));
 
-      const list = filteredApiList.length > 0 ? filteredApiList : fallbackList;
+      const list = filteredApiList.length > 0 ? filteredApiList : safeFallbackList;
       const geocodedList = await hydrateShopCoordinates(list);
 
       if (!mountedRef.current) return;
@@ -2169,7 +2575,7 @@ function MapPage({ navigate }) {
       setVisibleCount(INITIAL_VISIBLE_COUNT);
     } catch (e) {
       const localList = ensureVisibleList(readLocalShops());
-      const list = filterRegionSearch(localList);
+      const list = filterRegionSearch(localList.length > 0 ? localList : ensureVisibleList(FALLBACK_SHOPS));
       const geocodedList = await hydrateShopCoordinates(list);
 
       if (!mountedRef.current) return;
@@ -2517,11 +2923,34 @@ function MapPage({ navigate }) {
     return ["건식 관리 60분", "아로마 관리 90분", "타이 관리 60분", "스웨디시 관리 90분"][index % 4];
   };
 
-  const visibleShops = Array.isArray(filterRegionSearch(filterActiveShops(filterDeletedShops(shops))))
-    ? filterRegionSearch(filterActiveShops(filterDeletedShops(shops)))
+  const activeDisplayShops = filterActiveShops(filterDeletedShops(shops));
+
+  const emergencyDisplayShops =
+    activeDisplayShops.length > 0
+      ? activeDisplayShops
+      : ensureVisibleList([
+          ...readLocalShops(),
+          ...FALLBACK_SHOPS,
+        ]);
+
+  const visibleShops = Array.isArray(filterRegionSearch(emergencyDisplayShops))
+    ? filterRegionSearch(emergencyDisplayShops)
     : [];
 
-  const displayShops = visibleShops.length > 0 ? visibleShops : [];
+  const shouldUseInitialRegionFallback =
+    !String(keyword || "").trim() &&
+    String(region || "").trim() === "경남" &&
+    String(district || "").trim() === "김해시" &&
+    String(dong || "").trim() === "전체";
+
+  const displayShops =
+    visibleShops.length > 0
+      ? visibleShops
+      : emergencyDisplayShops.length > 0
+      ? emergencyDisplayShops
+      : shouldUseInitialRegionFallback
+      ? emergencyDisplayShops
+      : [];
 
   const displayedShopList = displayShops.slice(0, visibleCount);
 
@@ -2919,15 +3348,25 @@ function MapPage({ navigate }) {
 
         <section style={styles.right}>
           <div style={styles.mapFrame}>
-            <KakaoMap
-              shops={Array.isArray(mapShops) ? mapShops : []}
-              selectedShopId={selected ? (selected._id || selected.id) : ""}
-              onMarkerClick={handleMarkerClick}
-              onMapMove={handleMapMove}
-              onMyLocation={handleMyLocation}
-              center={position}
-              height="100%"
-            />
+            {mapReady || isKakaoMapReady() ? (
+              <KakaoMap
+                shops={Array.isArray(mapShops) ? mapShops : []}
+                selectedShopId={selected ? (selected._id || selected.id) : ""}
+                onMarkerClick={handleMarkerClick}
+                onMapMove={handleMapMove}
+                onMyLocation={handleMyLocation}
+                center={position}
+                height="100%"
+              />
+            ) : (
+              <div style={styles.mapStateLayer}>
+                {mapLoadError ? (
+                  <ErrorMessage message={mapLoadError} onRetry={retryKakaoMapLoad} />
+                ) : (
+                  <Loading message="카카오맵 불러오는 중..." />
+                )}
+              </div>
+            )}
 
             <div style={styles.mapTint} />
             <div style={styles.mapGrid} />
@@ -3976,6 +4415,18 @@ const styles = {
     background: "#000",
     boxShadow:
       "0 0 10px rgba(255, 212, 0, 0.32), inset 0 0 18px rgba(255, 212, 0, 0.04)",
+  },
+  mapStateLayer: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 1,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    boxSizing: "border-box",
+    background:
+      "radial-gradient(circle at 50% 44%, rgba(255, 212, 0, 0.08), transparent 20%), linear-gradient(180deg, rgba(12, 12, 12, 0.96), rgba(0, 0, 0, 1))",
   },
   mapTint: {
     pointerEvents: "none",

@@ -1,23 +1,41 @@
 "use strict";
 
-if (typeof process === "undefined") {
+import axios from "axios";
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.process === "undefined"
+) {
   window.process = { env: {} };
 }
 
-import axios from "axios";
+const isLocalHost =
+  typeof window !== "undefined" &&
+  (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
 
-/**
- * =====================================================
- * REVIEW API SERVICE
- * =====================================================
- */
+const API_BASE_URL =
+  (
+    typeof window !== "undefined" &&
+    window.__ENV__ &&
+    window.__ENV__.API_BASE_URL
+  ) ||
+  (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    (
+      import.meta.env.VITE_API_BASE_URL ||
+      import.meta.env.VITE_API_URL
+    )
+  ) ||
+  "https://api.nora365.co.kr/api";
 
 const API = axios.create({
-  baseURL:
-    process.env.REACT_APP_API_URL ||
-    window.__ENV__?.API_BASE_URL ||
-    "http://localhost:10000/api",
+  baseURL: API_BASE_URL,
   timeout: 10000,
+  withCredentials: true,
 });
 
 try {
@@ -84,16 +102,16 @@ function isLoginPage() {
 function getToken() {
   try {
     return (
+      localStorage.getItem("adminToken") ||
       localStorage.getItem("token") ||
       localStorage.getItem("accessToken") ||
       localStorage.getItem("authToken") ||
-      localStorage.getItem("adminToken") ||
       localStorage.getItem("jwt") ||
       localStorage.getItem("local-admin-token") ||
+      sessionStorage.getItem("adminToken") ||
       sessionStorage.getItem("token") ||
       sessionStorage.getItem("accessToken") ||
       sessionStorage.getItem("authToken") ||
-      sessionStorage.getItem("adminToken") ||
       sessionStorage.getItem("jwt") ||
       sessionStorage.getItem("local-admin-token") ||
       ""

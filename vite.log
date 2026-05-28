@@ -1,0 +1,59 @@
+
+> noma-platform@1.0.0 dev
+> cross-env NODE_ENV=development nodemon src/server.js --host 0.0.0.0 --port 5173
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node src/server.js --host 0.0.0.0 --port 5173`[39m
+🔥 ENV LOADED: /home/ubuntu/noma-project/.env
+🔥 ENV CONFIG READY: development
+🔥 DATABASE CONFIG READY
+🟡 Mongo URI Loaded: mongodb+srv://noma:****@cluster0.rrqqqvu.mongodb.net/mazzang?retryWrites=true&w=majority&appName=Cluster0
+✅ DB CONNECTED mazzang
+🟢 DB EVENT: connected
+🔥 MongoDB CONNECTED
+DB CONNECTED
+🔥 USER MODEL FINAL STABLE READY
+🔥 AUTH ROUTES FINAL SAFE READY
+🔥 AUTH ULTRA MASTER READY
+🔥 ADMIN GUARD READY
+🔥 RESERVATION FINAL ULTRA COMPLETE v3 READY
+🔥 REVIEW MODEL ULTRA COMPLETE READY
+🔥 INQUIRY MODEL 100% COMPLETE
+🔥 INQUIRY ULTRA PATCH 100% COMPLETE
+🔥 adminController FINAL EXPANDED (NO LOSS)
+🔥 PAYMENT MODEL FINAL ULTRA COMPLETE READY
+🔥 PAYMENT SERVICE ULTIMATE READY
+🔥 PAYMENT CONTROLLER FINAL MASTER READY
+🔥 Reservation Model READY
+🔥 Reservation Model READY
+🔥 reservationController FINAL MASTER READY
+🔥 SHOP RANKING SERVICE ULTRA FINAL READY
+🔥 SHOP CONTROLLER READY
+🔥 USER CONTROLLER READY
+🔥 NOTIFICATION SERVICE READY
+🔥 NOTIFICATION CONTROLLER READY
+🔥 CACHE SERVICE FINAL MASTER READY
+🔥 QUEUE CREATED: payment
+🔥 QUEUE CREATED: reservation
+🔥 QUEUE CREATED: ranking
+🔥 QUEUE CREATED: cache
+🔥 QUEUE CREATED: notification
+🔥 QUEUE SYSTEM READY
+🔥 admin.routes FINAL READY
+🔥 SHOP ROUTES FINAL MASTER PATCH READY
+🔥 USER ROUTES FINAL READY
+🔥 RESERVATION ROUTES FINAL MASTER READY
+🔥 REVIEW ROUTE FINAL READY
+🔥 PAYMENT ROUTES FINAL READY
+🔥 authRoutes mounted
+🔥 adminRoutes mounted
+🔥 userRoutes mounted
+🔥 reservationRoutes mounted
+🔥 shopRoutes mounted
+🔥 reviewRoutes mounted
+🔥 paymentRoutes mounted
+🔥 paymentVerifyRoutes mounted
+❌ PORT 10000 ALREADY IN USE

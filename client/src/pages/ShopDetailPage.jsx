@@ -21,7 +21,7 @@ const SELECTED_SHOP_KEY = "noma_selected_shop";
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   import.meta.env.VITE_SERVER_URL ||
-  "http://localhost:5000";
+  "https://api.nora365.co.kr";
 
 const FALLBACK_SHOP = {
   _id: "local-noma-detail",

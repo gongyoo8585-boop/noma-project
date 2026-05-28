@@ -76,7 +76,7 @@ mongoose.connection.on("error", (error) => {
   console.error("❌ DB CONNECTION ERROR:", error?.message || error);
 });
 
-const PROJECT_ROOT = path.resolve(__dirname);
+const PROJECT_ROOT = path.resolve(__dirname, "..");
 
 function resolveExistingModule(relativePath) {
   const basePath = path.resolve(PROJECT_ROOT, relativePath);
@@ -127,27 +127,11 @@ function normalizeRouteModule(mod, label = "route") {
       mod.routes,
       mod.route,
       mod.app,
-      mod.authRouter,
-      mod.adminRouter,
-      mod.userRouter,
-      mod.shopRouter,
-      mod.reservationRouter,
-      mod.reviewRouter,
-      mod.paymentRouter,
-      mod.paymentVerifyRouter,
-      mod.notificationRouter,
-      mod.analyticsRouter,
     ];
 
     for (const candidate of candidates) {
       if (typeof candidate === "function") {
         return candidate;
-      }
-    }
-
-    for (const value of Object.values(mod)) {
-      if (typeof value === "function") {
-        return value;
       }
     }
   }
@@ -183,134 +167,91 @@ function getDbModule() {
 
   dbModule =
     safeRequire("config/database", "config/database") ||
-    safeRequire("config/db", "config/db") ||
     safeRequire("db", "db");
 
   return dbModule;
 }
 
-let User = null;
-let Shop = null;
-let authRoutes = null;
-let adminRoutes = null;
-let shopRoutes = null;
-let userRoutes = null;
-let reservationRoutes = null;
-let reviewRoutes = null;
-let paymentRoutes = null;
-let paymentVerifyRoutes = null;
-let applicationModulesLoaded = false;
-let applicationRoutesMounted = false;
+const User = safeRequire("models/User", "models/User");
+const Shop = safeRequire("models/Shop", "models/Shop");
 
-function loadApplicationModules({ includeDbRoutes = false } = {}) {
-  if (applicationModulesLoaded && (!includeDbRoutes || shopRoutes)) {
-    return;
-  }
+const authRoutes = loadRouteModule(
+  [
+    "server/routes/auth/auth.routes",
+    "server/routes/auth.routes",
+    "routes/auth.routes",
+    "routes/auth/auth.routes",
+  ],
+  "authRoutes"
+);
 
-  if (!User) {
-    User = safeRequire("models/User", "models/User");
-  }
+const adminRoutes = loadRouteModule(
+  [
+    "routes/admin/admin.routes",
+    "routes/admin.routes",
+    "server/routes/admin/admin.routes",
+    "server/routes/admin.routes",
+  ],
+  "adminRoutes"
+);
 
-  if (!Shop) {
-    Shop = safeRequire("models/Shop", "models/Shop");
-  }
+const shopRoutes = loadRouteModule(
+  [
+    "routes/shop/shop.routes",
+    "routes/shop_routes",
+    "server/routes/shop.routes",
+    "server/routes/shop/shop.routes",
+  ],
+  "shopRoutes"
+);
 
-  if (!authRoutes) {
-    authRoutes = loadRouteModule(
-      [
-        "server/routes/auth/auth.routes",
-        "server/routes/auth.routes",
-        "routes/auth.routes",
-        "routes/auth/auth.routes",
-      ],
-      "authRoutes"
-    );
-  }
+const userRoutes = loadRouteModule(
+  [
+    "routes/user/user.routes",
+    "routes/user.routes",
+    "server/routes/user.routes",
+    "server/routes/user/user.routes",
+  ],
+  "userRoutes"
+);
 
-  if (!adminRoutes) {
-    adminRoutes = loadRouteModule(
-      [
-        "routes/admin/admin.routes",
-        "routes/admin.routes",
-        "server/routes/admin/admin.routes",
-        "server/routes/admin.routes",
-      ],
-      "adminRoutes"
-    );
-  }
+const reservationRoutes = loadRouteModule(
+  [
+    "routes/reservation/reservation.routes",
+    "routes/reservation.routes",
+    "server/routes/reservation.routes",
+    "server/routes/reservation/reservation.routes",
+  ],
+  "reservationRoutes"
+);
 
-  if (includeDbRoutes && !shopRoutes) {
-    shopRoutes = loadRouteModule(
-      [
-        "routes/shop/shop.routes",
-        "routes/shop_routes",
-        "server/routes/shop.routes",
-        "server/routes/shop/shop.routes",
-      ],
-      "shopRoutes"
-    );
-  }
+const reviewRoutes = loadRouteModule(
+  [
+    "routes/etc/review.routes",
+    "routes/review/review.routes",
+    "routes/review.routes",
+    "server/routes/review.routes",
+  ],
+  "reviewRoutes"
+);
 
-  if (!userRoutes) {
-    userRoutes = loadRouteModule(
-      [
-        "routes/user/user.routes",
-        "routes/user.routes",
-        "server/routes/user.routes",
-        "server/routes/user/user.routes",
-      ],
-      "userRoutes"
-    );
-  }
+const paymentRoutes = loadRouteModule(
+  [
+    "routes/payment/payment.routes",
+    "routes/payment.routes",
+    "server/routes/payment.routes",
+  ],
+  "paymentRoutes"
+);
 
-  if (!reservationRoutes) {
-    reservationRoutes = loadRouteModule(
-      [
-        "routes/reservation/reservation.routes",
-        "routes/reservation.routes",
-        "server/routes/reservation.routes",
-        "server/routes/reservation/reservation.routes",
-      ],
-      "reservationRoutes"
-    );
-  }
-
-  if (!reviewRoutes) {
-    reviewRoutes = loadRouteModule(
-      [
-        "routes/etc/review.routes",
-        "routes/review/review.routes",
-        "routes/review.routes",
-        "server/routes/review.routes",
-      ],
-      "reviewRoutes"
-    );
-  }
-
-  if (!paymentRoutes) {
-    paymentRoutes = loadRouteModule(
-      [
-        "routes/payment/payment.routes",
-        "routes/payment.routes",
-        "server/routes/payment.routes",
-      ],
-      "paymentRoutes"
-    );
-  }
-
-  if (!paymentVerifyRoutes) {
-    paymentVerifyRoutes = loadRouteModule(
-      [
-        "routes/payment/payment.verify.routes",
-        "routes/payment.verify.routes",
-        "server/routes/payment.verify.routes",
-      ],
-      "paymentVerifyRoutes"
-    );
-  }
-
-  applicationModulesLoaded = true;
-}
+const paymentVerifyRoutes = loadRouteModule(
+  [
+    "routes/payment/payment.verify.routes",
+    "routes/payment.verify.routes",
+    "server/routes/payment.verify.routes",
+  ],
+  "paymentVerifyRoutes"
+);
 
 const app = express();
 const server = http.createServer(app);
@@ -396,7 +337,6 @@ if (!JWT_SECRET) {
 const CACHE = new Map();
 let REQUEST_COUNT = 0;
 let isStarting = false;
-let dbConnectPromise = null;
 
 process.on("uncaughtException", (error) => {
   console.error("❌ UNCAUGHT EXCEPTION:", error);
@@ -506,11 +446,6 @@ async function connectDatabase() {
     return true;
   }
 
-  if (dbConnectPromise) {
-    await dbConnectPromise;
-    return isDbReady();
-  }
-
   if (mongoose.connection.readyState === 2) {
     return false;
   }
@@ -521,24 +456,12 @@ async function connectDatabase() {
     dbFallbackModule &&
     typeof dbFallbackModule.ensureDBConnection === "function"
   ) {
-    dbConnectPromise = Promise.resolve()
-      .then(() => dbFallbackModule.ensureDBConnection())
-      .finally(() => {
-        dbConnectPromise = null;
-      });
-
-    await dbConnectPromise;
+    await dbFallbackModule.ensureDBConnection();
     return isDbReady();
   }
 
   if (dbFallbackModule && typeof dbFallbackModule.connectDB === "function") {
-    dbConnectPromise = Promise.resolve()
-      .then(() => dbFallbackModule.connectDB())
-      .finally(() => {
-        dbConnectPromise = null;
-      });
-
-    await dbConnectPromise;
+    await dbFallbackModule.connectDB();
     return isDbReady();
   }
 
@@ -547,30 +470,22 @@ async function connectDatabase() {
   if (mongoUri) {
     console.log("🔌 DB CONNECT TRY:", maskMongoUri(mongoUri));
 
-    dbConnectPromise = mongoose
-      .connect(mongoUri, {
-        dbName: process.env.DB_NAME || undefined,
-        autoIndex: String(process.env.MONGOOSE_AUTO_INDEX || "false") === "true",
-        autoCreate: String(process.env.MONGOOSE_AUTO_CREATE || "false") === "true",
-        bufferCommands: false,
-        serverSelectionTimeoutMS: Number(
-          process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
-            process.env.MONGO_CONNECT_TIMEOUT_MS ||
-            10000
-        ),
-        connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000),
-        socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
-        maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
-        minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
-        maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
-        heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
-        retryWrites: true,
-      })
-      .finally(() => {
-        dbConnectPromise = null;
-      });
+    await mongoose.connect(mongoUri, {
+      dbName: process.env.DB_NAME || undefined,
+      autoIndex: false,
+      autoCreate: false,
+      serverSelectionTimeoutMS: Number(
+        process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
+          process.env.MONGO_CONNECT_TIMEOUT_MS ||
+          10000
+      ),
+      socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
+      maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
+      minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
+      maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
+      heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
+    });
 
-    await dbConnectPromise;
     return isDbReady();
   }
 
@@ -600,10 +515,9 @@ async function ensureDbReady() {
     }
 
     const startedAt = Date.now();
-    const waitTimeoutMs = Number(process.env.MONGO_WAIT_TIMEOUT_MS || 15000);
 
     while (!isDbReady()) {
-      if (Date.now() - startedAt > waitTimeoutMs) {
+      if (Date.now() - startedAt > 15000) {
         return false;
       }
 
@@ -825,52 +739,47 @@ function mountRoute(mountPath, routeModule, label) {
   return true;
 }
 
-function mountApplicationRoutes() {
-  if (applicationRoutesMounted) {
-    return;
+if (authRoutes) {
+  mountRoute("/api/auth", authRoutes, "authRoutes");
+}
+
+if (adminRoutes) {
+  mountRoute("/api/admin", adminRoutes, "adminRoutes");
+}
+
+if (userRoutes) {
+  mountRoute("/api/users", userRoutes, "userRoutes");
+}
+
+if (reservationRoutes) {
+  mountRoute("/api/reservations", reservationRoutes, "reservationRoutes");
+}
+
+if (shopRoutes) {
+  if (mountRoute("/api/shops", shopRoutes, "shopRoutes")) {
+    app.use("/api/shops", (err, req, res, next) => {
+      console.error("SHOP ROUTE ERROR:", err);
+
+      if (req.method === "GET") {
+        return normalizeShopFallbackResponse(res);
+      }
+
+      return fail(res, 500, err?.message || "SHOP_ROUTE_ERROR");
+    });
   }
+}
 
-  if (authRoutes) {
-    mountRoute("/api/auth", authRoutes, "authRoutes");
-  }
+if (reviewRoutes) {
+  mountRoute("/api/reviews", reviewRoutes, "reviewRoutes");
+}
 
-  if (adminRoutes) {
-    mountRoute("/api/admin", adminRoutes, "adminRoutes");
-  }
+if (paymentRoutes) {
+  mountRoute("/api/payments", paymentRoutes, "paymentRoutes");
+}
 
-  if (userRoutes) {
-    mountRoute("/api/users", userRoutes, "userRoutes");
-  }
-
-  if (reservationRoutes) {
-    mountRoute("/api/reservations", reservationRoutes, "reservationRoutes");
-  }
-
-  if (shopRoutes) {
-    if (mountRoute("/api/shops", shopRoutes, "shopRoutes")) {
-      app.use("/api/shops", (err, req, res, next) => {
-        console.error("SHOP ROUTE ERROR:", err);
-
-        if (req.method === "GET") {
-          return normalizeShopFallbackResponse(res);
-        }
-
-        return fail(res, 500, err?.message || "SHOP_ROUTE_ERROR");
-      });
-    }
-  }
-
-  if (reviewRoutes) {
-    mountRoute("/api/reviews", reviewRoutes, "reviewRoutes");
-  }
-
-  if (paymentRoutes) {
-    mountRoute("/api/payments", paymentRoutes, "paymentRoutes");
-  }
-
-  if (paymentVerifyRoutes) {
-    mountRoute("/api/payment/verify", paymentVerifyRoutes, "paymentVerifyRoutes");
-  }
+if (paymentVerifyRoutes) {
+  mountRoute("/api/payment/verify", paymentVerifyRoutes, "paymentVerifyRoutes");
+}
 
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -999,87 +908,68 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-  if (!shopRoutes) {
-    app.get("/api/shops", async (req, res) => {
-      try {
-        if (!Shop) {
-          return normalizeShopFallbackResponse(res);
-        }
-
-        if (!isDbReady()) {
-          return normalizeShopFallbackResponse(res);
-        }
-
-        const items = await Shop.find({}).limit(300).lean();
-
-        return ok(res, {
-          items,
-          list: items,
-          shops: items,
-          total: items.length,
-        });
-      } catch (err) {
-        console.error("SHOP ERROR:", err.message);
-
+if (!shopRoutes) {
+  app.get("/api/shops", async (req, res) => {
+    try {
+      if (!Shop) {
         return normalizeShopFallbackResponse(res);
       }
-    });
-  }
 
-  applicationRoutesMounted = true;
-}
+      if (!isDbReady()) {
+        return normalizeShopFallbackResponse(res);
+      }
 
-if (!global.__NORA_SERVER_SOCKET_BOUND__) {
-  global.__NORA_SERVER_SOCKET_BOUND__ = true;
+      const items = await Shop.find({}).limit(300).lean();
 
-  io.on("connection", (socket) => {
-    console.log("🔌 SOCKET CONNECT:", socket.id);
+      return ok(res, {
+        items,
+        list: items,
+        shops: items,
+        total: items.length,
+      });
+    } catch (err) {
+      console.error("SHOP ERROR:", err.message);
 
-    socket.on("ping", () => {
-      socket.emit("pong");
-    });
-
-    socket.on("disconnect", () => {
-      console.log("❌ SOCKET DISCONNECT:", socket.id);
-    });
-  });
-}
-
-let finalHandlersMounted = false;
-
-function mountFinalHandlers() {
-  if (finalHandlersMounted) {
-    return;
-  }
-
-  app.get(/.*/, (req, res, next) => {
-    if (req.originalUrl.startsWith("/api")) {
-      return next();
+      return normalizeShopFallbackResponse(res);
     }
-
-    return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
   });
-
-  app.use((req, res) => fail(res, 404, "NOT_FOUND"));
-
-  app.use((err, req, res, next) => {
-    console.error("SERVER ERROR:", err);
-
-    return fail(res, 500, "SERVER_ERROR");
-  });
-
-  finalHandlersMounted = true;
 }
+
+io.on("connection", (socket) => {
+  console.log("🔌 SOCKET CONNECT:", socket.id);
+
+  socket.on("ping", () => {
+    socket.emit("pong");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ SOCKET DISCONNECT:", socket.id);
+  });
+});
+
+app.get(/.*/, (req, res, next) => {
+  if (req.originalUrl.startsWith("/api")) {
+    return next();
+  }
+
+  return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
+});
+
+app.use((req, res) => fail(res, 404, "NOT_FOUND"));
+
+app.use((err, req, res, next) => {
+  console.error("SERVER ERROR:", err);
+
+  return fail(res, 500, "SERVER_ERROR");
+});
 
 let isServerListening = false;
 
 function startServer() {
-  if (isServerListening || global.__NORA_ROOT_SERVER_LISTENING__) {
+  if (isServerListening) {
     console.warn("⚠️ SERVER ALREADY LISTENING");
     return;
   }
-
-  global.__NORA_ROOT_SERVER_LISTENING__ = true;
 
   server.once("error", (error) => {
     if (error.code === "EADDRINUSE") {
@@ -1110,44 +1000,14 @@ async function start() {
       console.warn("⚠️ DB NOT CONNECTED - LOCAL FALLBACK ACTIVE");
     }
 
-    loadApplicationModules({ includeDbRoutes: isDbReady() });
-    mountApplicationRoutes();
-    mountFinalHandlers();
     startServer();
   } catch (e) {
     console.error("❌ START ERROR:", e);
 
-    if (!applicationModulesLoaded) {
-      loadApplicationModules({ includeDbRoutes: false });
-    }
+    startServer();
 
-    if (!applicationRoutesMounted) {
-      mountApplicationRoutes();
-    }
-
-    if (!finalHandlersMounted) {
-      mountFinalHandlers();
-    }
-
-    if (!isServerListening) {
-      startServer();
-      console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
-    }
+    console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
   }
 }
 
-if (
-  require.main === module &&
-  !global.__NORA_SERVER_BOOTSTRAPPED__
-) {
-  global.__NORA_SERVER_BOOTSTRAPPED__ = true;
-
-  start();
-}
-
-module.exports = {
-  app,
-  server,
-  io,
-  start,
-};
+start();

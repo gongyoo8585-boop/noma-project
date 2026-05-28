@@ -99,7 +99,7 @@ const VISIBLE_STEP = 12;
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   import.meta.env.VITE_SERVER_URL ||
-  "http://localhost:5000";
+  "https://api.nora365.co.kr";
 
 const FALLBACK_SHOP_IMAGES = [
   "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=800&q=80",

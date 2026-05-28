@@ -1,25 +1,41 @@
-// /client/src/services/reservation.api.js
-
 "use strict";
-
-if (typeof process === "undefined") {
-  window.process = { env: {} };
-}
 
 import axios from "axios";
 
-/**
- * =====================================================
- * RESERVATION API
- * =====================================================
- */
+if (
+  typeof window !== "undefined" &&
+  typeof window.process === "undefined"
+) {
+  window.process = { env: {} };
+}
+
+const isLocalHost =
+  typeof window !== "undefined" &&
+  (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+
+const API_BASE_URL =
+  (
+    typeof window !== "undefined" &&
+    window.__ENV__ &&
+    window.__ENV__.API_BASE_URL
+  ) ||
+  (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    (
+      import.meta.env.VITE_API_BASE_URL ||
+      import.meta.env.VITE_API_URL
+    )
+  ) ||
+  "https://api.nora365.co.kr/api";
 
 const API = axios.create({
-  baseURL:
-    process.env.REACT_APP_API_URL ||
-    window.__ENV__?.API_BASE_URL ||
-    "http://localhost:10000/api",
+  baseURL: API_BASE_URL,
   timeout: 10000,
+  withCredentials: true,
 });
 
 try {
@@ -121,10 +137,10 @@ function removeStorageItem(key) {
 
 function getToken() {
   return (
+    getStorageItem("adminToken") ||
     getStorageItem("token") ||
     getStorageItem("accessToken") ||
     getStorageItem("authToken") ||
-    getStorageItem("adminToken") ||
     getStorageItem("jwt") ||
     getStorageItem("local-admin-token") ||
     ""
