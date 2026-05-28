@@ -211,7 +211,7 @@ function LoginPage({ navigate, setUser }) {
 
       setRedirecting(true);
 
-      go("/");
+      go("/admin/dashboard");
     } catch (e) {
       console.error("FALLBACK LOGIN ERROR:", e);
 
@@ -309,7 +309,7 @@ function LoginPage({ navigate, setUser }) {
 
       setRedirecting(true);
 
-      go("/");
+      go("/admin/dashboard");
     } catch (e) {
       console.error("LOGIN ERROR:", e);
 
