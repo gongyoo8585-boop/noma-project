@@ -14,7 +14,7 @@ jobs:
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -30,16 +30,30 @@ jobs:
         run: npm install
 
       - name: Check Root Server
-        run: npm run check || node -e "console.log('NORA root check pass')"
+        run: |
+          if [ -f server.js ]; then
+            node --check server.js
+          fi
+
+          if [ -f src/server.js ]; then
+            node --check src/server.js
+          fi
+
+          npm run check || echo "NORA root check skipped"
 
       - name: Install Client Dependencies
         if: ${{ hashFiles('client/package.json') != '' }}
         working-directory: client
-        run: npm install
+        run: |
+          npm install
+          npm install @rollup/rollup-linux-x64-gnu --save-dev || true
+          chmod +x node_modules/.bin/vite || true
 
       - name: Build Client
         if: ${{ hashFiles('client/package.json') != '' }}
         working-directory: client
+        env:
+          CI: false
         run: npm run build
 
   deploy:
@@ -69,20 +83,50 @@ jobs:
           script: |
             set -e
 
+            echo "=================================="
             echo "NORA DEPLOY START"
+            echo "=================================="
 
             cd "${{ secrets.PROJECT_PATH }}"
 
+            echo "=================================="
+            echo "GIT SYNC"
+            echo "=================================="
+
             git fetch origin main
             git reset --hard origin/main
-            git clean -fd
+            git clean -fd --exclude=.env --exclude=.env.production --exclude=uploads --exclude=client/dist
+
+            echo "=================================="
+            echo "ROOT INSTALL"
+            echo "=================================="
 
             npm install
 
+            echo "=================================="
+            echo "SERVER SYNTAX CHECK"
+            echo "=================================="
+
+            if [ -f server.js ]; then
+              node --check server.js
+            fi
+
+            if [ -f src/server.js ]; then
+              node --check src/server.js
+            fi
+
+            echo "=================================="
+            echo "CLIENT INSTALL AND BUILD"
+            echo "=================================="
+
             if [ -d client ]; then
               cd client
+
               npm install
-              npm run build
+              npm install @rollup/rollup-linux-x64-gnu --save-dev || true
+              chmod +x node_modules/.bin/vite || true
+
+              CI=false npm run build
 
               if [ ! -d dist ]; then
                 echo "client/dist not found"
@@ -92,29 +136,80 @@ jobs:
               cd ..
             fi
 
+            echo "=================================="
+            echo "ENV CHECK"
+            echo "=================================="
+
             if [ ! -f .env ] && [ ! -f .env.production ]; then
               echo ".env or .env.production not found"
               exit 1
             fi
 
+            if ! grep -q "^JWT_SECRET=" .env .env.production 2>/dev/null; then
+              echo "JWT_SECRET not found"
+              exit 1
+            fi
+
+            echo "=================================="
+            echo "PM2 RESTART"
+            echo "=================================="
+
             if pm2 describe nora-api > /dev/null 2>&1; then
-              pm2 restart nora-api --update-env
+              pm2 restart ecosystem.config.js --only nora-api --env production --update-env
             else
-              pm2 start ecosystem.config.js --only nora-api
+              pm2 start ecosystem.config.js --only nora-api --env production
             fi
 
             pm2 save
 
+            echo "=================================="
             echo "WAIT SERVER START"
-            sleep 15
+            echo "=================================="
+
+            sleep 20
+
+            pm2 describe nora-api
+            pm2 logs nora-api --lines 100 --nostream
+
+            if ! pm2 pid nora-api > /dev/null 2>&1; then
+              echo "nora-api pm2 pid not found"
+              exit 1
+            fi
+
+            echo "=================================="
+            echo "NGINX CHECK AND RELOAD"
+            echo "=================================="
 
             sudo systemctl daemon-reload
             sudo nginx -t
             sudo systemctl reload nginx
 
-            curl -f --max-time 30 http://127.0.0.1:10000/api/health
+            echo "=================================="
+            echo "LOCAL API HEALTH CHECK"
+            echo "=================================="
 
+            for i in 1 2 3 4 5; do
+              if curl -f --max-time 30 http://127.0.0.1:10000/api/health; then
+                break
+              fi
+
+              if [ "$i" = "5" ]; then
+                echo "local api health check failed"
+                exit 1
+              fi
+
+              sleep 5
+            done
+
+            echo "=================================="
+            echo "PUBLIC API HEALTH CHECK"
+            echo "=================================="
+
+            curl -f --max-time 30 https://api.nora365.co.kr/api/health
+
+            echo "=================================="
             echo "NORA DEPLOY SUCCESS"
+            echo "=================================="
 
   health-check:
     name: Health Check
