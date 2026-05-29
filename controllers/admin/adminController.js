@@ -37,6 +37,168 @@ function safeNum(v, d = 0) { const n = Number(v); return Number.isFinite(n) ? n 
 function safeStr(v) { return String(v || "").trim(); }
 function escapeRegex(v) { return String(v || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
+function normalizeAdminCategory(value) {
+  const text = safeStr(value).toLowerCase();
+
+  if (
+    text === "karaoke" ||
+    text === "노래방" ||
+    text === "가라오케" ||
+    text === "coin-karaoke" ||
+    text === "coin_karaoke" ||
+    text === "nora-karaoke" ||
+    text === "nora_karaoke"
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text === "massage" ||
+    text === "마사지" ||
+    text === "shop" ||
+    text === "nora-massage" ||
+    text === "nora_massage"
+  ) {
+    return "massage";
+  }
+
+  if (
+    text.includes("karaoke") ||
+    text.includes("노래방") ||
+    text.includes("가라오케") ||
+    text.includes("코인")
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text.includes("massage") ||
+    text.includes("마사지") ||
+    text.includes("테라피") ||
+    text.includes("아로마") ||
+    text.includes("스웨디시")
+  ) {
+    return "massage";
+  }
+
+  return "";
+}
+
+function getRequestAdminCategory(req) {
+  const explicitCategory =
+    normalizeAdminCategory(req.query?.category) ||
+    normalizeAdminCategory(req.query?.shopCategory) ||
+    normalizeAdminCategory(req.query?.serviceType) ||
+    normalizeAdminCategory(req.query?.businessType) ||
+    normalizeAdminCategory(req.query?.adminCategory) ||
+    normalizeAdminCategory(req.body?.category) ||
+    normalizeAdminCategory(req.body?.shopCategory) ||
+    normalizeAdminCategory(req.body?.serviceType) ||
+    normalizeAdminCategory(req.body?.businessType) ||
+    normalizeAdminCategory(req.body?.adminCategory);
+
+  if (explicitCategory) return explicitCategory;
+
+  const requestPath = safeStr(
+    req.originalUrl ||
+    req.url ||
+    req.path ||
+    ""
+  ).toLowerCase();
+
+  if (
+    requestPath.includes("/karaoke") ||
+    requestPath.includes("category=karaoke") ||
+    requestPath.includes("shopcategory=karaoke") ||
+    requestPath.includes("servicetype=karaoke") ||
+    requestPath.includes("businesstype=karaoke") ||
+    requestPath.includes("admincategory=karaoke")
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    requestPath.includes("/massage") ||
+    requestPath.includes("category=massage") ||
+    requestPath.includes("shopcategory=massage") ||
+    requestPath.includes("servicetype=massage") ||
+    requestPath.includes("businesstype=massage") ||
+    requestPath.includes("admincategory=massage")
+  ) {
+    return "massage";
+  }
+
+  return "all";
+}
+
+function getShopCategoryQuery(category) {
+  const normalizedCategory = normalizeAdminCategory(category);
+
+  const categoryFields = [
+    "category",
+    "shopCategory",
+    "serviceType",
+    "businessType",
+    "adminCategory",
+    "categoryGroup",
+    "shopType",
+    "mainCategory",
+    "service",
+  ];
+
+  const karaokeValues = [
+    "karaoke",
+    "노래방",
+    "가라오케",
+    "coin-karaoke",
+    "coin_karaoke",
+    "nora-karaoke",
+    "nora_karaoke",
+  ];
+
+  const massageValues = [
+    "massage",
+    "마사지",
+    "shop",
+    "nora-massage",
+    "nora_massage",
+  ];
+
+  const karaokeRegex = /(karaoke|노래방|가라오케|코인)/i;
+  const massageRegex = /(massage|마사지|테라피|아로마|스웨디시)/i;
+
+  if (!normalizedCategory) {
+    return {};
+  }
+
+  if (normalizedCategory === "karaoke") {
+    return {
+      $or: [
+        ...categoryFields.map((field) => ({
+          [field]: { $in: karaokeValues },
+        })),
+        ...categoryFields.map((field) => ({
+          [field]: karaokeRegex,
+        })),
+      ],
+    };
+  }
+
+  if (normalizedCategory === "massage") {
+    return {
+      $or: [
+        ...categoryFields.map((field) => ({
+          [field]: { $in: massageValues },
+        })),
+        ...categoryFields.map((field) => ({
+          [field]: massageRegex,
+        })),
+      ],
+    };
+  }
+
+  return {};
+}
 function ok(res, data = {}) { return res.json({ ok: true, ...data }); }
 function fail(res, status = 400, msg = "ERROR") { return res.status(status).json({ ok: false, msg }); }
 
@@ -65,6 +227,13 @@ function normalizeShop(s) {
     region: s.region || "",
     rating: safeNum(s.ratingAvg),
     reservationCount: safeNum(s.reservationCount),
+    category: s.category || "",
+    shopCategory: s.shopCategory || "",
+    serviceType: s.serviceType || "",
+    businessType: s.businessType || "",
+    adminCategory: s.adminCategory || "",
+    visible: s.visible !== false,
+    status: s.status || "active",
     isDeleted: !!s.isDeleted
   };
 }
@@ -95,17 +264,55 @@ function safe(fn) {
 ===================================================== */
 
 exports.getFull = safe(async (req, res) => {
-  if (isFresh(ADMIN_CACHE.dashboardAt)) {
-    log("dashboard.cache");
-    return ok(res, ADMIN_CACHE.dashboard);
+  const adminCategory = getRequestAdminCategory(req);
+  const cacheKey = `dashboard_${adminCategory}`;
+  const cacheAtKey = `dashboardAt_${adminCategory}`;
+
+  if (ADMIN_CACHE[cacheKey] && isFresh(ADMIN_CACHE[cacheAtKey])) {
+    log("dashboard.cache", { category: adminCategory });
+    return ok(res, ADMIN_CACHE[cacheKey]);
   }
 
-  const [users, shops, reservations, reviews, inquiries] = await Promise.all([
-    User.countDocuments({ isDeleted: { $ne: true } }),
-    Shop.countDocuments({ isDeleted: false }),
-    Reservation.countDocuments(),
-    Review ? Review.countDocuments() : 0,
-    Inquiry ? Inquiry.countDocuments() : 0
+  const dashboardShopBaseQuery = {
+    isDeleted: { $ne: true },
+    visible: { $ne: false },
+    status: {
+      $nin: [
+        "deleted",
+        "inactive",
+        "disabled",
+        "hidden",
+        "closed",
+      ],
+    },
+  };
+
+  const dashboardShopQuery = {
+    $and: [
+      dashboardShopBaseQuery,
+      getShopCategoryQuery(adminCategory),
+    ],
+  };
+
+  const [users, shops, reservations, reviews, inquiries, recentShops] = await Promise.all([
+    User.countDocuments({
+      isDeleted: false
+    }),
+
+    Shop.countDocuments(dashboardShopQuery),
+
+    Reservation.countDocuments({
+      isDeleted: false
+    }),
+
+    Review ? Review.countDocuments({ isDeleted: { $ne: true } }) : 0,
+
+    Inquiry ? Inquiry.countDocuments({ isDeleted: { $ne: true } }) : 0,
+
+    Shop.find(dashboardShopQuery)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(10)
+      .lean()
   ]);
 
   const revenue = await Reservation.aggregate([
@@ -113,7 +320,19 @@ exports.getFull = safe(async (req, res) => {
     { $group: { _id: null, total: { $sum: "$paymentAmount" } } }
   ]);
 
+  const normalizedRecentShops = Array.isArray(recentShops)
+    ? recentShops.map(normalizeShop)
+    : [];
+
   const payload = {
+    category: adminCategory,
+    summary: {
+      totalUsers: users,
+      totalShops: shops,
+      totalReservations: reservations,
+      totalPayments: 0,
+      totalRevenue: revenue?.[0]?.total || 0
+    },
     stats: {
       users,
       shops,
@@ -121,13 +340,21 @@ exports.getFull = safe(async (req, res) => {
       reviews,
       inquiries,
       revenue: revenue?.[0]?.total || 0
-    }
+    },
+    recent: {
+      shops: normalizedRecentShops,
+      users: [],
+      reservations: []
+    },
+    shops: normalizedRecentShops
   };
 
+  ADMIN_CACHE[cacheKey] = payload;
+  ADMIN_CACHE[cacheAtKey] = now();
   ADMIN_CACHE.dashboard = payload;
-  ADMIN_CACHE.dashboardAt = now();
+  ADMIN_CACHE.dashboardAt = ADMIN_CACHE[cacheAtKey];
 
-  log("dashboard");
+  log("dashboard", { category: adminCategory });
   return ok(res, payload);
 });
 

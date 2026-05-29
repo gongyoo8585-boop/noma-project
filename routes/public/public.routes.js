@@ -190,7 +190,16 @@ function cacheSet(k,d){
 ===================================================== */
 
 router.get("/shops", safeAsync(async (req,res,next)=>{
-  const key="shops";
+  const queryKey =
+    new URLSearchParams(
+      req.query || {}
+    ).toString();
+
+  const key =
+    queryKey
+      ? `shops:${queryKey}`
+      : "shops";
+
   const cached = cacheGet(key);
   if(cached) return ok(res,cached,"CACHE");
 

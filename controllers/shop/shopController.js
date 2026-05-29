@@ -210,26 +210,92 @@ function isShopModelReady() {
   );
 }
 
-function fallbackShopList(extra = {}) {
-  const normalized = normalizeList(FALLBACK_SHOPS);
+function isMongoConnected() {
+  return !!(
+    mongoose &&
+    mongoose.connection &&
+    mongoose.connection.readyState === 1
+  );
+}
 
+function withTimeout(promise, timeoutMs = 3000, message = "SHOP_QUERY_TIMEOUT") {
+  let timer;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+function fallbackShopList(extra = {}) {
   return {
-    items: normalized,
-    list: normalized,
-    shops: normalized,
-    data: normalized,
-    total: normalized.length,
-    count: normalized.length,
+    items: [],
+    list: [],
+    shops: [],
+    data: [],
+    total: 0,
+    count: 0,
     page: 1,
-    limit: normalized.length,
+    limit: 0,
     hasMore: false,
-    source: "local-fallback",
+    source: "empty",
     ...extra,
   };
 }
 
-function buildBaseQuery() {
-  return {
+function normalizeShopCategory(value) {
+  const text = String(value || "")
+    .toLowerCase()
+    .trim();
+
+  if (
+    text === "karaoke" ||
+    text === "노래방" ||
+    text === "가라오케" ||
+    text === "coin-karaoke" ||
+    text === "coin_karaoke" ||
+    text === "nora-karaoke" ||
+    text === "nora_karaoke"
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text === "massage" ||
+    text === "마사지" ||
+    text === "shop" ||
+    text === "nora-massage" ||
+    text === "nora_massage"
+  ) {
+    return "massage";
+  }
+
+  return "";
+}
+
+function getRequestCategory(req = {}) {
+  return (
+    normalizeShopCategory(req.query?.category) ||
+    normalizeShopCategory(req.query?.shopCategory) ||
+    normalizeShopCategory(req.query?.serviceType) ||
+    normalizeShopCategory(req.query?.businessType) ||
+    normalizeShopCategory(req.query?.adminCategory) ||
+    normalizeShopCategory(req.body?.category) ||
+    normalizeShopCategory(req.body?.shopCategory) ||
+    normalizeShopCategory(req.body?.serviceType) ||
+    normalizeShopCategory(req.body?.businessType) ||
+    normalizeShopCategory(req.body?.adminCategory) ||
+    ""
+  );
+}
+
+function buildBaseQuery(req = {}) {
+  const query = {
     isDeleted: { $ne: true },
     visible: { $ne: false },
     status: {
@@ -242,6 +308,24 @@ function buildBaseQuery() {
       ],
     },
   };
+
+  const category = getRequestCategory(req);
+
+  if (category) {
+    query.$or = [
+      { category },
+      { shopCategory: category },
+      { serviceType: category },
+      { businessType: category },
+      { adminCategory: category },
+      { categoryGroup: category },
+      { shopType: category },
+      { mainCategory: category },
+      { service: category },
+    ];
+  }
+
+  return query;
 }
 
 function buildSort(sort = "") {
@@ -269,8 +353,6 @@ function buildSort(sort = "") {
 
     default:
       return {
-        premium: -1,
-        priority: -1,
         createdAt: -1,
       };
   }
@@ -283,7 +365,14 @@ async function fetchList(req = {}) {
     });
   }
 
-  const query = buildBaseQuery();
+  if (!isMongoConnected()) {
+    return fallbackShopList({
+      dbConnected: false,
+      dbState: mongoose.connection ? mongoose.connection.readyState : 0,
+    });
+  }
+
+  const query = buildBaseQuery(req);
 
   const page = Math.max(
     parseInt(req.query?.page || 1, 10),
@@ -309,28 +398,50 @@ async function fetchList(req = {}) {
       "i"
     );
 
-    query.$or = [
-      { name: regex },
-      { address: regex },
-      { roadAddress: regex },
-      { region: regex },
-      { district: regex },
-      { tags: regex },
-    ];
+    const keywordQuery = {
+      $or: [
+        { name: regex },
+        { address: regex },
+        { roadAddress: regex },
+        { region: regex },
+        { district: regex },
+        { tags: regex },
+      ],
+    };
+
+    if (Array.isArray(query.$and)) {
+      query.$and.push(keywordQuery);
+    } else {
+      query.$and = [keywordQuery];
+    }
   }
 
   const sort = buildSort(req.query?.sort);
 
   try {
-    const [items, total] = await Promise.all([
+    const items = await withTimeout(
       Shop.find(query)
+        .select({
+          image: 0,
+          images: 0,
+          photos: 0,
+          imageUrls: 0,
+          representativeImage: 0,
+          mainImage: 0,
+          thumbnail: 0,
+          coverImage: 0,
+          description: 0,
+          content: 0,
+        })
         .sort(sort)
         .skip(skip)
         .limit(limit)
+        .maxTimeMS(3000)
         .lean(),
+      3000
+    );
 
-      Shop.countDocuments(query),
-    ]);
+    const total = items.length;
 
     const normalized = normalizeList(items);
 
@@ -349,7 +460,7 @@ async function fetchList(req = {}) {
     console.error("SHOP FETCH LIST ERROR:", error.message);
 
     return fallbackShopList({
-      dbFallback: true,
+      dbError: true,
       reason: error.message,
     });
   }
@@ -467,7 +578,7 @@ exports.premium = safeAsync(async (req, res) => {
     return ok(res, fallbackShopList({ modelReady: false }));
   }
 
-  const query = buildBaseQuery();
+  const query = buildBaseQuery(req);
 
   query.premium = true;
 
@@ -554,6 +665,8 @@ exports.create = safeAsync(async (req, res) => {
     return fail(res, 400, "SHOP_NAME_REQUIRED");
   }
 
+  const category = getRequestCategory(req) || "massage";
+
   const payload = {
     name: safeString(body.name),
     address: safeString(body.address),
@@ -567,6 +680,11 @@ exports.create = safeAsync(async (req, res) => {
     imageUrls: safeArray(body.imageUrls),
     tags: safeArray(body.tags),
     serviceTypes: safeArray(body.serviceTypes),
+    category,
+    shopCategory: category,
+    serviceType: category,
+    businessType: category,
+    adminCategory: category,
     visible:
       typeof body.visible === "undefined"
         ? true
@@ -608,6 +726,8 @@ exports.update = safeAsync(async (req, res) => {
 
   const body = req.body || {};
 
+  const category = getRequestCategory(req);
+
   const payload = {
     name: safeString(body.name),
     address: safeString(body.address),
@@ -621,6 +741,15 @@ exports.update = safeAsync(async (req, res) => {
     imageUrls: safeArray(body.imageUrls),
     tags: safeArray(body.tags),
     serviceTypes: safeArray(body.serviceTypes),
+    ...(category
+      ? {
+          category,
+          shopCategory: category,
+          serviceType: category,
+          businessType: category,
+          adminCategory: category,
+        }
+      : {}),
     visible:
       typeof body.visible === "undefined"
         ? true
@@ -752,7 +881,7 @@ exports.suggest = safeAsync(async (req, res) => {
   );
 
   const items = await Shop.find({
-    ...buildBaseQuery(),
+    ...buildBaseQuery(req),
     name: regex,
   })
     .limit(10)

@@ -83,6 +83,23 @@ const LOCAL_SHOP_BACKUP_KEY = "noma_admin_shop_backup";
 const DELETED_SHOP_KEY = "noma_deleted_shop_ids";
 const MAX_LOCAL_IMAGE_COUNT = Number.POSITIVE_INFINITY;
 const MAX_LOCAL_IMAGE_LENGTH = Number.POSITIVE_INFINITY;
+const MAX_MIRROR_STORAGE_LENGTH = 250000;
+
+const isStorageQuotaError = (error) => {
+  const name = String(error?.name || "");
+  const message = String(error?.message || "").toLowerCase();
+
+  return (
+    name === "QuotaExceededError" ||
+    name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    message.includes("quota") ||
+    message.includes("exceeded")
+  );
+};
+
+const shouldSkipMirrorStorage = (value) => {
+  return String(value || "").length > MAX_MIRROR_STORAGE_LENGTH;
+};
 
 const normalizeShopCategory = (value) => {
   const text = String(value || "")
@@ -982,7 +999,13 @@ function ShopAdminPage() {
   const isLocalShopId = (value) => {
     const id = String(value || "");
 
-    return id.startsWith("local-shop-") || id.startsWith("local-noma-");
+    return (
+      id.startsWith("local-shop-") ||
+      id.startsWith("local-noma-") ||
+      id.startsWith("local-nora-") ||
+      id.startsWith("local-massage-shop-") ||
+      id.startsWith("local-karaoke-shop-")
+    );
   };
 
   const getShopIdentityValues = (shop) => {
@@ -1405,35 +1428,21 @@ function ShopAdminPage() {
         }
       };
 
-      const adminSaved = parseStorageItems(localStorage, LOCAL_SHOP_KEY);
-      const publicSaved = parseStorageItems(localStorage, LOCAL_PUBLIC_SHOP_KEY);
-      const backupSaved = parseStorageItems(localStorage, LOCAL_SHOP_BACKUP_KEY);
-      const sessionAdminSaved = parseStorageItems(sessionStorage, LOCAL_SHOP_KEY);
-      const sessionPublicSaved = parseStorageItems(sessionStorage, LOCAL_PUBLIC_SHOP_KEY);
-      const sessionBackupSaved = parseStorageItems(sessionStorage, LOCAL_SHOP_BACKUP_KEY);
-
-      const legacyAdminSaved = parseStorageItems(localStorage, "noma_admin_shops");
-      const legacyPublicSaved = parseStorageItems(localStorage, "noma_local_shops");
-      const legacyBackupSaved = parseStorageItems(localStorage, "noma_admin_shop_backup");
-      const legacySessionAdminSaved = parseStorageItems(sessionStorage, "noma_admin_shops");
-      const legacySessionPublicSaved = parseStorageItems(sessionStorage, "noma_local_shops");
-      const legacySessionBackupSaved = parseStorageItems(sessionStorage, "noma_admin_shop_backup");
-
       return filterCurrentCategoryShops(
         filterDeletedShops(
           mergeShopList([
-            ...backupSaved,
-            ...sessionBackupSaved,
-            ...adminSaved,
-            ...publicSaved,
-            ...sessionAdminSaved,
-            ...sessionPublicSaved,
-            ...legacyBackupSaved,
-            ...legacySessionBackupSaved,
-            ...legacyAdminSaved,
-            ...legacyPublicSaved,
-            ...legacySessionAdminSaved,
-            ...legacySessionPublicSaved,
+            ...parseStorageItems(localStorage, LOCAL_SHOP_BACKUP_KEY),
+            ...parseStorageItems(sessionStorage, LOCAL_SHOP_BACKUP_KEY),
+            ...parseStorageItems(localStorage, LOCAL_SHOP_KEY),
+            ...parseStorageItems(localStorage, LOCAL_PUBLIC_SHOP_KEY),
+            ...parseStorageItems(sessionStorage, LOCAL_SHOP_KEY),
+            ...parseStorageItems(sessionStorage, LOCAL_PUBLIC_SHOP_KEY),
+            ...parseStorageItems(localStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
+            ...parseStorageItems(sessionStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
+            ...parseStorageItems(localStorage, `nora_admin_shops_${currentAdminCategory}`),
+            ...parseStorageItems(localStorage, `nora_local_shops_${currentAdminCategory}`),
+            ...parseStorageItems(sessionStorage, `nora_admin_shops_${currentAdminCategory}`),
+            ...parseStorageItems(sessionStorage, `nora_local_shops_${currentAdminCategory}`),
           ]).map((item) => applyShopImageBank(item))
         )
       );
@@ -1527,8 +1536,8 @@ function ShopAdminPage() {
           mergeShopList([
             ...parseStorageItems(localStorage, LOCAL_SHOP_BACKUP_KEY),
             ...parseStorageItems(sessionStorage, LOCAL_SHOP_BACKUP_KEY),
-            ...parseStorageItems(localStorage, "noma_admin_shop_backup"),
-            ...parseStorageItems(sessionStorage, "noma_admin_shop_backup"),
+            ...parseStorageItems(localStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
+            ...parseStorageItems(sessionStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
           ]).map((item) => applyShopImageBank(item))
         )
       );
@@ -1558,6 +1567,60 @@ function ShopAdminPage() {
   const writeStorageSafe = (key, value, storage) => {
     try {
       storage.setItem(key, value);
+
+      const mirrorKeys = [];
+
+      if (key === LOCAL_SHOP_KEY) {
+        mirrorKeys.push(
+          `nora_admin_shops_${currentAdminCategory}`,
+          `noma_admin_shops_${currentAdminCategory}`
+        );
+      }
+
+      if (key === LOCAL_PUBLIC_SHOP_KEY) {
+        mirrorKeys.push(
+          `nora_local_shops_${currentAdminCategory}`,
+          `noma_local_shops_${currentAdminCategory}`
+        );
+      }
+
+      if (key === LOCAL_SHOP_BACKUP_KEY) {
+        mirrorKeys.push(
+          `nora_admin_shop_backup_${currentAdminCategory}`,
+          `noma_admin_shop_backup_${currentAdminCategory}`
+        );
+      }
+
+      if (key === LOCAL_SHOP_IMAGE_BANK_KEY) {
+        mirrorKeys.push(
+          `nora_admin_shop_image_bank_${currentAdminCategory}`,
+          `noma_admin_shop_image_bank_${currentAdminCategory}`
+        );
+      }
+
+      if (key === DELETED_SHOP_KEY) {
+        mirrorKeys.push(
+          `nora_deleted_shop_ids_${currentAdminCategory}`,
+          `noma_deleted_shop_ids_${currentAdminCategory}`
+        );
+      }
+
+      Array.from(new Set(mirrorKeys))
+        .filter((mirrorKey) => mirrorKey && mirrorKey !== key)
+        .forEach((mirrorKey) => {
+          if (shouldSkipMirrorStorage(value)) {
+            return;
+          }
+
+          try {
+            storage.setItem(mirrorKey, value);
+          } catch (e) {
+            if (!isStorageQuotaError(e)) {
+              console.warn("SHOP MIRROR STORAGE SAVE SKIP:", mirrorKey, e.message);
+            }
+          }
+        });
+
       return true;
     } catch (e) {
       return false;

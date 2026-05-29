@@ -95,6 +95,7 @@ const SELECTED_SHOP_KEY = "noma_selected_shop";
 const DELETED_SHOP_KEY = "noma_deleted_shop_ids";
 const INITIAL_VISIBLE_COUNT = 20;
 const VISIBLE_STEP = 12;
+const USE_LOCAL_SHOP_CACHE = false;
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
@@ -110,170 +111,7 @@ const FALLBACK_SHOP_IMAGES = [
   "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
 ];
 
-const FALLBACK_SHOPS = [
-  {
-    _id: "local-noma-gimhae-main",
-    id: "local-noma-gimhae-main",
-    name: "더 스크럽 테라피",
-    address: "경상남도 김해시 삼계동 1479-2",
-    region: "경남",
-    district: "김해시",
-    dong: "삼계동",
-    status: "active",
-    lat: 35.2613,
-    lng: 128.871,
-    location: { lat: 35.2613, lng: 128.871 },
-    phone: "010-0000-0001",
-    virtualPhone: "0507-0000-0001",
-    businessHours: "24시간",
-    courses: ["건식 관리 60분", "아로마 관리 90분"],
-    price: [45000, 50000],
-    originalPrice: [80000, 82000],
-    distance: "0.1km",
-    rating: 5.0,
-    reviewCount: 125,
-    images: [FALLBACK_SHOP_IMAGES[0]],
-    photos: [FALLBACK_SHOP_IMAGES[0]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[0]],
-    isPremium: true,
-    premium: true,
-  },
-  {
-    _id: "local-noma-jangyu",
-    id: "local-noma-jangyu",
-    name: "가나다라 마사지",
-    address: "경상남도 김해시 삼계동",
-    region: "경남",
-    district: "김해시",
-    dong: "삼계동",
-    status: "active",
-    lat: 35.2638,
-    lng: 128.8732,
-    location: { lat: 35.2638, lng: 128.8732 },
-    phone: "010-0000-0002",
-    virtualPhone: "0507-0000-0002",
-    businessHours: "10:00 - 03:00",
-    courses: ["아로마 관리 90분", "마사지 90분"],
-    price: [50000, 60000],
-    originalPrice: [82000, 106800],
-    distance: "0.1km",
-    rating: 4.9,
-    reviewCount: 256,
-    images: [FALLBACK_SHOP_IMAGES[1]],
-    photos: [FALLBACK_SHOP_IMAGES[1]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[1]],
-    isPremium: true,
-    premium: true,
-  },
-  {
-    _id: "local-noma-gimhae-003",
-    id: "local-noma-gimhae-003",
-    name: "황제 마사지",
-    address: "경상남도 김해시 내동 1123-4",
-    region: "경남",
-    district: "김해시",
-    dong: "내동",
-    status: "active",
-    lat: 35.2584,
-    lng: 128.8662,
-    location: { lat: 35.2584, lng: 128.8662 },
-    phone: "010-0000-0003",
-    virtualPhone: "0507-0000-0003",
-    businessHours: "11:00 - 04:00",
-    courses: ["타이 관리 60분", "70분"],
-    price: [55000, 90000],
-    originalPrice: [100000, 160200],
-    distance: "0.2km",
-    rating: 4.8,
-    reviewCount: 189,
-    images: [FALLBACK_SHOP_IMAGES[2]],
-    photos: [FALLBACK_SHOP_IMAGES[2]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[2]],
-    isPremium: true,
-    premium: true,
-  },
-  {
-    _id: "local-noma-gimhae-004",
-    id: "local-noma-gimhae-004",
-    name: "휴안마로마 (김해)",
-    address: "경상남도 김해시 구산동 999-8",
-    region: "경남",
-    district: "김해시",
-    dong: "구산동",
-    status: "active",
-    lat: 35.2661,
-    lng: 128.8685,
-    location: { lat: 35.2661, lng: 128.8685 },
-    phone: "010-0000-0004",
-    virtualPhone: "0507-0000-0004",
-    businessHours: "24시간",
-    courses: ["아로마 관리 90분", "스웨디시 60분"],
-    price: [50000, 80000],
-    originalPrice: [80000, 142400],
-    distance: "0.2km",
-    rating: 4.8,
-    reviewCount: 245,
-    images: [FALLBACK_SHOP_IMAGES[3]],
-    photos: [FALLBACK_SHOP_IMAGES[3]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[3]],
-    isPremium: true,
-    premium: true,
-  },
-  {
-    _id: "local-noma-gimhae-005",
-    id: "local-noma-gimhae-005",
-    name: "펜트하우스 (박물관역)",
-    address: "경상남도 김해시 삼방동 421-7",
-    region: "경남",
-    district: "김해시",
-    dong: "삼방동",
-    status: "active",
-    lat: 35.2572,
-    lng: 128.8782,
-    location: { lat: 35.2572, lng: 128.8782 },
-    phone: "010-0000-0005",
-    virtualPhone: "0507-0000-0005",
-    businessHours: "12:00 - 05:00",
-    courses: ["타이 관리 60분", "아로마 관리 90분"],
-    price: [40000, 65000],
-    originalPrice: [60000, 98000],
-    distance: "2.4km",
-    rating: 4.9,
-    reviewCount: 32,
-    images: [FALLBACK_SHOP_IMAGES[4]],
-    photos: [FALLBACK_SHOP_IMAGES[4]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[4]],
-    isPremium: true,
-    premium: true,
-  },
-  {
-    _id: "local-noma-gimhae-006",
-    id: "local-noma-gimhae-006",
-    name: "시원타이 (내동)",
-    address: "경상남도 김해시 외동 1264-3",
-    region: "경남",
-    district: "김해시",
-    dong: "외동",
-    status: "active",
-    lat: 35.2527,
-    lng: 128.8643,
-    location: { lat: 35.2527, lng: 128.8643 },
-    phone: "010-0000-0006",
-    virtualPhone: "0507-0000-0006",
-    businessHours: "10:00 - 02:00",
-    courses: ["스웨디시 관리 90분", "건식 관리 60분"],
-    price: [60000, 45000],
-    originalPrice: [90000, 80000],
-    distance: "2.6km",
-    rating: 4.7,
-    reviewCount: 40,
-    images: [FALLBACK_SHOP_IMAGES[5]],
-    photos: [FALLBACK_SHOP_IMAGES[5]],
-    imageUrls: [FALLBACK_SHOP_IMAGES[5]],
-    isPremium: true,
-    premium: true,
-  },
-];
+const FALLBACK_SHOPS = [];
 
 const FALLBACK_SHOP_ID_SET = new Set(
   FALLBACK_SHOPS.flatMap((shop) => [shop?._id, shop?.id]).filter(Boolean)
@@ -945,6 +783,10 @@ function KaraokeMapPage({ navigate }) {
   };
 
   const readLocalShops = () => {
+    if (!USE_LOCAL_SHOP_CACHE) {
+      return [];
+    }
+
     try {
       const adminSaved = JSON.parse(localStorage.getItem(LOCAL_SHOP_KEY) || "[]");
       const publicSaved = JSON.parse(localStorage.getItem(LOCAL_PUBLIC_SHOP_KEY) || "[]");
@@ -985,6 +827,10 @@ function KaraokeMapPage({ navigate }) {
   };
 
   const saveLocalShops = (items) => {
+    if (!USE_LOCAL_SHOP_CACHE) {
+      return;
+    }
+
     try {
       const nextItems = filterDeletedShops(mergeShopLists([], ensureVisibleList(items)));
 
@@ -2087,6 +1933,10 @@ function KaraokeMapPage({ navigate }) {
 
   useEffect(() => {
     const syncLocalShops = async () => {
+      if (!USE_LOCAL_SHOP_CACHE) {
+        return;
+      }
+
       const localList = ensureVisibleList(readLocalShops());
 
       if (!localList.length) {
@@ -2711,14 +2561,7 @@ function KaraokeMapPage({ navigate }) {
             </div>
 
             <div style={styles.landingCards}>
-              {[
-                ["마사지", "프리미엄 힐링 스파", "4.9", "230", "강남구", "아로마 관리 90분", "39%", "82,000원", "50,000원"],
-                ["마사지", "아로마 힐링 스파", "4.8", "178", "서초구", "타이 관리 60분", "38%", "80,000원", "50,000원"],
-                ["마사지", "타이 마사지 명가", "4.9", "312", "송파구", "타이 관리 90분", "44%", "90,000원", "50,000원"],
-                ["노래방", "스타코인 노래연습장", "4.8", "156", "강남구", "주간 2시간", "37%", "32,000원", "20,000원"],
-                ["노래방", "럭셔리 룸 노래방", "4.9", "214", "서초구", "주간 2시간", "35%", "31,000원", "20,000원"],
-                ["노래방", "퍼펙트 파티룸", "5.0", "161", "송파구", "야간 3시간", "40%", "50,000원", "30,000원"],
-              ].map((item, index) => (
+              {[].map((item, index) => (
                 <div key={`${item[1]}-${index}`} style={styles.landingCard}>
                   <div style={styles.landingCardImage}>
                     <span style={item[0] === "마사지" ? styles.landingCardTypeMassage : styles.landingCardTypeKaraoke}>

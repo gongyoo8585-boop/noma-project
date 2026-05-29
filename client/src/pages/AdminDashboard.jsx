@@ -21,6 +21,7 @@ import AdminAnalyticsPage from "./AdminAnalyticsPage";
 
 const API_BASE_RAW =
   (
+    typeof window !== "undefined" &&
     window.__ENV__ &&
     window.__ENV__.API_BASE_URL
   ) ||
@@ -58,37 +59,409 @@ const EMPTY_DASHBOARD_DATA =
     },
   };
 
+function toNumber(value, fallback = 0) {
+  const number =
+    Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : fallback;
+}
+
+function toArray(value) {
+  return Array.isArray(value)
+    ? value
+    : [];
+}
+
+function normalizeDashboardCategory(value) {
+  const text =
+    String(value || "")
+      .toLowerCase()
+      .trim();
+
+  if (
+    text.includes("/admin/karaoke") ||
+    text.includes("category=karaoke") ||
+    text.includes("shopcategory=karaoke") ||
+    text.includes("servicetype=karaoke") ||
+    text.includes("businesstype=karaoke") ||
+    text.includes("admincategory=karaoke") ||
+    text.includes("karaoke") ||
+    text.includes("노래방") ||
+    text.includes("가라오케") ||
+    text.includes("코인")
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text.includes("/admin/massage") ||
+    text.includes("category=massage") ||
+    text.includes("shopcategory=massage") ||
+    text.includes("servicetype=massage") ||
+    text.includes("businesstype=massage") ||
+    text.includes("admincategory=massage") ||
+    text.includes("massage") ||
+    text.includes("마사지") ||
+    text.includes("테라피") ||
+    text.includes("아로마") ||
+    text.includes("스웨디시")
+  ) {
+    return "massage";
+  }
+
+  return "";
+}
+
+function getDashboardCategory() {
+  try {
+    const path =
+      String(
+        window.location.pathname || ""
+      ).toLowerCase();
+
+    const pathCategory =
+      normalizeDashboardCategory(path);
+
+    if (pathCategory) {
+      return pathCategory;
+    }
+
+    const params =
+      new URLSearchParams(
+        window.location.search || ""
+      );
+
+    const queryCategory =
+      normalizeDashboardCategory(
+        params.get("category")
+      ) ||
+      normalizeDashboardCategory(
+        params.get("shopCategory")
+      ) ||
+      normalizeDashboardCategory(
+        params.get("serviceType")
+      ) ||
+      normalizeDashboardCategory(
+        params.get("businessType")
+      ) ||
+      normalizeDashboardCategory(
+        params.get("adminCategory")
+      ) ||
+      normalizeDashboardCategory(
+        window.location.search
+      );
+
+    if (queryCategory) {
+      return queryCategory;
+    }
+
+    return "massage";
+  } catch (e) {
+    console.warn(
+      "ADMIN DASHBOARD CATEGORY ERROR:",
+      e.message
+    );
+
+    return "massage";
+  }
+}
+
+function createDashboardUrl(category) {
+  const query =
+    new URLSearchParams({
+      category:
+        normalizeDashboardCategory(category) ||
+        "massage",
+      shopCategory:
+        normalizeDashboardCategory(category) ||
+        "massage",
+      serviceType:
+        normalizeDashboardCategory(category) ||
+        "massage",
+      businessType:
+        normalizeDashboardCategory(category) ||
+        "massage",
+      adminCategory:
+        normalizeDashboardCategory(category) ||
+        "massage",
+      _t: String(Date.now()),
+    });
+
+  return `${API_BASE}/admin/dashboard?${query.toString()}`;
+}
+
 function getAdminToken() {
+  try {
+    return (
+      localStorage.getItem("adminToken") ||
+      localStorage.getItem("token") ||
+      localStorage.getItem("accessToken") ||
+      localStorage.getItem("authToken") ||
+      localStorage.getItem("jwt") ||
+      localStorage.getItem("local-admin-token") ||
+      sessionStorage.getItem("adminToken") ||
+      sessionStorage.getItem("token") ||
+      sessionStorage.getItem("accessToken") ||
+      sessionStorage.getItem("authToken") ||
+      sessionStorage.getItem("jwt") ||
+      sessionStorage.getItem("local-admin-token") ||
+      ""
+    );
+  } catch (e) {
+    console.warn(
+      "ADMIN TOKEN READ ERROR:",
+      e.message
+    );
+
+    return "";
+  }
+}
+
+function parseStoredJson(value) {
+  try {
+    if (!value) {
+      return null;
+    }
+
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectArrayFromStoredValue(value) {
+  const parsed =
+    parseStoredJson(value);
+
+  if (!parsed) {
+    return [];
+  }
+
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (Array.isArray(parsed.shops)) {
+    return parsed.shops;
+  }
+
+  if (Array.isArray(parsed.items)) {
+    return parsed.items;
+  }
+
+  if (Array.isArray(parsed.list)) {
+    return parsed.list;
+  }
+
+  if (Array.isArray(parsed.data)) {
+    return parsed.data;
+  }
+
+  if (
+    parsed.data &&
+    Array.isArray(parsed.data.shops)
+  ) {
+    return parsed.data.shops;
+  }
+
+  if (
+    parsed.data &&
+    Array.isArray(parsed.data.items)
+  ) {
+    return parsed.data.items;
+  }
+
+  return [];
+}
+
+function getShopCategoryFromItem(item = {}, fallbackCategory = "") {
+  const direct =
+    normalizeDashboardCategory(item.category) ||
+    normalizeDashboardCategory(item.shopCategory) ||
+    normalizeDashboardCategory(item.serviceType) ||
+    normalizeDashboardCategory(item.businessType) ||
+    normalizeDashboardCategory(item.adminCategory) ||
+    normalizeDashboardCategory(item.type) ||
+    normalizeDashboardCategory(item.categoryGroup) ||
+    normalizeDashboardCategory(item.shopType) ||
+    normalizeDashboardCategory(item.mainCategory) ||
+    normalizeDashboardCategory(item.service);
+
+  if (direct) {
+    return direct;
+  }
+
+  const joined =
+    [
+      item.name,
+      item.shopName,
+      item.title,
+      item.description,
+      item.address,
+      item.course,
+      item.courses,
+      item.tags,
+      fallbackCategory,
+    ]
+      .map((value) => {
+        if (Array.isArray(value)) {
+          return value.join(" ");
+        }
+
+        return String(value || "");
+      })
+      .join(" ")
+      .toLowerCase();
 
   return (
-    localStorage.getItem(
-      "adminToken"
-    ) ||
-    localStorage.getItem(
-      "token"
-    ) ||
-    localStorage.getItem(
-      "accessToken"
-    ) ||
-    localStorage.getItem(
-      "authToken"
-    ) ||
-    localStorage.getItem(
-      "jwt"
-    ) ||
-    ""
+    normalizeDashboardCategory(joined) ||
+    normalizeDashboardCategory(fallbackCategory)
   );
 }
 
-async function fetchDashboard() {
+function getShopIdentity(item = {}) {
+  return String(
+    item._id ||
+      item.id ||
+      item.shopId ||
+      item.name ||
+      item.shopName ||
+      item.title ||
+      item.phone ||
+      item.address ||
+      JSON.stringify(item)
+  );
+}
+
+function isDeletedShop(item = {}) {
+  return (
+    item.isDeleted === true ||
+    item.deleted === true ||
+    item.removed === true
+  );
+}
+
+function getStoredShopsByCategory(category) {
+  try {
+    if (
+      typeof window === "undefined" ||
+      !window.localStorage
+    ) {
+      return [];
+    }
+
+    const normalizedCategory =
+      normalizeDashboardCategory(category) ||
+      "massage";
+
+    const storageKeys = [
+      "nora_admin_shops",
+      "nora_local_shops",
+      "noma_admin_shops",
+      "noma_local_shops",
+      `nora_admin_shops_${normalizedCategory}`,
+      `nora_local_shops_${normalizedCategory}`,
+      `noma_admin_shops_${normalizedCategory}`,
+      `noma_local_shops_${normalizedCategory}`,
+    ];
+
+    const keys = [];
+
+    storageKeys.forEach((key) => {
+      if (!keys.includes(key)) {
+        keys.push(key);
+      }
+    });
+
+    for (
+      let i = 0;
+      i < window.localStorage.length;
+      i += 1
+    ) {
+      const key =
+        window.localStorage.key(i);
+
+      if (
+        key &&
+        (
+          key.includes("shop") ||
+          key.includes("shops")
+        ) &&
+        !keys.includes(key)
+      ) {
+        keys.push(key);
+      }
+    }
+
+    const collected = [];
+
+    keys.forEach((key) => {
+      const value =
+        window.localStorage.getItem(key);
+
+      const items =
+        collectArrayFromStoredValue(value);
+
+      const fallbackCategory =
+        normalizeDashboardCategory(key);
+
+      items.forEach((item) => {
+        if (
+          item &&
+          typeof item === "object"
+        ) {
+          const categoryValue =
+            getShopCategoryFromItem(
+              item,
+              fallbackCategory
+            );
+
+          if (
+            categoryValue ===
+              normalizedCategory &&
+            !isDeletedShop(item)
+          ) {
+            collected.push(item);
+          }
+        }
+      });
+    });
+
+    const uniqueMap =
+      new Map();
+
+    collected.forEach((item) => {
+      const key =
+        getShopIdentity(item);
+
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, item);
+      }
+    });
+
+    return Array.from(
+      uniqueMap.values()
+    );
+  } catch (e) {
+    console.warn(
+      "ADMIN LOCAL SHOP COUNT ERROR:",
+      e.message
+    );
+
+    return [];
+  }
+}
+
+async function fetchDashboard(category) {
+  let timeout = null;
 
   try {
-
     const token =
       getAdminToken();
 
     if (!token) {
-
       return {
         authRequired: true,
       };
@@ -105,13 +478,13 @@ async function fetchDashboard() {
     const controller =
       new AbortController();
 
-    const timeout =
+    timeout =
       setTimeout(() => {
         controller.abort();
       }, 5000);
 
     const res = await fetch(
-      `${API_BASE}/admin/dashboard`,
+      createDashboardUrl(category),
       {
         method: "GET",
         headers,
@@ -123,17 +496,17 @@ async function fetchDashboard() {
       }
     );
 
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
 
     let data = {};
 
     try {
-
       data =
         await res.json();
-
     } catch {
-
       data = {};
     }
 
@@ -141,10 +514,11 @@ async function fetchDashboard() {
       res.status === 401 ||
       data?.msg ===
         "AUTH_TOKEN_REQUIRED" ||
+      data?.message ===
+        "인증 토큰 없음" ||
       data?.msg ===
         "INVALID_TOKEN"
     ) {
-
       return {
         authRequired: true,
       };
@@ -154,12 +528,10 @@ async function fetchDashboard() {
       !res.ok ||
       data.ok === false
     ) {
-
       if (
         res.status >= 500 ||
         res.status === 404
       ) {
-
         return EMPTY_DASHBOARD_DATA;
       }
 
@@ -171,8 +543,21 @@ async function fetchDashboard() {
     }
 
     return data;
-
   } catch (e) {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+
+    const message =
+      String(e?.message || "");
+
+    if (
+      e?.name === "AbortError" ||
+      message.toLowerCase().includes("aborted")
+    ) {
+      return EMPTY_DASHBOARD_DATA;
+    }
 
     console.error(
       "ADMIN DASHBOARD FETCH ERROR:",
@@ -183,8 +568,153 @@ async function fetchDashboard() {
   }
 }
 
-function AdminDashboard() {
+function normalizeDashboardResponse(response, category) {
+  const normalized =
+    response?.data ||
+    response ||
+    {};
 
+  const summary =
+    normalized.summary ||
+    {};
+
+  const stats =
+    normalized.stats ||
+    {};
+
+  const recent =
+    normalized.recent ||
+    {};
+
+  const serverShops =
+    toArray(recent.shops).length > 0
+      ? toArray(recent.shops)
+      : toArray(normalized.shops);
+
+  const normalizedCategory =
+    normalizeDashboardCategory(category) ||
+    "massage";
+
+  const filteredServerShops =
+    serverShops.filter((shop) => {
+      if (
+        !shop ||
+        typeof shop !== "object" ||
+        isDeletedShop(shop)
+      ) {
+        return false;
+      }
+
+      const shopCategory =
+        getShopCategoryFromItem(
+          shop,
+          normalizedCategory
+        );
+
+      return shopCategory === normalizedCategory;
+    });
+
+  const localShops =
+    getStoredShopsByCategory(
+      normalizedCategory
+    );
+
+  const uniqueServerMap =
+    new Map();
+
+  [
+    ...filteredServerShops,
+    ...localShops,
+  ].forEach((shop) => {
+    if (
+      shop &&
+      typeof shop === "object" &&
+      !isDeletedShop(shop)
+    ) {
+      uniqueServerMap.set(
+        getShopIdentity(shop),
+        shop
+      );
+    }
+  });
+
+  const mergedShops =
+    Array.from(
+      uniqueServerMap.values()
+    );
+
+  const apiTotalShops =
+    toNumber(
+      summary.totalShops ??
+        stats.shops ??
+        normalized.totalShops ??
+        normalized.total ??
+        normalized.count,
+      0
+    );
+
+  const effectiveTotalShops =
+    Math.max(
+      apiTotalShops,
+      mergedShops.length
+    );
+
+  return {
+    summary: {
+      ...EMPTY_DASHBOARD_DATA.summary,
+      ...summary,
+
+      totalShops:
+        effectiveTotalShops,
+
+      totalUsers:
+        toNumber(
+          summary.totalUsers ??
+            stats.users ??
+            normalized.totalUsers ??
+            normalized.users,
+          EMPTY_DASHBOARD_DATA.summary.totalUsers
+        ),
+
+      totalReservations:
+        toNumber(
+          summary.totalReservations ??
+            stats.reservations ??
+            normalized.totalReservations ??
+            normalized.reservations,
+          EMPTY_DASHBOARD_DATA.summary.totalReservations
+        ),
+
+      totalPayments:
+        toNumber(
+          summary.totalPayments ??
+            stats.payments ??
+            normalized.totalPayments ??
+            normalized.payments,
+          EMPTY_DASHBOARD_DATA.summary.totalPayments
+        ),
+
+      totalRevenue:
+        toNumber(
+          summary.totalRevenue ??
+            stats.revenue ??
+            normalized.totalRevenue ??
+            normalized.revenue,
+          EMPTY_DASHBOARD_DATA.summary.totalRevenue
+        ),
+    },
+
+    recent: {
+      ...EMPTY_DASHBOARD_DATA.recent,
+      ...recent,
+
+      shops:
+        mergedShops,
+    },
+  };
+}
+
+function AdminDashboard() {
   const [data, setData] =
     useState(
       EMPTY_DASHBOARD_DATA
@@ -203,19 +733,21 @@ function AdminDashboard() {
     useState("dashboard");
 
   const load = async () => {
-
     try {
-
       setLoading(true);
       setError("");
 
+      const dashboardCategory =
+        getDashboardCategory();
+
       const res =
-        await fetchDashboard();
+        await fetchDashboard(
+          dashboardCategory
+        );
 
       if (
         res?.authRequired
       ) {
-
         alert(
           "로그인이 필요합니다."
         );
@@ -227,25 +759,13 @@ function AdminDashboard() {
         return;
       }
 
-      const normalized =
-        res?.data || res;
-
-      setData({
-        summary: {
-          ...EMPTY_DASHBOARD_DATA.summary,
-          ...(normalized?.summary ||
-            {}),
-        },
-
-        recent: {
-          ...EMPTY_DASHBOARD_DATA.recent,
-          ...(normalized?.recent ||
-            {}),
-        },
-      });
-
+      setData(
+        normalizeDashboardResponse(
+          res,
+          dashboardCategory
+        )
+      );
     } catch (e) {
-
       console.error(
         "ADMIN DASHBOARD LOAD ERROR:",
         e.message
@@ -255,9 +775,7 @@ function AdminDashboard() {
         e.message ||
           "대시보드 로딩 실패"
       );
-
     } finally {
-
       setInitialized(true);
 
       setLoading(false);
@@ -265,24 +783,20 @@ function AdminDashboard() {
   };
 
   useEffect(() => {
-
     if (initialized) {
       return;
     }
 
     load();
-
   }, [initialized]);
 
   if (loading) {
-
     return (
       <Loading message="대시보드 로딩 중..." />
     );
   }
 
   if (error) {
-
     return (
       <ErrorMessage
         message={error}
@@ -295,7 +809,6 @@ function AdminDashboard() {
     !data ||
     !data.summary
   ) {
-
     return (
       <EmptyState message="데이터가 없습니다." />
     );
@@ -676,7 +1189,6 @@ function Card({
   title,
   value,
 }) {
-
   return (
     <div style={styles.card}>
       <div style={styles.cardTitle}>
@@ -693,12 +1205,10 @@ function Card({
 function List({
   items,
 }) {
-
   if (
     !items ||
     items.length === 0
   ) {
-
     return (
       <EmptyState message="데이터 없음" />
     );
@@ -709,10 +1219,17 @@ function List({
       {items.map(
         (item, idx) => (
           <div
-            key={idx}
+            key={
+              item?._id ||
+              item?.id ||
+              item?.shopId ||
+              idx
+            }
             style={styles.item}
           >
             {item?.name ||
+              item?.shopName ||
+              item?.title ||
               item?.email ||
               item?._id ||
               "데이터"}
