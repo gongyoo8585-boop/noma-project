@@ -1704,8 +1704,8 @@ function normalizeShopResponseShape(data, params = {}) {
         list: mergedItems,
         items: mergedItems,
         data: mergedItems,
-        total: Number(data.total ?? data.count ?? mergedItems.length),
-        count: Number(data.count ?? data.total ?? mergedItems.length),
+        total: mergedItems.length,
+        count: mergedItems.length,
       };
     }
 
@@ -2008,6 +2008,7 @@ function forgetDeletedShop(shopOrId) {
 
 function getLocalShops(params = {}) {
   try {
+    const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
     const localPublicKey = getScopedStorageKey(LOCAL_SHOP_STORAGE_KEY, params);
     const localAdminKey = getScopedStorageKey(LOCAL_ADMIN_SHOP_STORAGE_KEY, params);
 
@@ -2016,31 +2017,30 @@ function getLocalShops(params = {}) {
     const sessionPublic = parseStorageArray(sessionStorage, localPublicKey);
     const sessionAdmin = parseStorageArray(sessionStorage, localAdminKey);
 
-    const legacySavedPublic = parseStorageArray(localStorage, LOCAL_SHOP_STORAGE_KEY);
-    const legacySavedAdmin = parseStorageArray(localStorage, LOCAL_ADMIN_SHOP_STORAGE_KEY);
-    const legacySessionPublic = parseStorageArray(sessionStorage, LOCAL_SHOP_STORAGE_KEY);
-    const legacySessionAdmin = parseStorageArray(sessionStorage, LOCAL_ADMIN_SHOP_STORAGE_KEY);
+    const categoryMirrorKeys = category
+      ? [
+          `noma_admin_shops_${category}`,
+          `noma_local_shops_${category}`,
+          `noma_admin_shop_backup_${category}`,
+          `nora_admin_shops_${category}`,
+          `nora_local_shops_${category}`,
+          `nora_admin_shop_backup_${category}`,
+        ]
+      : [
+          LOCAL_SHOP_STORAGE_KEY,
+          LOCAL_ADMIN_SHOP_STORAGE_KEY,
+          "noma_admin_shops",
+          "noma_local_shops",
+          "noma_admin_shop_backup",
+          "nora_admin_shop_backup",
+          "nora_admin_shops",
+          "nora_local_shops",
+        ];
 
-    const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
-    const storageMirrorKeys = [
-      "noma_admin_shops",
-      "noma_local_shops",
-      "noma_admin_shop_backup",
-      "nora_admin_shop_backup",
-      "nora_admin_shops",
-      "nora_local_shops",
-      category ? `noma_admin_shops_${category}` : "",
-      category ? `noma_local_shops_${category}` : "",
-      category ? `noma_admin_shop_backup_${category}` : "",
-      category ? `nora_admin_shops_${category}` : "",
-      category ? `nora_local_shops_${category}` : "",
-      category ? `nora_admin_shop_backup_${category}` : "",
-    ].filter(Boolean);
-
-    const mirrorLocalItems = storageMirrorKeys.flatMap((key) =>
+    const mirrorLocalItems = categoryMirrorKeys.flatMap((key) =>
       parseStorageArray(localStorage, key)
     );
-    const mirrorSessionItems = storageMirrorKeys.flatMap((key) =>
+    const mirrorSessionItems = categoryMirrorKeys.flatMap((key) =>
       parseStorageArray(sessionStorage, key)
     );
 
@@ -2052,10 +2052,6 @@ function getLocalShops(params = {}) {
           ...sessionPublic,
           ...savedAdmin,
           ...sessionAdmin,
-          ...legacySavedPublic,
-          ...legacySessionPublic,
-          ...legacySavedAdmin,
-          ...legacySessionAdmin,
           ...mirrorLocalItems,
           ...mirrorSessionItems,
         ]).map((shop) => applyShopImageBank(shop))
@@ -2273,12 +2269,8 @@ function saveLocalShops(items = [], params = {}) {
 }
 
 function getFallbackShops(params = {}) {
-  const saved = getLocalShops(params);
-  const deletedIds = getDeletedShopIds();
-  const fallbackItems = deletedIds.length && !saved.length ? [] : FALLBACK_SHOPS;
-
   return filterShopsByCategory(
-    filterDeletedShops(mergeShopArrays([...fallbackItems, ...saved])),
+    filterDeletedShops(mergeShopArrays([])),
     params
   );
 }
@@ -2350,40 +2342,10 @@ function getFallbackByUrl(url, params = {}) {
 }
 
 function shouldUseShopFallback(url, options = {}) {
-  const method = String(options.method || "GET").toUpperCase();
-
-  if (method !== "GET") return false;
-
-  return (
-    url === "/shops" ||
-    url.startsWith("/shops?") ||
-    url.startsWith("/shops/list") ||
-    url.startsWith("/shops/all") ||
-    url.startsWith("/shops/search") ||
-    url.startsWith("/shops/near") ||
-    url.startsWith("/shops/nearby") ||
-    url.startsWith("/shops/top") ||
-    url.startsWith("/shops/recent") ||
-    url.startsWith("/shops/random") ||
-    url.startsWith("/shops/ranking") ||
-    url.startsWith("/shops/cache") ||
-    url.startsWith("/shops/recommend") ||
-    url.startsWith("/shops/price") ||
-    url.startsWith("/shops/admin/stats") ||
-    url.startsWith("/shops/admin/dashboard-stats") ||
-    url.startsWith("/shops/admin/monthly-stats")
-  );
+  return false;
 }
 
 function shouldUseLocalMutation(url, options = {}) {
-  const method = String(options.method || "GET").toUpperCase();
-
-  if (!isApiBaseLocalHost()) return false;
-  const path = getPathOnly(url);
-
-  if (path === "/shops" && method === "POST") return true;
-  if (/^\/shops\/[^/]+$/.test(path) && ["PUT", "PATCH", "DELETE"].includes(method)) return true;
-
   return false;
 }
 
@@ -2684,10 +2646,6 @@ function redirectToLogin() {
 
 async function request(url, options = {}) {
   try {
-    if (isStatsUrl(url)) {
-      return getFallbackByUrl(url, options.categoryParams || {});
-    }
-
     const token = getToken();
 
     const headers = {
@@ -3061,17 +3019,6 @@ export const shopApi = {
     const responseShape = normalizeShopApiResponse(res);
     const normalized = normalizeShopResponseShape(responseShape, cleanParams);
 
-    if (
-      (!Array.isArray(normalized?.items) || normalized.items.length === 0) &&
-      (!Array.isArray(normalized?.shops) || normalized.shops.length === 0) &&
-      (!Array.isArray(normalized?.list) || normalized.list.length === 0)
-    ) {
-      return normalizeShopResponseShape(
-        getFallbackByUrl(query ? `/shops?${query}` : `/shops`, cleanParams),
-        cleanParams
-      );
-    }
-
     return normalized;
   },
 
@@ -3147,13 +3094,9 @@ export const shopApi = {
 
     const normalized = filterShopsByCategory(normalizeResponseData(res), categoryParams);
 
-    if (Array.isArray(normalized) && normalized.length === 0) {
-      return getFallbackShops(categoryParams);
-    }
-
     return filterShopsByCategory(
       filterDeletedShops(
-        mergeShopArrays(Array.isArray(normalized) ? normalized : getFallbackShops(categoryParams))
+        mergeShopArrays(Array.isArray(normalized) ? normalized : [])
       ),
       categoryParams
     );
@@ -3205,37 +3148,16 @@ export const shopApi = {
   create: async (payload) => {
     const normalizedPayload = normalizeShopPayload(payload);
     const categoryParams = makeCategoryParams(normalizedPayload);
-    const localResult = createLocalShop(normalizedPayload, categoryParams);
     const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery("/shops", categoryParams);
 
-    request(requestUrl, {
+    const res = await request(requestUrl, {
       method: "POST",
       body: JSON.stringify(networkPayload),
       categoryParams,
-    })
-      .then((res) => {
-        const createdShop =
-          res?.shop ||
-          res?.data ||
-          res?.item ||
-          networkPayload;
+    });
 
-        createLocalShop(
-          {
-            ...createdShop,
-            ...normalizedPayload,
-            _id: createdShop?._id || createdShop?.id || localResult?.shop?._id || localResult?.shop?.id,
-            id: createdShop?.id || createdShop?._id || localResult?.shop?.id || localResult?.shop?._id,
-          },
-          categoryParams
-        );
-      })
-      .catch((e) => {
-        console.warn("SHOP CREATE SERVER SYNC SKIP:", e.message);
-      });
-
-    return localResult;
+    return res;
   },
 
   update: async (id, payload, params = {}) => {
@@ -3244,69 +3166,64 @@ export const shopApi = {
       __replaceImages: true,
     };
     const categoryParams = Object.keys(makeCategoryParams(normalizedPayload)).length ? makeCategoryParams(normalizedPayload) : makeCategoryParams(params);
-    const localResult = updateLocalShop(id, normalizedPayload, categoryParams);
     const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery(`/shops/${id}`, categoryParams);
 
-    request(requestUrl, {
+    const res = await request(requestUrl, {
       method: "PATCH",
       body: JSON.stringify(networkPayload),
       categoryParams,
-    })
-      .then((res) => {
-        const updatedShop =
-          res?.shop ||
-          res?.data ||
-          res?.item ||
-          networkPayload;
+    });
 
-        updateLocalShop(
-          id,
-          {
-            ...updatedShop,
-            ...normalizedPayload,
-            _id: updatedShop?._id || updatedShop?.id || id,
-            id: updatedShop?.id || updatedShop?._id || id,
-          },
-          categoryParams
-        );
-      })
-      .catch((e) => {
-        console.warn("SHOP UPDATE SERVER SYNC SKIP:", e.message);
-      });
-
-    return localResult;
+    return res;
   },
 
   remove: async (id, params = {}) => {
     const categoryParams = makeCategoryParams(params);
-    const localResult = removeLocalShop(id, categoryParams);
     const requestUrl = appendCategoryQuery(`/shops/${id}`, categoryParams);
 
-    request(requestUrl, {
+    const res = await request(requestUrl, {
       method: "DELETE",
       categoryParams,
-    }).catch((e) => {
-      console.warn("SHOP DELETE SERVER SYNC SKIP:", e.message);
     });
 
-    return localResult;
+    return res;
   },
 
   getStats: (params = {}) => {
-    return Promise.resolve(getFallbackByUrl("/shops/admin/stats", params));
+    const categoryParams = makeCategoryParams(params);
+
+    return request(appendCategoryQuery("/shops/admin/stats", categoryParams), {
+      categoryParams,
+    });
   },
 
   getDashboardStats: (shopId, startDate, endDate, params = {}) => {
     const categoryParams = makeCategoryParams(params);
+    const query = new URLSearchParams({
+      ...categoryParams,
+      ...(shopId ? { shopId } : {}),
+      ...(startDate ? { startDate } : {}),
+      ...(endDate ? { endDate } : {}),
+    }).toString();
 
-    return Promise.resolve(getFallbackByUrl("/shops/admin/dashboard-stats", categoryParams));
+    return request(`/shops/admin/dashboard-stats${query ? `?${query}` : ""}`, {
+      categoryParams,
+    });
   },
 
   getMonthlyStats: (shopId, startDate, endDate, params = {}) => {
     const categoryParams = makeCategoryParams(params);
+    const query = new URLSearchParams({
+      ...categoryParams,
+      ...(shopId ? { shopId } : {}),
+      ...(startDate ? { startDate } : {}),
+      ...(endDate ? { endDate } : {}),
+    }).toString();
 
-    return Promise.resolve(getFallbackByUrl("/shops/admin/monthly-stats", categoryParams));
+    return request(`/shops/admin/monthly-stats${query ? `?${query}` : ""}`, {
+      categoryParams,
+    });
   },
 
   getCached: async (params = {}) => {
