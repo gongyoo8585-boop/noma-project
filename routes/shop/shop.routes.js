@@ -61,6 +61,49 @@ const safeNumber =
     return isNaN(n) ? d : n;
   });
 
+/* =====================================================
+🔥 SHOP QUERY TIMEOUT GUARD (최소 추가)
+===================================================== */
+const SHOP_QUERY_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(
+    Number(process.env.SHOP_QUERY_TIMEOUT_MS || process.env.RANKING_QUERY_TIMEOUT_MS || 3000) || 3000,
+    10000
+  )
+);
+
+async function runShopQueryWithTimeout(query, fallbackValue = [], label = "SHOP QUERY") {
+  let timer = null;
+
+  try {
+    const executableQuery =
+      query && typeof query.maxTimeMS === "function"
+        ? query.maxTimeMS(SHOP_QUERY_TIMEOUT_MS)
+        : query;
+
+    const queryPromise =
+      executableQuery && typeof executableQuery.exec === "function"
+        ? executableQuery.exec()
+        : Promise.resolve(executableQuery);
+
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.error(`${label} TIMEOUT: ${SHOP_QUERY_TIMEOUT_MS}ms`);
+        resolve(fallbackValue);
+      }, SHOP_QUERY_TIMEOUT_MS);
+    });
+
+    return await Promise.race([queryPromise, timeoutPromise]);
+  } catch (e) {
+    console.error(`${label} ERROR:`, e && e.message ? e.message : e);
+    return fallbackValue;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function normalizeShopCategory(value) {
   const text = String(value || "")
     .toLowerCase()
@@ -622,21 +665,35 @@ function applyPublicShopFilter(items = [], req) {
 
 async function findPublicShopItems(req, query = {}, page = 1, limit = 20) {
   try {
-    return await Shop.find(query)
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-  } catch (e) {
-    console.error("SHOP PRIMARY FIND ERROR:", e.message);
+    const primaryItems = await runShopQueryWithTimeout(
+      Shop.find(query)
+        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      null,
+      "SHOP PRIMARY FIND"
+    );
 
-    const fallbackItems = await Shop.find({
-      isDeleted: { $ne: true },
-    })
-      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-      .limit(limit)
-      .lean();
+    if (Array.isArray(primaryItems)) {
+      return primaryItems;
+    }
+
+    const fallbackItems = await runShopQueryWithTimeout(
+      Shop.find({
+        isDeleted: { $ne: true },
+      })
+        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+        .limit(limit)
+        .lean(),
+      [],
+      "SHOP PRIMARY FALLBACK FIND"
+    );
 
     return applyPublicShopFilter(fallbackItems, req);
+  } catch (e) {
+    console.error("SHOP PRIMARY FIND ERROR:", e && e.message ? e.message : e);
+    return [];
   }
 }
 
@@ -1077,12 +1134,16 @@ router.get("/", async (req, res) => {
     console.error("SHOP LIST ERROR:", err);
 
     try {
-      let items = await Shop.find({
-        isDeleted: { $ne: true },
-      })
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .limit(20)
-        .lean();
+      let items = await runShopQueryWithTimeout(
+        Shop.find({
+          isDeleted: { $ne: true },
+        })
+          .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+          .limit(20)
+          .lean(),
+        [],
+        "SHOP LIST FALLBACK"
+      );
 
       items = applyPublicShopFilter(items, req);
       items = enrichWithDistance(items, safeNumber(req.query.lat), safeNumber(req.query.lng));
