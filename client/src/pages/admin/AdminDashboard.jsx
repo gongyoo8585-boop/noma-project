@@ -345,6 +345,29 @@ function isDeletedShop(item = {}) {
   );
 }
 
+function isHiddenDashboardShop(item = {}) {
+  if (typeof item === "string") {
+    return (
+      item.trim() ===
+      "황제 마사지"
+    );
+  }
+
+  const name =
+    item?.name ||
+    item?.shopName ||
+    item?.title ||
+    item?.displayName ||
+    item?.label ||
+    item?._id ||
+    "";
+
+  return (
+    String(name || "").trim() ===
+    "황제 마사지"
+  );
+}
+
 function getStoredShopsByCategory(category) {
   try {
     if (
@@ -423,7 +446,8 @@ function getStoredShopsByCategory(category) {
           if (
             categoryValue ===
               normalizedCategory &&
-            !isDeletedShop(item)
+            !isDeletedShop(item) &&
+            !isHiddenDashboardShop(item)
           ) {
             collected.push(item);
           }
@@ -582,7 +606,8 @@ function normalizeDashboardResponse(response, category) {
       if (
         !shop ||
         typeof shop !== "object" ||
-        isDeletedShop(shop)
+        isDeletedShop(shop) ||
+        isHiddenDashboardShop(shop)
       ) {
         return false;
       }
@@ -615,7 +640,8 @@ function normalizeDashboardResponse(response, category) {
     if (
       shop &&
       typeof shop === "object" &&
-      !isDeletedShop(shop)
+      !isDeletedShop(shop) &&
+      !isHiddenDashboardShop(shop)
     ) {
       uniqueServerMap.set(
         getShopIdentity(shop),
@@ -627,7 +653,7 @@ function normalizeDashboardResponse(response, category) {
   const mergedShops =
     Array.from(
       uniqueServerMap.values()
-    );
+    ).filter((shop) => !isHiddenDashboardShop(shop));
 
   const serverTotalShops =
     toNumber(
@@ -812,6 +838,7 @@ async function fetchShopDashboardSnapshot(category) {
       shop &&
       typeof shop === "object" &&
       !isDeletedShop(shop) &&
+      !isHiddenDashboardShop(shop) &&
       getShopCategoryFromItem(
         shop,
         normalizedCategory
@@ -827,7 +854,7 @@ async function fetchShopDashboardSnapshot(category) {
   const shops =
     Array.from(
       mergedMap.values()
-    );
+    ).filter((shop) => !isHiddenDashboardShop(shop));
 
   return {
     totalShops: Math.max(
@@ -858,7 +885,8 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
     if (
       shop &&
       typeof shop === "object" &&
-      !isDeletedShop(shop)
+      !isDeletedShop(shop) &&
+      !isHiddenDashboardShop(shop)
     ) {
       mergedMap.set(
         getShopIdentity(shop),
@@ -870,7 +898,7 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
   const mergedShops =
     Array.from(
       mergedMap.values()
-    );
+    ).filter((shop) => !isHiddenDashboardShop(shop));
 
   return {
     ...safeDashboard,
@@ -1399,9 +1427,14 @@ function Card({
 function List({
   items,
 }) {
+  const visibleItems =
+    Array.isArray(items)
+      ? items.filter((item) => !isHiddenDashboardShop(item))
+      : [];
+
   if (
-    !items ||
-    items.length === 0
+    !visibleItems ||
+    visibleItems.length === 0
   ) {
     return (
       <EmptyState message="데이터 없음" />
@@ -1410,7 +1443,7 @@ function List({
 
   return (
     <div style={styles.list}>
-      {items.map(
+      {visibleItems.map(
         (item, idx) => (
           <div
             key={

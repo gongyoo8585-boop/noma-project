@@ -213,17 +213,17 @@ function ShopAdminPage() {
         );
       }
 
-      if (!isKaraokeAdminPath && currentAdminCategory === "massage" && urlCategory !== "massage") {
-        params.set("category", "massage");
-        params.set("shopCategory", "massage");
-        params.set("serviceType", "massage");
-        params.set("businessType", "massage");
-        params.set("adminCategory", "massage");
+      if (!isKaraokeAdminPath && currentAdminCategory === "massage") {
+        ["category", "shopCategory", "serviceType", "businessType", "adminCategory"].forEach((key) => {
+          params.delete(key);
+        });
+
+        const nextQuery = params.toString();
 
         window.history.replaceState(
           {},
           "",
-          `${window.location.pathname}?${params.toString()}`
+          nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname
         );
       }
 
@@ -234,13 +234,29 @@ function ShopAdminPage() {
     }
   }
 
-  const currentAdminCategoryParams = {
-    category: currentAdminCategory,
-    shopCategory: currentAdminCategory,
-    serviceType: currentAdminCategory,
-    businessType: currentAdminCategory,
-    adminCategory: currentAdminCategory,
-  };
+  const currentAdminCategoryParams =
+    currentAdminCategory === "karaoke"
+      ? {
+          category: currentAdminCategory,
+          shopCategory: currentAdminCategory,
+          serviceType: currentAdminCategory,
+          businessType: currentAdminCategory,
+          adminCategory: currentAdminCategory,
+          admin: "true",
+          adminMode: "true",
+          adminList: "true",
+          forAdmin: "true",
+          fromAdmin: "true",
+          management: "true",
+        }
+      : {
+          admin: "true",
+          adminMode: "true",
+          adminList: "true",
+          forAdmin: "true",
+          fromAdmin: "true",
+          management: "true",
+        };
 
   const pageTitle =
     currentAdminCategory === "karaoke"
@@ -294,10 +310,11 @@ function ShopAdminPage() {
     return shopCategory !== "karaoke";
   };
 
-  const filterCurrentCategoryShops = (items) =>
-    (Array.isArray(items) ? items : []).filter((item) =>
-      isCurrentCategoryShop(item)
-    );
+  const filterCurrentCategoryShops = (items) => {
+    const safeItems = Array.isArray(items) ? items : [];
+
+    return safeItems.filter((item) => isCurrentCategoryShop(item));
+  };
 
   const normalizePremiumType = (value) => {
     if (value && typeof value === "object") {
@@ -2284,13 +2301,25 @@ function ShopAdminPage() {
         return;
       }
 
-      const params = {
-        category: currentAdminCategory,
-        shopCategory: currentAdminCategory,
-        serviceType: currentAdminCategory,
-        businessType: currentAdminCategory,
-        adminCategory: currentAdminCategory,
-      };
+      const params =
+        currentAdminCategory === "karaoke"
+          ? {
+              category: currentAdminCategory,
+              shopCategory: currentAdminCategory,
+              serviceType: currentAdminCategory,
+              businessType: currentAdminCategory,
+              adminCategory: currentAdminCategory,
+              admin: "true",
+              adminMode: "true",
+              adminList: "true",
+              management: "true",
+            }
+          : {
+              admin: "true",
+              adminMode: "true",
+              adminList: "true",
+              management: "true",
+            };
 
       if (statsStartDate) {
         params.startDate = statsStartDate;

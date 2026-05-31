@@ -61,49 +61,6 @@ const safeNumber =
     return isNaN(n) ? d : n;
   });
 
-/* =====================================================
-🔥 SHOP QUERY TIMEOUT GUARD (최소 추가)
-===================================================== */
-const SHOP_QUERY_TIMEOUT_MS = Math.max(
-  1000,
-  Math.min(
-    Number(process.env.SHOP_QUERY_TIMEOUT_MS || process.env.RANKING_QUERY_TIMEOUT_MS || 3000) || 3000,
-    10000
-  )
-);
-
-async function runShopQueryWithTimeout(query, fallbackValue = [], label = "SHOP QUERY") {
-  let timer = null;
-
-  try {
-    const executableQuery =
-      query && typeof query.maxTimeMS === "function"
-        ? query.maxTimeMS(SHOP_QUERY_TIMEOUT_MS)
-        : query;
-
-    const queryPromise =
-      executableQuery && typeof executableQuery.exec === "function"
-        ? executableQuery.exec()
-        : Promise.resolve(executableQuery);
-
-    const timeoutPromise = new Promise((resolve) => {
-      timer = setTimeout(() => {
-        console.error(`${label} TIMEOUT: ${SHOP_QUERY_TIMEOUT_MS}ms`);
-        resolve(fallbackValue);
-      }, SHOP_QUERY_TIMEOUT_MS);
-    });
-
-    return await Promise.race([queryPromise, timeoutPromise]);
-  } catch (e) {
-    console.error(`${label} ERROR:`, e && e.message ? e.message : e);
-    return fallbackValue;
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
 function normalizeShopCategory(value) {
   const text = String(value || "")
     .toLowerCase()
@@ -125,6 +82,13 @@ function normalizeShopCategory(value) {
     text === "massage" ||
     text === "마사지" ||
     text === "shop" ||
+    text === "shops" ||
+    text === "store" ||
+    text === "stores" ||
+    text === "spa" ||
+    text === "aroma" ||
+    text === "아로마" ||
+    text === "스웨디시" ||
     text === "nora-massage" ||
     text === "nora_massage"
   ) {
@@ -197,6 +161,7 @@ function getCategoryQueryValues(category) {
   if (category === "karaoke") {
     return [
       "karaoke",
+      "KARAOKE",
       "노래방",
       "가라오케",
       "coin-karaoke",
@@ -209,8 +174,17 @@ function getCategoryQueryValues(category) {
   if (category === "massage") {
     return [
       "massage",
+      "MASSAGE",
       "마사지",
       "shop",
+      "SHOP",
+      "shops",
+      "store",
+      "stores",
+      "spa",
+      "aroma",
+      "아로마",
+      "스웨디시",
       "nora-massage",
       "nora_massage",
     ];
@@ -247,7 +221,38 @@ function buildShopCategoryQuery(req) {
         $in: categoryValues,
       },
     });
+
+    categoryValues.forEach((value) => {
+      categoryOr.push({
+        [field]: {
+          $regex: `^${escapeRegex(value)}$`,
+          $options: "i",
+        },
+      });
+    });
   });
+
+  if (category === "massage") {
+    const noCategoryAnd = categoryFields.map((field) => ({
+      $or: [
+        {
+          [field]: {
+            $exists: false,
+          },
+        },
+        {
+          [field]: "",
+        },
+        {
+          [field]: null,
+        },
+      ],
+    }));
+
+    categoryOr.push({
+      $and: noCategoryAnd,
+    });
+  }
 
   return {
     $and: [
@@ -286,6 +291,9 @@ function buildPublicShopQuery(req, extra = {}) {
       { visible: { $ne: false } },
       { isVisible: { $ne: false } },
       { display: { $ne: false } },
+      { visible: { $exists: false } },
+      { isVisible: { $exists: false } },
+      { display: { $exists: false } },
     ],
   });
   query.$and.push({
@@ -298,10 +306,42 @@ function buildPublicShopQuery(req, extra = {}) {
       { status: "approved" },
       { status: "enable" },
       { status: "enabled" },
+      { approved: { $exists: false } },
+      { isApproved: { $exists: false } },
+      { approvalStatus: { $exists: false } },
     ],
   });
 
   return query;
+}
+
+function isAdminShopListRequest(req) {
+  const url = String(req?.originalUrl || req?.url || "").toLowerCase();
+  const q = req?.query || {};
+
+  return (
+    q.admin === "true" ||
+    q.adminMode === "true" ||
+    q.adminList === "true" ||
+    q.forAdmin === "true" ||
+    q.fromAdmin === "true" ||
+    q.management === "true" ||
+    q.adminCategory !== undefined ||
+    url.includes("admincategory=") ||
+    url.includes("admin=true") ||
+    url.includes("adminmode=true") ||
+    url.includes("adminlist=true") ||
+    url.includes("foradmin=true") ||
+    url.includes("fromadmin=true") ||
+    url.includes("management=true")
+  );
+}
+
+function buildAdminShopQuery(req, extra = {}) {
+  return buildShopBaseQuery(req, {
+    isDeleted: { $ne: true },
+    ...extra,
+  });
 }
 
 function applyPayloadCategory(payload = {}, req) {
@@ -503,6 +543,7 @@ function safeLimit(n) {
 function getShopCategory(shop = {}) {
   const raw = String(
     shop.category ||
+      shop.shopCategory ||
       shop.type ||
       shop.shopType ||
       shop.serviceType ||
@@ -665,35 +706,36 @@ function applyPublicShopFilter(items = [], req) {
 
 async function findPublicShopItems(req, query = {}, page = 1, limit = 20) {
   try {
-    const primaryItems = await runShopQueryWithTimeout(
-      Shop.find(query)
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      null,
-      "SHOP PRIMARY FIND"
-    );
+    const items = await Shop.find(query)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .maxTimeMS(30000)
+      .lean();
 
-    if (Array.isArray(primaryItems)) {
-      return primaryItems;
+    if (Array.isArray(items) && items.length > 0) {
+      return items;
     }
 
-    const fallbackItems = await runShopQueryWithTimeout(
-      Shop.find({
-        isDeleted: { $ne: true },
-      })
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .limit(limit)
-        .lean(),
-      [],
-      "SHOP PRIMARY FALLBACK FIND"
-    );
+    const fallbackItems = await Shop.find({
+      isDeleted: { $ne: true },
+    })
+      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+      .limit(limit)
+      .maxTimeMS(30000)
+      .lean();
 
     return applyPublicShopFilter(fallbackItems, req);
   } catch (e) {
-    console.error("SHOP PRIMARY FIND ERROR:", e && e.message ? e.message : e);
-    return [];
+    console.error("SHOP PRIMARY FIND ERROR:", e.message);
+
+    const fallbackItems = await Shop.find({
+      isDeleted: { $ne: true },
+    })
+      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    return applyPublicShopFilter(fallbackItems, req);
   }
 }
 
@@ -709,7 +751,7 @@ router.get("/admin/stats", auth, admin, async (req, res) => {
     if (!requireShopModel(res)) return;
 
     const total = await Shop.countDocuments(
-      buildPublicShopQuery(req)
+      buildAdminShopQuery(req)
     );
 
     return ok(res, {
@@ -1077,7 +1119,10 @@ router.get("/", async (req, res) => {
     page = safePage(page);
     limit = safeLimit(limit);
 
-    const query = buildPublicShopQuery(req);
+    const adminListMode = isAdminShopListRequest(req);
+    const query = adminListMode
+      ? buildAdminShopQuery(req)
+      : buildPublicShopQuery(req);
 
     if (keyword) {
       const safe = escapeRegex(keyword);
@@ -1101,7 +1146,42 @@ router.get("/", async (req, res) => {
 
     if (tag) query.tags = { $in: [tag] };
 
-    let items = await findPublicShopItems(req, query, page, limit);
+    let items = [];
+
+    if (adminListMode) {
+      const primaryItems = await Shop.find(query)
+        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .maxTimeMS(30000)
+        .lean();
+
+      const fallbackItems = await Shop.find(
+        buildAdminShopQuery(req)
+      )
+        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+        .limit(limit)
+        .maxTimeMS(30000)
+        .lean();
+
+      const mergedMap = new Map();
+
+      [...primaryItems, ...fallbackItems].forEach((item) => {
+        if (!item || item.isDeleted === true) {
+          return;
+        }
+
+        const key = String(item._id || item.id || item.name || Math.random());
+
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, item);
+        }
+      });
+
+      items = Array.from(mergedMap.values());
+    } else {
+      items = await findPublicShopItems(req, query, page, limit);
+    }
 
     items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
     items = applySort(items, sort);
@@ -1134,18 +1214,22 @@ router.get("/", async (req, res) => {
     console.error("SHOP LIST ERROR:", err);
 
     try {
-      let items = await runShopQueryWithTimeout(
-        Shop.find({
-          isDeleted: { $ne: true },
-        })
-          .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-          .limit(20)
-          .lean(),
-        [],
-        "SHOP LIST FALLBACK"
-      );
+      const adminListMode = isAdminShopListRequest(req);
+      let items = await Shop.find(
+        adminListMode
+          ? buildAdminShopQuery(req)
+          : {
+              isDeleted: { $ne: true },
+            }
+      )
+        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+        .limit(20)
+        .lean();
 
-      items = applyPublicShopFilter(items, req);
+      if (!adminListMode) {
+        items = applyPublicShopFilter(items, req);
+      }
+
       items = enrichWithDistance(items, safeNumber(req.query.lat), safeNumber(req.query.lng));
       items = applySort(items, req.query.sort || "like");
 
