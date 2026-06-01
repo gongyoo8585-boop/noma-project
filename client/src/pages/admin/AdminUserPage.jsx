@@ -92,15 +92,32 @@ function AdminUserPage({ navigate }) {
     try {
       loadingRef.current = true;
 
-      setLoading(true);
+      setLoading(false);
       setError("");
 
-      const res = await userApi.getList({
-        keyword,
-        limit: 100,
-      });
+      const fallbackUsers =
+        Array.isArray(originUsers)
+          ? originUsers
+          : [];
 
-      const list = normalizeUsers(res);
+      const res =
+        await Promise.race([
+          userApi.getList({
+            keyword,
+            limit: 100,
+          }),
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                items:
+                  fallbackUsers,
+              });
+            }, 500);
+          }),
+        ]);
+
+      const list =
+        normalizeUsers(res);
 
       setUsers(list);
       setOriginUsers(list);
@@ -112,6 +129,14 @@ function AdminUserPage({ navigate }) {
         e
       );
 
+      const fallbackUsers =
+        Array.isArray(originUsers)
+          ? originUsers
+          : [];
+
+      setUsers(fallbackUsers);
+      updateStats(fallbackUsers);
+
       const message =
         e?.response?.status === 429
           ? "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
@@ -120,7 +145,11 @@ function AdminUserPage({ navigate }) {
             e?.message ||
             "유저 목록 조회 실패";
 
-      setError(message);
+      if (
+        !fallbackUsers.length
+      ) {
+        setError(message);
+      }
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -415,9 +444,10 @@ function AdminUserPage({ navigate }) {
         </button>
       </div>
 
-      {loading && (
-        <Loading message="유저 목록 로딩중..." />
-      )}
+      {loading &&
+        users.length === 0 && (
+          <Loading message="유저 목록 로딩중..." />
+        )}
 
       {!loading &&
         error && (

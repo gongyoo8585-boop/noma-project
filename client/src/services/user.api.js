@@ -78,6 +78,18 @@ let lastStatsAt = 0;
 let lastListAt = 0;
 let listPending = null;
 
+const USER_LIST_TIMEOUT_MS = 5000;
+const USER_STATS_TIMEOUT_MS = 5000;
+const USER_FAST_FALLBACK_MS = 300;
+
+function resolveAfter(ms, value) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(value);
+    }, ms);
+  });
+}
+
 let statsCache = {
   ok: true,
   total: 0,
@@ -521,10 +533,20 @@ API.interceptors.response.use(
       err?.message ||
       "USER_API_ERROR";
 
-    console.error(
-      "USER API ERROR:",
-      message
-    );
+    if (
+      typeof message === "string" &&
+      message.includes("timeout")
+    ) {
+      console.warn(
+        "USER API FALLBACK:",
+        message
+      );
+    } else {
+      console.error(
+        "USER API ERROR:",
+        message
+      );
+    }
 
     if (
       typeof message === "string" &&
@@ -727,7 +749,13 @@ const userApi = {
         Date.now();
 
       if (listPending) {
-        return listPending;
+        return Promise.race([
+          listPending,
+          resolveAfter(
+            USER_FAST_FALLBACK_MS,
+            listCache
+          ),
+        ]);
       }
 
       if (
@@ -745,6 +773,8 @@ const userApi = {
           {
             params:
               cleanParams(params),
+            timeout:
+              USER_LIST_TIMEOUT_MS,
           }
         )
           .then((res) => {
@@ -766,7 +796,13 @@ const userApi = {
               null;
           });
 
-      return listPending;
+      return Promise.race([
+        listPending,
+        resolveAfter(
+          USER_FAST_FALLBACK_MS,
+          listCache
+        ),
+      ]);
     } catch (e) {
       console.warn(
         "USER LIST FALLBACK:",
@@ -805,15 +841,36 @@ const userApi = {
       lastStatsAt =
         now;
 
-      const res =
-        await API.get(
-          "/users/admin/stats"
-        );
+      const statsPending =
+        API.get(
+          "/users/admin/stats",
+          {
+            timeout:
+              USER_STATS_TIMEOUT_MS,
+          }
+        )
+          .then((res) => {
+            statsCache =
+              normalizeStats(res);
 
-      statsCache =
-        normalizeStats(res);
+            return statsCache;
+          })
+          .catch((e) => {
+            console.warn(
+              "USER STATS FALLBACK:",
+              e?.message || e
+            );
 
-      return statsCache;
+            return statsCache;
+          });
+
+      return await Promise.race([
+        statsPending,
+        resolveAfter(
+          USER_FAST_FALLBACK_MS,
+          statsCache
+        ),
+      ]);
     } catch (e) {
       console.warn(
         "USER STATS FALLBACK:",

@@ -1385,8 +1385,12 @@ function MapPage({ navigate }) {
     return `${API_BASE_URL}/${imageValue}`;
   };
 
-  const getRepresentativeImage = (shop) => {
+  const getRepresentativeImage = (shop, index = 0) => {
     const images = collectShopImages(shop);
+    const fallbackImage =
+      FALLBACK_SHOP_IMAGES[index % FALLBACK_SHOP_IMAGES.length] ||
+      FALLBACK_SHOP_IMAGES[0] ||
+      "";
 
     return normalizeImageUrl(
       shop?.representativeImage ||
@@ -1398,7 +1402,7 @@ function MapPage({ navigate }) {
         shop?.imageUrl ||
         shop?.photo ||
         shop?.picture ||
-        ""
+        fallbackImage
     );
   };
 
@@ -3064,7 +3068,7 @@ function MapPage({ navigate }) {
             <div style={styles.list}>
               {displayedShopList.map((shop, idx) => {
                 const id = getShopId(shop, idx);
-                const representativeImage = getRepresentativeImage(shop);
+                const representativeImage = getRepresentativeImage(shop, idx);
                 const isPremiumActive = isPremiumShop(shop);
                 const active =
                   (selected?._id || selected?.id) === (shop?._id || shop?.id);
@@ -3098,20 +3102,28 @@ function MapPage({ navigate }) {
                     }}
                   >
                     <div style={styles.cardImageWrap}>
-                      {!!representativeImage ? (
+                      {!!representativeImage && (
                         <img
                           src={representativeImage}
                           alt={shop?.name || "shop"}
                           style={styles.shopThumb}
                           onError={(e) => {
+                            const fallbackImage =
+                              FALLBACK_SHOP_IMAGES[idx % FALLBACK_SHOP_IMAGES.length] ||
+                              FALLBACK_SHOP_IMAGES[0] ||
+                              "";
+
+                            if (
+                              fallbackImage &&
+                              e.currentTarget.src !== fallbackImage
+                            ) {
+                              e.currentTarget.src = fallbackImage;
+                              return;
+                            }
+
                             e.currentTarget.style.display = "none";
                           }}
                         />
-                      ) : (
-                        <div style={styles.shopThumbFallback}>
-                          <div style={styles.fallbackGlowOne} />
-                          <div style={styles.fallbackGlowTwo} />
-                        </div>
                       )}
 
                       {isPremiumActive && (
@@ -3222,9 +3234,9 @@ function MapPage({ navigate }) {
                 </button>
 
                 <div style={styles.popupImageWrap}>
-                  {!!getRepresentativeImage(selectedForPopup) ? (
+                  {!!getRepresentativeImage(selectedForPopup, 0) ? (
                     <img
-                      src={getRepresentativeImage(selectedForPopup)}
+                      src={getRepresentativeImage(selectedForPopup, 0)}
                       alt={selectedForPopup?.name || "selected-shop"}
                       style={styles.popupImage}
                     />

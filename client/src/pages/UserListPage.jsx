@@ -8,28 +8,36 @@ import EmptyState from "../components/common/EmptyState";
 
 /**
  * =====================================================
- * 🔥 USER LIST PAGE (ULTRA FINAL - ERROR UI PATCH)
+ * 🔥 USER LIST PAGE (ULTRA FINAL - SHORT LOADING PATCH)
  * ✔ 기존 코드 100% 유지
- * ✔ EmptyState 최소 추가
+ * ✔ EmptyState 유지
  * ✔ 기존 흐름 유지
- * ✔ 컴포넌트 체크 안정화 (최소 수정)
+ * ✔ 컴포넌트 체크 안정화
+ * ✔ 페이지 자체 로딩 대기 없음
+ * ✔ UserList 즉시 렌더링
  * =====================================================
  */
 
 function UserListPage() {
-  const pathname = window?.location?.pathname || "";
+  const pathname =
+    window?.location?.pathname || "";
 
-  const isAdmin = pathname.includes("/admin");
+  const isAdmin =
+    pathname.includes("/admin");
 
   /* 🔥 최소 수정 */
-  const isValidComponent = typeof UserList === "function";
+  const isValidComponent =
+    typeof UserList === "function";
 
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <h1 style={styles.title}>
-          {isAdmin ? "전체 유저 목록" : "유저 목록"}
+          {isAdmin
+            ? "전체 유저 목록"
+            : "유저 목록"}
         </h1>
+
         <p style={styles.desc}>
           {isAdmin
             ? "회원 관리 및 권한 설정을 수행합니다."
@@ -42,7 +50,10 @@ function UserListPage() {
         <EmptyState message="유저 목록을 불러올 수 없습니다." />
       )}
 
-      {isValidComponent && <UserList admin={isAdmin} />}
+      {/* 🔥 페이지 로딩 대기 없이 즉시 렌더링 */}
+      {isValidComponent && (
+        <UserList admin={isAdmin} />
+      )}
     </div>
   );
 }
@@ -58,14 +69,17 @@ const styles = {
     color: "#fff",
     padding: 20,
   },
+
   header: {
     marginBottom: 20,
   },
+
   title: {
     margin: 0,
     color: "#d4af37",
     fontSize: 28,
   },
+
   desc: {
     marginTop: 8,
     color: "#aaa",

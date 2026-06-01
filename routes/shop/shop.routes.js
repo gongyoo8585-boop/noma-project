@@ -540,6 +540,8 @@ function safeLimit(n) {
   return Math.min(n, 100);
 }
 
+const SHOP_QUERY_MAX_TIME_MS = 800;
+
 function getShopCategory(shop = {}) {
   const raw = String(
     shop.category ||
@@ -709,33 +711,18 @@ async function findPublicShopItems(req, query = {}, page = 1, limit = 20) {
     const items = await Shop.find(query)
       .skip((page - 1) * limit)
       .limit(limit)
-      .maxTimeMS(30000)
+      .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
       .lean();
 
     if (Array.isArray(items) && items.length > 0) {
       return items;
     }
 
-    const fallbackItems = await Shop.find({
-      isDeleted: { $ne: true },
-    })
-      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-      .limit(limit)
-      .maxTimeMS(30000)
-      .lean();
-
-    return applyPublicShopFilter(fallbackItems, req);
+    return [];
   } catch (e) {
     console.error("SHOP PRIMARY FIND ERROR:", e.message);
 
-    const fallbackItems = await Shop.find({
-      isDeleted: { $ne: true },
-    })
-      .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-      .limit(limit)
-      .lean();
-
-    return applyPublicShopFilter(fallbackItems, req);
+    return [];
   }
 }
 
@@ -745,27 +732,122 @@ router.use(applyShopCategoryRequest);
    🔥 기존 코드 (절대 삭제 없음)
 ===================================================== */
 
-/* 관리자 통계 */
-router.get("/admin/stats", auth, admin, async (req, res) => {
-  try {
-    if (!requireShopModel(res)) return;
 
-    const total = await Shop.countDocuments(
-      buildAdminShopQuery(req)
-    );
-
-    return ok(res, {
-      total,
-      shops: total,
-    });
-  } catch (e) {
-    console.error("SHOP ADMIN STATS ERROR:", e);
-    return ok(res, {
+async function buildShopAdminStatsPayload(req) {
+  if (!Shop) {
+    return {
       total: 0,
       shops: 0,
-    });
+      totalShops: 0,
+      count: 0,
+      items: [],
+      list: [],
+      data: [],
+    };
   }
-});
+
+  const query =
+    buildAdminShopQuery(req);
+
+  const recentItems =
+    await Shop.find(query)
+      .sort({
+        premium: -1,
+        isPremium: -1,
+        premiumActive: -1,
+        createdAt: -1,
+      })
+      .limit(10)
+      .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
+      .lean();
+
+  const total =
+    await Shop.countDocuments(query)
+      .maxTimeMS(SHOP_QUERY_MAX_TIME_MS);
+
+  return {
+    total,
+    shops: total,
+    totalShops: total,
+    shopCount: total,
+    count: total,
+    items: recentItems,
+    list: recentItems,
+    data: recentItems,
+  };
+}
+
+async function sendShopAdminStats(req, res) {
+  try {
+    const payload =
+      await buildShopAdminStatsPayload(req);
+
+    return ok(res, payload);
+  } catch (e) {
+    console.error(
+      "SHOP ADMIN STATS ERROR:",
+      e.message || e
+    );
+
+    try {
+      const items =
+        await Shop.find({
+          isDeleted: {
+            $ne: true,
+          },
+        })
+          .sort({
+            premium: -1,
+            isPremium: -1,
+            premiumActive: -1,
+            createdAt: -1,
+          })
+          .limit(10)
+          .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
+          .lean();
+
+      const total =
+        Array.isArray(items)
+          ? items.length
+          : 0;
+
+      return ok(res, {
+        total,
+        shops: total,
+        totalShops: total,
+        shopCount: total,
+        count: total,
+        items,
+        list: items,
+        data: items,
+      });
+    } catch (fallbackErr) {
+      console.error(
+        "SHOP ADMIN STATS FALLBACK ERROR:",
+        fallbackErr.message || fallbackErr
+      );
+
+      return ok(res, {
+        total: 0,
+        shops: 0,
+        totalShops: 0,
+        shopCount: 0,
+        count: 0,
+        items: [],
+        list: [],
+        data: [],
+      });
+    }
+  }
+}
+
+
+/* 관리자 통계 */
+router.get("/admin/stats", auth, admin, sendShopAdminStats);
+
+/* 관리자 통계 보조 경로 */
+router.get("/stats", auth, admin, sendShopAdminStats);
+router.get("/admin/stats/", auth, admin, sendShopAdminStats);
 
 /* 조회수 초기화 */
 router.post("/admin/reset-view", auth, admin, async (req, res) => {
@@ -1153,16 +1235,20 @@ router.get("/", async (req, res) => {
         .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .maxTimeMS(30000)
+        .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
         .lean();
 
-      const fallbackItems = await Shop.find(
-        buildAdminShopQuery(req)
-      )
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .limit(limit)
-        .maxTimeMS(30000)
-        .lean();
+      const fallbackItems =
+        Array.isArray(primaryItems) &&
+        primaryItems.length > 0
+          ? []
+          : await Shop.find(
+              buildAdminShopQuery(req)
+            )
+              .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+              .limit(limit)
+              .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
+              .lean();
 
       const mergedMap = new Map();
 
@@ -1213,42 +1299,12 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("SHOP LIST ERROR:", err);
 
-    try {
-      const adminListMode = isAdminShopListRequest(req);
-      let items = await Shop.find(
-        adminListMode
-          ? buildAdminShopQuery(req)
-          : {
-              isDeleted: { $ne: true },
-            }
-      )
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .limit(20)
-        .lean();
-
-      if (!adminListMode) {
-        items = applyPublicShopFilter(items, req);
-      }
-
-      items = enrichWithDistance(items, safeNumber(req.query.lat), safeNumber(req.query.lng));
-      items = applySort(items, req.query.sort || "like");
-
-      return res.json({
-        ok: true,
-        items,
-        list: items,
-        total: items.length,
-      });
-    } catch (fallbackErr) {
-      console.error("SHOP LIST FALLBACK ERROR:", fallbackErr);
-
-      return res.json({
-        ok: true,
-        items: [],
-        list: [],
-        total: 0,
-      });
-    }
+    return res.json({
+      ok: true,
+      items: [],
+      list: [],
+      total: 0,
+    });
   }
 });
 

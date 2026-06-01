@@ -204,6 +204,7 @@ const LOCAL_ADMIN_SHOP_STORAGE_KEY = "nora_admin_shops";
 const LOCAL_SHOP_IMAGE_BANK_KEY = "nora_admin_shop_image_bank";
 const DELETED_SHOP_STORAGE_KEY = "nora_deleted_shop_ids";
 const MUTATION_TIMEOUT_MS = 5000;
+const SHOP_QUERY_TIMEOUT_MS = 2000;
 const MAX_STORED_IMAGE_LENGTH = Number.POSITIVE_INFINITY;
 const MAX_STORED_SHOPS = 80;
 
@@ -328,8 +329,55 @@ function getCategoryFromParams(params = {}) {
   );
 }
 
+function getRuntimeAdminCategory() {
+  try {
+    if (typeof window === "undefined" || !window.location) {
+      return "";
+    }
+
+    const pathname = String(window.location.pathname || "").toLowerCase();
+    const search = String(window.location.search || "");
+
+    const queryCategory = getCategoryFromUrl(search);
+
+    if (queryCategory) {
+      return queryCategory;
+    }
+
+    if (
+      pathname.startsWith("/admin/karaoke") ||
+      pathname.includes("/karaoke")
+    ) {
+      return "karaoke";
+    }
+
+    if (
+      pathname === "/admin" ||
+      pathname.startsWith("/admin/")
+    ) {
+      return "massage";
+    }
+
+    return "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function getEffectiveCategory(params = {}) {
+  return (
+    getCategoryFromParams(params) ||
+    getCategoryFromUrl(params?.url || "") ||
+    getRuntimeAdminCategory()
+  );
+}
+
+function hasCategoryScope(params = {}) {
+  return !!getEffectiveCategory(params);
+}
+
 function makeCategoryParams(params = {}) {
-  const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
+  const category = getEffectiveCategory(params);
 
   if (!category) {
     return {};
@@ -370,7 +418,7 @@ function appendCategoryQuery(url = "", params = {}) {
 }
 
 function getScopedStorageKey(baseKey, params = {}) {
-  const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
+  const category = getEffectiveCategory(params);
 
   if (!category) {
     return baseKey;
@@ -380,9 +428,17 @@ function getScopedStorageKey(baseKey, params = {}) {
 }
 
 function isSameShopCategory(shop = {}, params = {}) {
-  const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
+  const category = getEffectiveCategory(params);
 
   if (!category) {
+    if (params?.admin === "true" || params?.adminMode === "true" || params?.adminList === "true" || params?.management === "true") {
+      return true;
+    }
+
+    if (isAdminRuntimePath()) {
+      return true;
+    }
+
     return true;
   }
 
@@ -404,8 +460,7 @@ function filterShopsByCategory(items = [], params = {}) {
 function normalizeShopCategoryPayload(payload = {}, params = {}) {
   const category =
     getCategoryFromParams(payload) ||
-    getCategoryFromParams(params) ||
-    getCategoryFromUrl(params?.url || "");
+    getEffectiveCategory(params);
 
   if (!category) {
     return {
@@ -1548,14 +1603,27 @@ function normalizeShopResponseShape(data, params = {}) {
 
   if (Array.isArray(items)) {
     const normalizedItems = items.map((shop) => normalizeShopResponseItem(shop, params));
-    const mergedItems = filterShopsByCategory(
-      filterDeletedShops(
-        mergeShopArrays([
-          ...filterShopsByCategory(normalizedItems, params),
-        ])
-      ),
-      params
-    );
+    const hasScope = hasCategoryScope(params);
+    const isAdminListParams =
+      !hasScope &&
+      (
+        params?.admin === "true" ||
+        params?.adminMode === "true" ||
+        params?.adminList === "true" ||
+        params?.management === "true" ||
+        isAdminRuntimePath()
+      );
+
+    const mergedItems = isAdminListParams
+      ? filterDeletedShops(mergeShopArrays(normalizedItems))
+      : filterShopsByCategory(
+          filterDeletedShops(
+            mergeShopArrays([
+              ...filterShopsByCategory(normalizedItems, params),
+            ])
+          ),
+          params
+        );
 
     if (data && typeof data === "object" && !Array.isArray(data)) {
       return {
@@ -1869,7 +1937,7 @@ function forgetDeletedShop(shopOrId) {
 
 function getLocalShops(params = {}) {
   try {
-    const category = getCategoryFromParams(params) || getCategoryFromUrl(params?.url || "");
+    const category = getEffectiveCategory(params);
     const localPublicKey = getScopedStorageKey(LOCAL_SHOP_STORAGE_KEY, params);
     const localAdminKey = getScopedStorageKey(LOCAL_ADMIN_SHOP_STORAGE_KEY, params);
 
@@ -1905,20 +1973,32 @@ function getLocalShops(params = {}) {
       parseStorageArray(sessionStorage, key)
     );
 
-    return filterShopsByCategory(
-      filterDeletedShops(
-        mergeShopArrays([
-          ...filterShopsByCategory(LOCAL_SHOP_MEMORY, params),
-          ...savedPublic,
-          ...sessionPublic,
-          ...savedAdmin,
-          ...sessionAdmin,
-          ...mirrorLocalItems,
-          ...mirrorSessionItems,
-        ]).map((shop) => applyShopImageBank(shop))
-      ),
-      params
+    const mergedItems = filterDeletedShops(
+      mergeShopArrays([
+        ...filterShopsByCategory(LOCAL_SHOP_MEMORY, params),
+        ...savedPublic,
+        ...sessionPublic,
+        ...savedAdmin,
+        ...sessionAdmin,
+        ...mirrorLocalItems,
+        ...mirrorSessionItems,
+      ]).map((shop) => applyShopImageBank(shop))
     );
+
+    if (
+      !category &&
+      (
+        params?.admin === "true" ||
+        params?.adminMode === "true" ||
+        params?.adminList === "true" ||
+        params?.management === "true" ||
+        isAdminRuntimePath()
+      )
+    ) {
+      return mergedItems;
+    }
+
+    return filterShopsByCategory(mergedItems, params);
   } catch (e) {
     return Array.isArray(LOCAL_SHOP_MEMORY)
       ? filterShopsByCategory(
@@ -2018,7 +2098,11 @@ function saveLocalShops(items = [], params = {}) {
   writeShopImageBank(memoryItems, { replace: replaceItems.length > 0 });
 
   LOCAL_SHOP_MEMORY = mergeShopArrays([
-    ...filterShopsByCategory(LOCAL_SHOP_MEMORY, categoryParams.category ? { category: categoryParams.category === "karaoke" ? "massage" : "karaoke" } : {}),
+    ...(
+      categoryParams.category
+        ? filterShopsByCategory(LOCAL_SHOP_MEMORY, { category: categoryParams.category === "karaoke" ? "massage" : "karaoke" })
+        : []
+    ),
     ...memoryItems,
   ]);
 
@@ -2130,10 +2214,84 @@ function saveLocalShops(items = [], params = {}) {
 }
 
 function getFallbackShops(params = {}) {
-  return filterShopsByCategory(
-    filterDeletedShops(mergeShopArrays([])),
-    params
-  );
+  try {
+    const hasScope = hasCategoryScope(params);
+    const mergedItems = filterDeletedShops(
+      mergeShopArrays([
+        ...getLocalShops(params),
+        ...LOCAL_SHOP_MEMORY,
+        ...FALLBACK_SHOPS,
+      ]).map((shop) => applyShopImageBank(shop))
+    );
+
+    if (
+      !hasScope &&
+      (
+        params?.admin === "true" ||
+        params?.adminMode === "true" ||
+        params?.adminList === "true" ||
+        params?.management === "true" ||
+        isAdminRuntimePath()
+      )
+    ) {
+      return mergedItems;
+    }
+
+    return filterShopsByCategory(mergedItems, params);
+  } catch (e) {
+    const hasScope = hasCategoryScope(params);
+    const fallbackItems = filterDeletedShops(mergeShopArrays([...LOCAL_SHOP_MEMORY, ...FALLBACK_SHOPS]));
+
+    if (
+      !hasScope &&
+      (
+        params?.admin === "true" ||
+        params?.adminMode === "true" ||
+        params?.adminList === "true" ||
+        params?.management === "true" ||
+        isAdminRuntimePath()
+      )
+    ) {
+      return fallbackItems;
+    }
+
+    return filterShopsByCategory(fallbackItems, params);
+  }
+}
+
+function isAdminRuntimePath() {
+  try {
+    if (typeof window === "undefined" || !window.location) {
+      return false;
+    }
+
+    const pathname = String(window.location.pathname || "").toLowerCase();
+
+    return pathname === "/admin" || pathname.startsWith("/admin/");
+  } catch (e) {
+    return false;
+  }
+}
+
+function makeAdminListParams(params = {}) {
+  if (!isAdminRuntimePath()) {
+    return {
+      ...params,
+    };
+  }
+
+  const categoryParams = makeCategoryParams(params);
+
+  return {
+    ...categoryParams,
+    ...params,
+    admin: "true",
+    adminMode: "true",
+    adminList: "true",
+    forAdmin: "true",
+    fromAdmin: "true",
+    management: "true",
+  };
 }
 
 function isLocalShopId(value) {
@@ -2175,7 +2333,8 @@ function isStatsUrl(url) {
 }
 
 function getFallbackByUrl(url, params = {}) {
-  const shops = getFallbackShops({ ...params, url });
+  const categoryParams = makeCategoryParams({ ...params, url });
+  const shops = getFallbackShops({ ...categoryParams, ...params, url });
 
   if (isStatsUrl(url)) {
     return {
@@ -2203,6 +2362,33 @@ function getFallbackByUrl(url, params = {}) {
 }
 
 function shouldUseShopFallback(url, options = {}) {
+  const method = String(options?.method || "GET").toUpperCase();
+  const path = getPathOnly(url);
+
+  if (isStatsUrl(path) || isStatsUrl(url)) {
+    return true;
+  }
+
+  if (method === "GET" && (path === "/shops" || path.startsWith("/shops?"))) {
+    return true;
+  }
+
+  if (
+    method === "GET" &&
+    (
+      path === "/shops/top/list" ||
+      path === "/shops/recent/list" ||
+      path === "/shops/nearby/list" ||
+      path === "/shops/premium/nearby" ||
+      path === "/shops/ranking/list" ||
+      path === "/shops/random/list" ||
+      path === "/shops/cache/list" ||
+      path === "/shops/recommend/v2"
+    )
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -2548,9 +2734,11 @@ async function request(url, options = {}) {
     const method = String(fetchOptions.method || "GET").toUpperCase();
     const isMutation = method !== "GET";
 
-    const res = isMutation
-      ? await fetchWithTimeout(requestUrl, fetchOptions, MUTATION_TIMEOUT_MS)
-      : await fetch(requestUrl, fetchOptions);
+    const res = await fetchWithTimeout(
+      requestUrl,
+      fetchOptions,
+      isMutation ? MUTATION_TIMEOUT_MS : SHOP_QUERY_TIMEOUT_MS
+    );
 
     let data = {};
 
@@ -2660,15 +2848,20 @@ async function request(url, options = {}) {
       ? data
       : normalized;
   } catch (err) {
-    console.error("SHOP API ERROR:", err);
-
     if (shouldUseLocalMutation(url, options)) {
       return handleLocalMutation(url, options);
     }
 
     if (shouldUseShopFallback(url, options)) {
+      console.warn(
+        "SHOP API FALLBACK:",
+        err?.message || err
+      );
+
       return getFallbackByUrl(url, options.categoryParams || {});
     }
+
+    console.error("SHOP API ERROR:", err);
 
     throw err;
   }
@@ -2867,8 +3060,9 @@ function normalizeShopPayload(payload = {}) {
 
 export const shopApi = {
   getList: async (params = {}) => {
+    const listParams = makeAdminListParams(params);
     const cleanParams = Object.fromEntries(
-      Object.entries(params).filter(([_, v]) => v !== undefined && v !== null && v !== "")
+      Object.entries(listParams).filter(([_, v]) => v !== undefined && v !== null && v !== "")
     );
 
     const query = new URLSearchParams(cleanParams).toString();
@@ -2879,6 +3073,44 @@ export const shopApi = {
 
     const responseShape = normalizeShopApiResponse(res);
     const normalized = normalizeShopResponseShape(responseShape, cleanParams);
+    const localItems = getLocalShops(cleanParams);
+    const apiItems = Array.isArray(normalized?.items) ? normalized.items : [];
+    const hasScope = hasCategoryScope(cleanParams);
+    const isAdminListParams =
+      !hasScope &&
+      (
+        cleanParams?.admin === "true" ||
+        cleanParams?.adminMode === "true" ||
+        cleanParams?.adminList === "true" ||
+        cleanParams?.management === "true" ||
+        isAdminRuntimePath()
+      );
+
+    const mergedRawItems = filterDeletedShops(
+      mergeShopArrays([
+        ...localItems,
+        ...apiItems,
+      ]).map((shop) => applyShopImageBank(shop))
+    );
+
+    const mergedItems = isAdminListParams
+      ? mergedRawItems
+      : filterShopsByCategory(mergedRawItems, cleanParams);
+
+    if (mergedItems.length || localItems.length) {
+      saveLocalShops(mergedItems, cleanParams);
+
+      return {
+        ...normalized,
+        ok: normalized?.ok !== false,
+        shops: mergedItems,
+        list: mergedItems,
+        items: mergedItems,
+        data: mergedItems,
+        total: mergedItems.length,
+        count: mergedItems.length,
+      };
+    }
 
     return normalized;
   },
@@ -3051,12 +3283,32 @@ export const shopApi = {
     return res;
   },
 
-  getStats: (params = {}) => {
+  getStats: async (params = {}) => {
     const categoryParams = makeCategoryParams(params);
 
-    return request(appendCategoryQuery("/shops/admin/stats", categoryParams), {
-      categoryParams,
-    });
+    try {
+      return await request(appendCategoryQuery("/shops/admin/stats", categoryParams), {
+        categoryParams,
+      });
+    } catch (e) {
+      const shops = getFallbackShops(categoryParams);
+
+      return {
+        ...FALLBACK_STATS,
+        ok: true,
+        shops,
+        shopStats: [],
+        shopCount: shops.length,
+        totalShops: shops.length,
+        activeShops: shops.filter((shop) => shop.status === "active").length,
+        inactiveShops: shops.filter((shop) => shop.status !== "active").length,
+        list: shops,
+        items: shops,
+        data: shops,
+        total: shops.length,
+        count: shops.length,
+      };
+    }
   },
 
   getDashboardStats: (shopId, startDate, endDate, params = {}) => {

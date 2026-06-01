@@ -132,7 +132,7 @@ function ShopAdminPage() {
   const formRef = useRef(null);
 
   const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState("");
@@ -161,6 +161,14 @@ function ShopAdminPage() {
   const currentPath = currentLocation.pathname;
   const currentSearch = currentLocation.search;
 
+  const isShopAdminRoute =
+    currentPath === "/admin/shops" ||
+    currentPath.startsWith("/admin/shops/") ||
+    currentPath === "/admin/shop" ||
+    currentPath.startsWith("/admin/shop/") ||
+    currentPath === "/admin/karaoke" ||
+    currentPath.startsWith("/admin/karaoke/");
+
   const isKaraokeAdminPath =
     currentPath.startsWith("/admin/karaoke") ||
     currentPath.includes("/admin/karaoke/") ||
@@ -188,7 +196,7 @@ function ShopAdminPage() {
       ? "karaoke"
       : "massage";
 
-  if (typeof window !== "undefined") {
+  if (typeof window !== "undefined" && isShopAdminRoute) {
     try {
       const params = new URLSearchParams(window.location.search || "");
       const urlCategory =
@@ -2296,6 +2304,11 @@ function ShopAdminPage() {
 
   const loadStats = async () => {
     try {
+      if (!isShopAdminRoute) {
+        setStats([]);
+        return;
+      }
+
       if (typeof shopApi.getStats !== "function") {
         setStats([]);
         return;
@@ -2338,7 +2351,7 @@ function ShopAdminPage() {
               list: [],
               shopStats: [],
             });
-          }, 1200);
+          }, 300);
         }),
       ]);
 
@@ -2526,7 +2539,13 @@ function ShopAdminPage() {
 
   const load = async () => {
     try {
-      setLoading(true);
+      if (!isShopAdminRoute) {
+        setInitialized(true);
+        setLoading(false);
+        setError("");
+        return;
+      }
+
       setError("");
 
       const localItems = filterDeletedShops(mergeShopList([
@@ -2534,98 +2553,114 @@ function ShopAdminPage() {
         ...readLocalShops(),
       ]));
 
-      if (localItems.length) {
-        setList(localItems);
-      }
+      setList(localItems);
 
-      const timeoutPromise = new Promise((resolve) => {
-        setTimeout(() => {
-          resolve({
-            items: localItems,
+      setInitialized(true);
+      setLoading(false);
+
+      Promise.race([
+        shopApi.getList(currentAdminCategoryParams),
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              items: localItems,
+            });
+          }, 300);
+        }),
+      ])
+        .then((res) => {
+          const rawApiItems = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
+
+          const apiItems = rawApiItems.map((apiItem) => {
+            const apiId = String(apiItem?._id || apiItem?.id || apiItem?.shopId || "");
+            const apiNameAddressKey = `${normalizeText(apiItem?.name)}::${normalizeText(apiItem?.address || apiItem?.roadAddress || apiItem?.fullAddress)}`;
+
+            const localMatch = localItems.find((localItem) => {
+              const localId = String(localItem?._id || localItem?.id || localItem?.shopId || "");
+              const localNameAddressKey = `${normalizeText(localItem?.name)}::${normalizeText(localItem?.address || localItem?.roadAddress || localItem?.fullAddress)}`;
+
+              return (
+                (apiId && localId && apiId === localId) ||
+                (apiNameAddressKey && localNameAddressKey && apiNameAddressKey === localNameAddressKey)
+              );
+            });
+
+            const localImages = localMatch ? makeSafeImages(localMatch) : [];
+
+            if (!localMatch || !localImages.length) {
+              return applyShopImageBank(apiItem);
+            }
+
+            const representativeImage = normalizeImageSrc(
+              localMatch.representativeImage ||
+                localMatch.mainImage ||
+                localMatch.thumbnail ||
+                localMatch.coverImage ||
+                localImages[0] ||
+                ""
+            );
+
+            const fixedImages = representativeImage
+              ? Array.from(new Set([representativeImage, ...localImages].map((image) => normalizeImageSrc(image)).filter(Boolean)))
+              : localImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
+
+            return {
+              ...apiItem,
+              images: fixedImages,
+              photos: fixedImages,
+              imageUrls: fixedImages,
+              gallery: fixedImages,
+              pictures: fixedImages,
+              files: [],
+              representativeImage,
+              mainImage: representativeImage,
+              thumbnail: representativeImage,
+              coverImage: representativeImage,
+              image: representativeImage,
+              imageUrl: representativeImage,
+              photo: representativeImage,
+              picture: representativeImage,
+            };
           });
-        }, 2500);
-      });
 
-      const res = await Promise.race([shopApi.getList(currentAdminCategoryParams), timeoutPromise]);
-      const rawApiItems = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
-
-      const apiItems = rawApiItems.map((apiItem) => {
-        const apiId = String(apiItem?._id || apiItem?.id || apiItem?.shopId || "");
-        const apiNameAddressKey = `${normalizeText(apiItem?.name)}::${normalizeText(apiItem?.address || apiItem?.roadAddress || apiItem?.fullAddress)}`;
-
-        const localMatch = localItems.find((localItem) => {
-          const localId = String(localItem?._id || localItem?.id || localItem?.shopId || "");
-          const localNameAddressKey = `${normalizeText(localItem?.name)}::${normalizeText(localItem?.address || localItem?.roadAddress || localItem?.fullAddress)}`;
-
-          return (
-            (apiId && localId && apiId === localId) ||
-            (apiNameAddressKey && localNameAddressKey && apiNameAddressKey === localNameAddressKey)
+          const nextList = filterDeletedShops(
+            mergeShopList([
+              ...localItems,
+              ...apiItems,
+            ])
           );
+
+          if (nextList.length) {
+            saveLocalShops(nextList);
+            setList(nextList);
+          } else {
+            const backupItems = readBackupShops();
+
+            if (backupItems.length) {
+              saveLocalShops(backupItems);
+              setList(backupItems);
+            } else {
+              setList(localItems);
+            }
+          }
+
+          loadStats();
+        })
+        .catch((e) => {
+          console.warn("SHOP LOAD BACKGROUND SKIP:", e.message);
+
+          const fallbackItems = filterDeletedShops(mergeShopList([
+            ...readBackupShops(),
+            ...readLocalShops(),
+          ]));
+
+          if (fallbackItems.length) {
+            saveLocalShops(fallbackItems);
+            setList(fallbackItems);
+          }
         });
-
-        const localImages = localMatch ? makeSafeImages(localMatch) : [];
-
-        if (!localMatch || !localImages.length) {
-          return applyShopImageBank(apiItem);
-        }
-
-        const representativeImage = normalizeImageSrc(
-          localMatch.representativeImage ||
-            localMatch.mainImage ||
-            localMatch.thumbnail ||
-            localMatch.coverImage ||
-            localImages[0] ||
-            ""
-        );
-
-        const fixedImages = representativeImage
-          ? Array.from(new Set([representativeImage, ...localImages].map((image) => normalizeImageSrc(image)).filter(Boolean)))
-          : localImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
-
-        return {
-          ...apiItem,
-          images: fixedImages,
-          photos: fixedImages,
-          imageUrls: fixedImages,
-          gallery: fixedImages,
-          pictures: fixedImages,
-          files: [],
-          representativeImage,
-          mainImage: representativeImage,
-          thumbnail: representativeImage,
-          coverImage: representativeImage,
-          image: representativeImage,
-          imageUrl: representativeImage,
-          photo: representativeImage,
-          picture: representativeImage,
-        };
-      });
-
-      const nextList = filterDeletedShops(
-        mergeShopList([
-          ...localItems,
-          ...apiItems,
-        ])
-      );
-
-      if (nextList.length) {
-        saveLocalShops(nextList);
-        setList(nextList);
-      } else {
-        const backupItems = readBackupShops();
-
-        if (backupItems.length) {
-          saveLocalShops(backupItems);
-          setList(backupItems);
-        } else {
-          setList(localItems);
-        }
-      }
-
-      loadStats();
     } catch (e) {
       console.error("SHOP LOAD ERROR:", e.message);
-      setError(e.message || "업체 목록 로딩 실패");
 
       const localItems = filterDeletedShops(mergeShopList([
         ...readBackupShops(),
@@ -2637,19 +2672,28 @@ function ShopAdminPage() {
       }
 
       setList(localItems);
-    } finally {
       setInitialized(true);
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!isShopAdminRoute) {
+      if (!initialized) {
+        setInitialized(true);
+      }
+
+      setLoading(false);
+      setError("");
+      return;
+    }
+
     if (initialized) {
       return;
     }
 
     load();
-  }, [initialized, currentAdminCategory]);
+  }, [initialized, currentAdminCategory, isShopAdminRoute]);
 
   const onChange = (e) => {
     const { name, value } = e.target;
@@ -2824,7 +2868,6 @@ function ShopAdminPage() {
 
   const onSearch = async () => {
     try {
-      setLoading(true);
       setError("");
 
       const localItems = mergeShopList([
@@ -2839,7 +2882,7 @@ function ShopAdminPage() {
             resolve({
               items: localItems,
             });
-          }, 2500);
+          }, 300);
         }),
       ]);
 
@@ -3433,7 +3476,7 @@ function ShopAdminPage() {
                 resolve({
                   items: localItems,
                 });
-              }, 2500);
+              }, 500);
             }),
           ]);
 
@@ -3585,6 +3628,10 @@ function ShopAdminPage() {
   };
 
   const filteredList = getFilteredList();
+
+  if (!isShopAdminRoute) {
+    return null;
+  }
 
   if (loading) {
     return <Loading message="업체 목록 로딩 중..." />;

@@ -63,6 +63,10 @@ try {
 
 let authAlertShown = false;
 
+const RESERVATION_ADMIN_TIMEOUT_MS = 2000;
+const RESERVATION_STATS_TIMEOUT_MS = 2000;
+const RESERVATION_SLOT_TIMEOUT_MS = 2000;
+
 let lastAdminListAt = 0;
 let lastStatsAt = 0;
 let lastSlotsAt = 0;
@@ -468,6 +472,8 @@ const reservationApi = {
                 shopId,
                 date,
               }),
+            timeout:
+              RESERVATION_SLOT_TIMEOUT_MS,
           }
         );
 
@@ -508,6 +514,8 @@ const reservationApi = {
           {
             params:
               cleanParams(params),
+            timeout:
+              RESERVATION_ADMIN_TIMEOUT_MS,
           }
         );
 
@@ -570,7 +578,11 @@ const reservationApi = {
 
       const res =
         await API.get(
-          "/reservations/admin/stats"
+          "/reservations/admin/stats",
+          {
+            timeout:
+              RESERVATION_STATS_TIMEOUT_MS,
+          }
         );
 
       statsCache =
