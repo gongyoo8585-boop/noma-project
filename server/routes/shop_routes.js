@@ -40,9 +40,9 @@ const LOCAL_SHOPS = [];
 
 const DEFAULT_SHOPS = [
   {
-    _id: "local-noma-gimhae-main",
-    id: "local-noma-gimhae-main",
-    name: "노마 김해 본점",
+    _id: "local-nora-gimhae-main",
+    id: "local-nora-gimhae-main",
+    name: "노라 김해 본점",
     address: "경상남도 김해시 가야로",
     region: "경남",
     district: "김해시",
@@ -53,7 +53,7 @@ const DEFAULT_SHOPS = [
     businessHours: "24시간",
     openingHours: "24시간",
     hours: "24시간",
-    description: "노마 마사지 플랫폼 등록 업체",
+    description: "노라 마사지 플랫폼 등록 업체",
     category: "massage",
     lat: 35.2613,
     lng: 128.871,
@@ -76,16 +76,16 @@ const DEFAULT_SHOPS = [
     isPremium: true,
     premiumType: "premium",
     isReservable: true,
-    tags: ["노마", "마사지", "김해"],
+    tags: ["노라", "마사지", "김해"],
     serviceTypes: ["스웨디시", "아로마"],
     images: [],
     photos: [],
     imageUrls: [],
   },
   {
-    _id: "local-noma-jangyu",
-    id: "local-noma-jangyu",
-    name: "노마 장유점",
+    _id: "local-nora-jangyu",
+    id: "local-nora-jangyu",
+    name: "노라 장유점",
     address: "경상남도 김해시 장유동",
     region: "경남",
     district: "김해시",
@@ -96,7 +96,7 @@ const DEFAULT_SHOPS = [
     businessHours: "10:00 - 03:00",
     openingHours: "10:00 - 03:00",
     hours: "10:00 - 03:00",
-    description: "노마 마사지 플랫폼 등록 업체",
+    description: "노라 마사지 플랫폼 등록 업체",
     category: "massage",
     lat: 35.2468,
     lng: 128.9021,
@@ -119,7 +119,7 @@ const DEFAULT_SHOPS = [
     isPremium: false,
     premiumType: "normal",
     isReservable: true,
-    tags: ["노마", "마사지", "장유"],
+    tags: ["노라", "마사지", "장유"],
     serviceTypes: ["힐링", "프리미엄"],
     images: [],
     photos: [],
@@ -422,7 +422,7 @@ function isLocalShopId(value) {
 
   return (
     id.startsWith("local-shop-") ||
-    id.startsWith("local-noma-")
+    id.startsWith("local-nora-")
   );
 }
 
@@ -727,7 +727,10 @@ function mergeLocalShop(baseShop, nextShop) {
     ...normalizeImageArray(base.imageUrls),
   ];
 
-  const images = (nextHasImageFields ? nextImages : [...nextImages, ...baseImages]).filter(
+  const images = (nextHasImageFields
+    ? (nextImages.length ? nextImages : baseImages)
+    : [...nextImages, ...baseImages]
+  ).filter(
     (value, index, arr) => value && arr.indexOf(value) === index
   );
 
@@ -1064,9 +1067,32 @@ function normalizeFallbackList(req) {
     );
 }
 
+function mergeRouteShopItems(items = []) {
+  const map = new Map();
+
+  (Array.isArray(items) ? items : [])
+    .map(sanitizeShop)
+    .filter(Boolean)
+    .forEach((shop) => {
+      const key =
+        String(shop?._id || shop?.id || shop?.shopId || "").trim() ||
+        `${normalizeText(shop?.name)}::${normalizeText(shop?.address || shop?.roadAddress || shop?.fullAddress)}`;
+
+      if (!key) {
+        return;
+      }
+
+      const current = map.get(key);
+
+      map.set(key, current ? mergeLocalShop(current, shop) : shop);
+    });
+
+  return Array.from(map.values());
+}
+
 function sendShopList(res, items) {
   const list = Array.isArray(items)
-    ? items.map(sanitizeShop).filter(Boolean)
+    ? mergeRouteShopItems(items)
     : [];
 
   return res.json({
@@ -1131,7 +1157,10 @@ function normalizeShopListResponse(req, res, next) {
         : [];
 
       const items = filterByRequestCategory(
-        rawList.map(sanitizeShop).filter(Boolean),
+        mergeRouteShopItems([
+          ...getAllFallbackShops(req),
+          ...rawList.map(sanitizeShop).filter(Boolean),
+        ]),
         req
       );
 
@@ -1730,6 +1759,90 @@ controller.viewSafe =
       ok: true,
     }));
 
+function isMongoPlannerError(error) {
+  const message = String(
+    error?.message ||
+      error?.msg ||
+      error?.error ||
+      error ||
+      ""
+  ).toLowerCase();
+
+  return (
+    message.includes("multiplanner") ||
+    message.includes("queryplanner") ||
+    message.includes("planner") ||
+    message.includes("sort exceeded") ||
+    message.includes("badvalue") ||
+    message.includes("executor error") ||
+    message.includes("aggregation") ||
+    message.includes("aggregate")
+  );
+}
+
+function createSafeShopController(name, handler, fallbackHandler) {
+  return async function safeShopController(req, res, next) {
+    try {
+      return await handler(req, res, next);
+    } catch (error) {
+      console.error(
+        `SHOP ${name} CONTROLLER ERROR:`,
+        error?.message || error
+      );
+
+      if (res.headersSent) {
+        return safeNext(req, res, next);
+      }
+
+      if (typeof fallbackHandler === "function") {
+        return fallbackHandler(req, res, next, error);
+      }
+
+      if (isMongoPlannerError(error)) {
+        return sendShopList(res, normalizeFallbackList(req));
+      }
+
+      return sendShopList(res, normalizeFallbackList(req));
+    }
+  };
+}
+
+controller.getShops = createSafeShopController(
+  "getShops",
+  controller.getShops,
+  (req, res) => sendShopList(res, normalizeFallbackList(req))
+);
+
+controller.search = createSafeShopController(
+  "search",
+  controller.search,
+  (req, res) => sendShopList(res, normalizeFallbackList(req))
+);
+
+controller.nearby = createSafeShopController(
+  "nearby",
+  controller.nearby,
+  nearbyFallback
+);
+
+controller.getRecommend = createSafeShopController(
+  "getRecommend",
+  controller.getRecommend,
+  (req, res) => sendShopList(res, normalizeFallbackList(req))
+);
+
+controller.getDashboardStats = createSafeShopController(
+  "getDashboardStats",
+  controller.getDashboardStats,
+  (req, res) => sendStats(res, req)
+);
+
+controller.getMonthlyStats = createSafeShopController(
+  "getMonthlyStats",
+  controller.getMonthlyStats,
+  (req, res) => sendStats(res, req)
+);
+
 const externalAuth = safeRequire("../middlewares/auth");
 
 safeRequire("../middlewares/admin");
@@ -1795,7 +1908,7 @@ const auth =
             process.env.ACCESS_TOKEN_SECRET ||
             process.env.JWT_ACCESS_SECRET ||
             process.env.SECRET ||
-            "noma-local-dev-secret"
+            "nora-local-dev-secret"
         );
       } catch (e) {
         console.error("JWT VERIFY ERROR:", e.message);

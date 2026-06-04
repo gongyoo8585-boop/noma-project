@@ -324,6 +324,16 @@ function ShopAdminPage() {
     return safeItems.filter((item) => isCurrentCategoryShop(item));
   };
 
+  const getAdminVisibleShops = (items) => {
+    const safeItems = Array.isArray(items) ? items : [];
+
+    if (currentAdminCategory === "karaoke") {
+      return filterCurrentCategoryShops(safeItems);
+    }
+
+    return safeItems;
+  };
+
   const normalizePremiumType = (value) => {
     if (value && typeof value === "object") {
       if (value.premiumType !== undefined) {
@@ -518,7 +528,9 @@ function ShopAdminPage() {
 
     pushValue(value);
 
-    return result.filter((item, index, array) => array.indexOf(item) === index);
+    return result
+      .map((item) => normalizeImageSrc(item))
+      .filter(Boolean);
   };
 
   const toNumber = (value) => {
@@ -933,16 +945,26 @@ function ShopAdminPage() {
       return [];
     }
 
-    const arrayImages = [
-      ...makeSafeArray(shop?.images),
-      ...makeSafeArray(shop?.photos),
-      ...makeSafeArray(shop?.imageUrls),
-      ...makeSafeArray(shop?.gallery),
-      ...makeSafeArray(shop?.pictures),
-      ...makeSafeArray(shop?.files),
+    const arraySources = [
+      shop?.images,
+      shop?.photos,
+      shop?.imageUrls,
+      shop?.gallery,
+      shop?.pictures,
+      shop?.files,
     ];
 
-    const singleImages = [
+    const firstArrayImages = arraySources
+      .map((source) => makeSafeArray(source))
+      .find((images) => images.length > 0) || [];
+
+    if (firstArrayImages.length) {
+      return firstArrayImages
+        .map((image) => normalizeImageSrc(image))
+        .filter(Boolean);
+    }
+
+    return [
       ...makeSafeArray(shop?.representativeImage),
       ...makeSafeArray(shop?.mainImage),
       ...makeSafeArray(shop?.thumbnail),
@@ -951,22 +973,39 @@ function ShopAdminPage() {
       ...makeSafeArray(shop?.imageUrl),
       ...makeSafeArray(shop?.photo),
       ...makeSafeArray(shop?.picture),
+    ]
+      .map((image) => normalizeImageSrc(image))
+      .filter(Boolean);
+  };
+
+  const makeImageListWithRepresentative = (images, representativeImage) => {
+    const normalizedImages = (Array.isArray(images) ? images : [])
+      .map((image) => normalizeImageSrc(image))
+      .filter(Boolean);
+
+    const safeRepresentativeImage = normalizeImageSrc(
+      representativeImage || normalizedImages[0] || ""
+    );
+
+    if (!safeRepresentativeImage) {
+      return normalizedImages;
+    }
+
+    const representativeIndex = normalizedImages.findIndex(
+      (image) => image === safeRepresentativeImage
+    );
+
+    if (representativeIndex < 0) {
+      return [
+        safeRepresentativeImage,
+        ...normalizedImages,
+      ];
+    }
+
+    return [
+      normalizedImages[representativeIndex],
+      ...normalizedImages.filter((_, index) => index !== representativeIndex),
     ];
-
-    const safeArrayImages = Array.from(
-      new Set(arrayImages.map((image) => normalizeImageSrc(image)).filter(Boolean))
-    );
-
-    const safeSingleImages = Array.from(
-      new Set(singleImages.map((image) => normalizeImageSrc(image)).filter(Boolean))
-    );
-
-    const rawImages =
-      safeArrayImages.length > 1
-        ? [...safeArrayImages, ...safeSingleImages]
-        : [...safeSingleImages, ...safeArrayImages];
-
-    return Array.from(new Set(rawImages.map((image) => normalizeImageSrc(image)).filter(Boolean)));
   };
 
   const getStorageSafeImages = (shop) => {
@@ -1035,16 +1074,28 @@ function ShopAdminPage() {
 
   const getShopIdentityValues = (shop) => {
     if (!shop || typeof shop !== "object") {
-      return [];
+      const text = String(shop || "").trim();
+
+      return text ? [text, `id:${text}`] : [];
     }
+
+    const id = String(shop._id || shop.id || shop.shopId || "").trim();
+    const name = normalizeText(shop.name);
+    const address = normalizeText(shop.address || shop.roadAddress || shop.fullAddress);
+    const phone = normalizeText(shop.phone || shop.tel || shop.virtualPhone);
+    const nameAddressKey = name && address ? `${name}::${address}` : "";
 
     return Array.from(
       new Set(
         [
-          shop._id,
-          shop.id,
-          shop.shopId,
-          shop.name && shop.address ? `${normalizeText(shop.name)}::${normalizeText(shop.address)}` : "",
+          id,
+          id ? `id:${id}` : "",
+          shop.shopId ? `shopId:${String(shop.shopId).trim()}` : "",
+          nameAddressKey,
+          nameAddressKey ? `nameAddress:${nameAddressKey}` : "",
+          phone ? `phone:${phone}` : "",
+          name ? `name:${name}` : "",
+          address ? `address:${address}` : "",
         ]
           .map((item) => String(item || "").trim())
           .filter(Boolean)
@@ -1132,62 +1183,15 @@ function ShopAdminPage() {
     const base = baseShop || {};
     const next = nextShop || {};
 
-    const baseArrayImages = Array.from(
-      new Set(
-        [
-          ...makeSafeArray(base?.images),
-          ...makeSafeArray(base?.photos),
-          ...makeSafeArray(base?.imageUrls),
-          ...makeSafeArray(base?.gallery),
-          ...makeSafeArray(base?.pictures),
-        ]
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-      )
-    );
-
-    const nextArrayImages = Array.from(
-      new Set(
-        [
-          ...makeSafeArray(next?.images),
-          ...makeSafeArray(next?.photos),
-          ...makeSafeArray(next?.imageUrls),
-          ...makeSafeArray(next?.gallery),
-          ...makeSafeArray(next?.pictures),
-        ]
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-      )
-    );
-
-    const baseImages = baseArrayImages.length ? baseArrayImages : makeSafeImages(base);
-    const nextImages = nextArrayImages.length ? nextArrayImages : makeSafeImages(next);
-
+    const baseImages = makeSafeImages(base);
+    const nextImages = makeSafeImages(next);
     const replaceImages = next?.__replaceImages === true;
 
-    const preferredImages = replaceImages
-      ? nextImages
-      : baseImages.length >= nextImages.length
-      ? baseImages
-      : nextImages;
-
-    const fallbackImages = replaceImages
+    const fixedImages = replaceImages
       ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-      : Array.from(
-          new Set(
-            [
-              ...preferredImages,
-              ...baseImages,
-              ...nextImages,
-            ]
-              .map((image) => normalizeImageSrc(image))
-              .filter(Boolean)
-          )
-        );
-
-    const fixedImages = preferredImages.length
-      ? preferredImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-      : fallbackImages;
+      : nextImages.length >= baseImages.length
+      ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
+      : baseImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
 
     const baseCourses = makeSafeCourses(base);
     const nextCourses = makeSafeCourses(next);
@@ -1211,14 +1215,14 @@ function ShopAdminPage() {
         : baseCoursePricing;
 
     const representativeCandidate = normalizeImageSrc(
-      base.representativeImage ||
-        base.mainImage ||
-        base.thumbnail ||
-        base.coverImage ||
-        next.representativeImage ||
+      next.representativeImage ||
         next.mainImage ||
         next.thumbnail ||
         next.coverImage ||
+        base.representativeImage ||
+        base.mainImage ||
+        base.thumbnail ||
+        base.coverImage ||
         fixedImages[0] ||
         ""
     );
@@ -1291,7 +1295,7 @@ function ShopAdminPage() {
     return id || (name && address ? `${name}::${address}` : "");
   };
 
-  const getShopImageBankKeys = (shop) => {
+  const getShopImageBankAliasKeys = (shop) => {
     if (!shop || typeof shop !== "object") {
       return [];
     }
@@ -1302,6 +1306,24 @@ function ShopAdminPage() {
     const nameAddressKey = name && address ? `${name}::${address}` : "";
 
     return Array.from(new Set([id, nameAddressKey].filter(Boolean)));
+  };
+
+  const getShopImageBankKeys = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return [];
+    }
+
+    const id = String(shop._id || shop.id || shop.shopId || "").trim();
+
+    if (id) {
+      return [id];
+    }
+
+    const name = normalizeText(shop.name);
+    const address = normalizeText(shop.address || shop.roadAddress || shop.fullAddress);
+    const nameAddressKey = name && address ? `${name}::${address}` : "";
+
+    return nameAddressKey ? [nameAddressKey] : [];
   };
 
   const readShopImageBank = () => {
@@ -1318,13 +1340,51 @@ function ShopAdminPage() {
     }
   };
 
+
+  const removeShopImageBank = (shopOrId) => {
+    try {
+      const currentBank = readShopImageBank();
+      const target =
+        shopOrId && typeof shopOrId === "object"
+          ? shopOrId
+          : {
+              _id: shopOrId,
+              id: shopOrId,
+            };
+      const keys = Array.from(
+        new Set([
+          ...getShopImageBankAliasKeys(target),
+          ...getShopImageBankKeys(target),
+          ...getShopIdentityValues(target),
+        ].map((key) => String(key || "").trim()).filter(Boolean))
+      );
+
+      if (!keys.length) {
+        return;
+      }
+
+      const nextBank = { ...currentBank };
+
+      keys.forEach((key) => {
+        delete nextBank[key];
+      });
+
+      const storageText = JSON.stringify(nextBank);
+
+      writeStorageSafe(LOCAL_SHOP_IMAGE_BANK_KEY, storageText, localStorage);
+      writeStorageSafe(LOCAL_SHOP_IMAGE_BANK_KEY, storageText, sessionStorage);
+    } catch (e) {
+      console.warn("SHOP IMAGE BANK REMOVE SKIP:", e.message);
+    }
+  };
+
   const writeShopImageBank = (items, options = {}) => {
     try {
       const currentBank = readShopImageBank();
       const replace =
         options?.replace === true ||
         (Array.isArray(items) ? items : []).some((item) => item?.__replaceImages === true);
-      const nextBank = replace ? { ...currentBank } : {};
+      const nextBank = { ...currentBank };
 
       (Array.isArray(items) ? items : []).forEach((item) => {
         const normalized = item && typeof item === "object" ? item : null;
@@ -1336,17 +1396,23 @@ function ShopAdminPage() {
         const keys = getShopImageBankKeys(normalized);
         const images = makeSafeImages(normalized).filter((image) => !String(image || "").startsWith("blob:"));
 
-        if (!keys.length || !images.length) {
+        if (!keys.length) {
           return;
         }
 
+        if (replace) {
+          getShopImageBankAliasKeys(normalized)
+            .filter((key) => !keys.includes(key))
+            .forEach((key) => {
+              delete nextBank[key];
+            });
+        }
+
         keys.forEach((key) => {
-          const currentImages = !replace && Array.isArray(nextBank[key]) ? nextBank[key] : [];
-          const fixedImages = replace
+          const currentImages = Array.isArray(nextBank[key]) ? nextBank[key] : [];
+          const fixedImages = images.length
             ? images.map((image) => normalizeImageSrc(image)).filter(Boolean)
-            : Array.from(
-                new Set([...currentImages, ...images].map((image) => normalizeImageSrc(image)).filter(Boolean))
-              );
+            : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
 
           nextBank[key] = fixedImages;
         });
@@ -1364,11 +1430,9 @@ function ShopAdminPage() {
           const nextImages = Array.isArray(nextBank[key]) ? nextBank[key] : [];
           const currentImages = Array.isArray(fallbackBank[key]) ? fallbackBank[key] : [];
 
-          fallbackBank[key] = replace
+          fallbackBank[key] = nextImages.length
             ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-            : Array.from(
-                new Set([...nextImages, ...currentImages].map((image) => normalizeImageSrc(image)).filter(Boolean))
-              );
+            : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
         });
 
         const fallbackText = JSON.stringify(fallbackBank);
@@ -1393,21 +1457,15 @@ function ShopAdminPage() {
 
     const bank = readShopImageBank();
     const keys = getShopImageBankKeys(shop);
-    const bankImages = Array.from(
-      new Set(
-        keys
-          .flatMap((key) => (Array.isArray(bank[key]) ? bank[key] : []))
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-      )
-    );
+    const bankImages = keys
+      .flatMap((key) => (Array.isArray(bank[key]) ? bank[key] : []))
+      .map((image) => normalizeImageSrc(image))
+      .filter(Boolean);
 
     const currentImages = makeSafeImages(shop);
-    const fixedImages = shop?.__replaceImages === true
-      ? currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-      : Array.from(
-          new Set([...bankImages, ...currentImages].map((image) => normalizeImageSrc(image)).filter(Boolean))
-        );
+    const fixedImages = bankImages.length
+      ? bankImages
+      : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
 
     if (!fixedImages.length) {
       return shop;
@@ -1422,6 +1480,12 @@ function ShopAdminPage() {
         ""
     );
 
+    const nextRepresentativeImage =
+      fixedImages.find((image) => image === representativeImage) ||
+      fixedImages[0] ||
+      representativeImage ||
+      "";
+
     return {
       ...shop,
       images: fixedImages,
@@ -1430,14 +1494,14 @@ function ShopAdminPage() {
       gallery: fixedImages,
       pictures: fixedImages,
       files: [],
-      image: representativeImage,
-      imageUrl: representativeImage,
-      photo: representativeImage,
-      picture: representativeImage,
-      representativeImage,
-      mainImage: representativeImage,
-      thumbnail: representativeImage,
-      coverImage: representativeImage,
+      image: nextRepresentativeImage,
+      imageUrl: nextRepresentativeImage,
+      photo: nextRepresentativeImage,
+      picture: nextRepresentativeImage,
+      representativeImage: nextRepresentativeImage,
+      mainImage: nextRepresentativeImage,
+      thumbnail: nextRepresentativeImage,
+      coverImage: nextRepresentativeImage,
     };
   };
 
@@ -1491,6 +1555,7 @@ function ShopAdminPage() {
 
     return {
       ...normalized,
+      __replaceImages: false,
       images,
       photos: images,
       imageUrls: images,
@@ -1523,6 +1588,7 @@ function ShopAdminPage() {
 
     return {
       ...normalized,
+      __replaceImages: false,
       images: [],
       photos: [],
       imageUrls: [],
@@ -1959,42 +2025,7 @@ function ShopAdminPage() {
       return null;
     }
 
-    const arrayImages = Array.from(
-      new Set(
-        [
-          ...makeSafeArray(shop?.images),
-          ...makeSafeArray(shop?.photos),
-          ...makeSafeArray(shop?.imageUrls),
-          ...makeSafeArray(shop?.gallery),
-          ...makeSafeArray(shop?.pictures),
-          ...makeSafeArray(shop?.files),
-        ]
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-      )
-    );
-
-    const singleImages = Array.from(
-      new Set(
-        [
-          ...makeSafeArray(shop?.representativeImage),
-          ...makeSafeArray(shop?.mainImage),
-          ...makeSafeArray(shop?.thumbnail),
-          ...makeSafeArray(shop?.coverImage),
-          ...makeSafeArray(shop?.image),
-          ...makeSafeArray(shop?.imageUrl),
-          ...makeSafeArray(shop?.photo),
-          ...makeSafeArray(shop?.picture),
-        ]
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-      )
-    );
-
-    const images =
-      arrayImages.length > 1
-        ? arrayImages
-        : Array.from(new Set([...arrayImages, ...singleImages].map((image) => normalizeImageSrc(image)).filter(Boolean)));
+    const images = makeSafeImages(shop);
 
     const representativeCandidate = normalizeImageSrc(
       shop.representativeImage ||
@@ -2390,9 +2421,14 @@ function ShopAdminPage() {
     const representativeImage =
       normalizeImageSrc(form.representativeImage || form.images[0] || "");
 
-    const fixedImages = representativeImage
-      ? Array.from(new Set([representativeImage, ...form.images].map((image) => normalizeImageSrc(image)).filter(Boolean)))
-      : form.images.map((image) => normalizeImageSrc(image)).filter(Boolean);
+    const normalizedFormImages = form.images
+      .map((image) => normalizeImageSrc(image))
+      .filter(Boolean);
+
+    const fixedImages = makeImageListWithRepresentative(
+      normalizedFormImages,
+      representativeImage
+    );
 
     const premiumType = normalizePremiumType(form.premium);
     const premiumBoolean = premiumType !== "normal";
@@ -2462,9 +2498,14 @@ function ShopAdminPage() {
           ""
       );
 
-    const fixedImages = representativeImage
-      ? Array.from(new Set([representativeImage, ...images].map((image) => normalizeImageSrc(image)).filter(Boolean)))
-      : images.map((image) => normalizeImageSrc(image)).filter(Boolean);
+    const normalizedImages = images
+      .map((image) => normalizeImageSrc(image))
+      .filter(Boolean);
+
+    const fixedImages = makeImageListWithRepresentative(
+      normalizedImages,
+      representativeImage
+    );
 
     const premium = normalizePremiumType(shop);
     const coursePricing = filterCompleteCoursePricing(makeSafeCoursePricing(shop));
@@ -2507,7 +2548,7 @@ function ShopAdminPage() {
     const safeRegion = region === "지역" ? "" : normalizeText(region);
     const safeDistrict = district === "구" ? "" : normalizeText(district);
 
-    return filterCurrentCategoryShops(list).filter((shop) => {
+    return getAdminVisibleShops(list).filter((shop) => {
       const name = normalizeText(shop?.name);
       const address = normalizeText(shop?.address);
       const phone = normalizeText(shop?.phone);
@@ -2569,7 +2610,7 @@ function ShopAdminPage() {
         }),
       ])
         .then((res) => {
-          const rawApiItems = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
+          const rawApiItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
 
           const apiItems = rawApiItems.map((apiItem) => {
             const apiId = String(apiItem?._id || apiItem?.id || apiItem?.shopId || "");
@@ -2600,9 +2641,14 @@ function ShopAdminPage() {
                 ""
             );
 
-            const fixedImages = representativeImage
-              ? Array.from(new Set([representativeImage, ...localImages].map((image) => normalizeImageSrc(image)).filter(Boolean)))
-              : localImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
+            const normalizedLocalImages = localImages
+              .map((image) => normalizeImageSrc(image))
+              .filter(Boolean);
+
+            const fixedImages = makeImageListWithRepresentative(
+              normalizedLocalImages,
+              representativeImage
+            );
 
             return {
               ...apiItem,
@@ -2886,7 +2932,7 @@ function ShopAdminPage() {
         }),
       ]);
 
-      const items = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
+      const items = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
 
       setList((prev) => {
         const nextList = filterDeletedShops(mergeShopList([
@@ -2947,7 +2993,10 @@ function ShopAdminPage() {
 
     if (compressedImages.length) {
       setForm((prev) => {
-        const nextImages = Array.from(new Set([...prev.images, ...compressedImages].map((image) => normalizeImageSrc(image)).filter(Boolean))).slice(0, MAX_LOCAL_IMAGE_COUNT);
+        const nextImages = [...prev.images, ...compressedImages]
+          .map((image) => normalizeImageSrc(image))
+          .filter(Boolean)
+          .slice(0, MAX_LOCAL_IMAGE_COUNT);
 
         return {
           ...prev,
@@ -3351,7 +3400,7 @@ function ShopAdminPage() {
             }),
           ]);
 
-          const loadedItems = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item));
+          const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item));
 
           setList((prev) => {
             const nextList = filterDeletedShops(
@@ -3418,12 +3467,18 @@ function ShopAdminPage() {
         beforeList.find((item) => String(item?._id || item?.id || "") === deleteId) ||
         null;
 
-      rememberDeletedShop(targetShop || deleteId);
+      const deleteTarget = targetShop || {
+        _id: deleteId,
+        id: deleteId,
+      };
+
+      rememberDeletedShop(deleteTarget);
+      removeShopImageBank(deleteTarget);
 
       const nextList = beforeList.filter((item) => {
         const itemId = String(item?._id || item?.id || "");
 
-        return itemId !== deleteId;
+        return itemId !== deleteId && !isDeletedShop(item);
       });
 
       setList(nextList);
@@ -3457,7 +3512,7 @@ function ShopAdminPage() {
               const filtered = filterDeletedShops(mergeShopList([...prev, ...localItems])).filter((item) => {
                 const itemId = String(item?._id || item?.id || "");
 
-                return itemId !== deleteId;
+                return itemId !== deleteId && !isDeletedShop(item);
               });
 
               saveLocalShops(filtered);
@@ -3480,17 +3535,17 @@ function ShopAdminPage() {
             }),
           ]);
 
-          const loadedItems = filterCurrentCategoryShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item)).filter((item) => {
+          const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item)).filter((item) => {
             const itemId = String(item?._id || item?.id || item?.shopId || "");
 
-            return itemId !== deleteId;
+            return itemId !== deleteId && !isDeletedShop(item);
           });
 
           setList((prev) => {
             const filtered = filterDeletedShops(mergeShopList([...prev, ...loadedItems, ...localItems])).filter((item) => {
               const itemId = String(item?._id || item?.id || "");
 
-              return itemId !== deleteId;
+              return itemId !== deleteId && !isDeletedShop(item);
             });
 
             saveLocalShops(filtered);
@@ -3504,7 +3559,7 @@ function ShopAdminPage() {
             const filtered = filterDeletedShops(mergeShopList([...prev, ...readLocalShops()])).filter((item) => {
               const itemId = String(item?._id || item?.id || "");
 
-              return itemId !== deleteId;
+              return itemId !== deleteId && !isDeletedShop(item);
             });
 
             saveLocalShops(filtered);
@@ -4145,13 +4200,9 @@ function ShopAdminPage() {
           <div style={styles.list}>
             {filteredList.map((shop) => {
               const bankFixedShop = applyShopImageBank(shop);
-              const shopImages = Array.from(
-                new Set(
-                  makeSafeImages(bankFixedShop)
-                    .map((image) => normalizeImageSrc(image))
-                    .filter(Boolean)
-                )
-              );
+              const shopImages = makeSafeImages(bankFixedShop)
+                .map((image) => normalizeImageSrc(image))
+                .filter(Boolean);
 
               const representativeImage =
                 normalizeImageSrc(
@@ -4163,12 +4214,10 @@ function ShopAdminPage() {
                     ""
                 );
 
-              const orderedImages = representativeImage
-                ? [
-                    representativeImage,
-                    ...shopImages.filter((image) => image !== representativeImage),
-                  ]
-                : shopImages;
+              const orderedImages = makeImageListWithRepresentative(
+                shopImages,
+                representativeImage
+              );
 
               const shopStats =
                 getShopStats(shop);

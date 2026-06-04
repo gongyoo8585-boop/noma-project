@@ -453,7 +453,167 @@ function normalizePrice(value) {
   return Number.isNaN(num) ? 0 : num;
 }
 
+
+function normalizeImageValue(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    return safeStr(
+      value.url ||
+        value.src ||
+        value.path ||
+        value.image ||
+        value.imageUrl ||
+        value.thumbnail ||
+        value.location ||
+        ""
+    );
+  }
+
+  return safeStr(value);
+}
+
+function pushShopImage(target, value) {
+  if (!target) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => pushShopImage(target, item));
+    return;
+  }
+
+  const image = normalizeImageValue(value);
+
+  if (image && !target.includes(image)) {
+    target.push(image);
+  }
+}
+
+function normalizeShopImages(source = {}) {
+  const images = [];
+
+  pushShopImage(images, source.images);
+  pushShopImage(images, source.photos);
+  pushShopImage(images, source.imageUrls);
+  pushShopImage(images, source.gallery);
+  pushShopImage(images, source.pictures);
+
+  pushShopImage(images, source.representativeImage);
+  pushShopImage(images, source.mainImage);
+  pushShopImage(images, source.thumbnail);
+  pushShopImage(images, source.coverImage);
+  pushShopImage(images, source.image);
+  pushShopImage(images, source.imageUrl);
+  pushShopImage(images, source.photo);
+  pushShopImage(images, source.picture);
+  pushShopImage(images, source.thumbnailUrl);
+
+  const representativeImage =
+    normalizeImageValue(source.representativeImage) ||
+    normalizeImageValue(source.mainImage) ||
+    normalizeImageValue(source.thumbnail) ||
+    normalizeImageValue(source.coverImage) ||
+    normalizeImageValue(source.image) ||
+    normalizeImageValue(source.imageUrl) ||
+    normalizeImageValue(source.photo) ||
+    normalizeImageValue(source.picture) ||
+    images[0] ||
+    "";
+
+  if (representativeImage && !images.includes(representativeImage)) {
+    images.unshift(representativeImage);
+  }
+
+  return {
+    images,
+    representativeImage,
+  };
+}
+
+
+function mergeShopImagesForMutation(current = {}, payload = {}) {
+  const currentImages = normalizeShopImages(current).images;
+  const payloadImages = normalizeShopImages(payload).images;
+  const representativeCandidate =
+    normalizeImageValue(payload.representativeImage) ||
+    normalizeImageValue(payload.mainImage) ||
+    normalizeImageValue(payload.thumbnail) ||
+    normalizeImageValue(payload.coverImage) ||
+    normalizeImageValue(current.representativeImage) ||
+    normalizeImageValue(current.mainImage) ||
+    normalizeImageValue(current.thumbnail) ||
+    normalizeImageValue(current.coverImage) ||
+    payloadImages[0] ||
+    currentImages[0] ||
+    "";
+
+  const mergedImages = [];
+
+  pushShopImage(mergedImages, representativeCandidate);
+  pushShopImage(mergedImages, payloadImages);
+  pushShopImage(mergedImages, currentImages);
+
+  const representativeImage =
+    mergedImages.find((image) => image === representativeCandidate) ||
+    mergedImages[0] ||
+    "";
+
+  return {
+    ...payload,
+    images: mergedImages,
+    photos: mergedImages,
+    imageUrls: mergedImages,
+    gallery: mergedImages,
+    pictures: mergedImages,
+    representativeImage,
+    mainImage: representativeImage,
+    thumbnail: representativeImage,
+    coverImage: representativeImage,
+    image: representativeImage,
+    imageUrl: representativeImage,
+    photo: representativeImage,
+    picture: representativeImage,
+  };
+}
+
+function withShopImages(source = {}) {
+  const imageBundle = normalizeShopImages(source);
+
+  return {
+    ...source,
+    images: imageBundle.images,
+    photos: imageBundle.images,
+    imageUrls: imageBundle.images,
+    gallery: imageBundle.images,
+    pictures: imageBundle.images,
+    representativeImage: imageBundle.representativeImage,
+    mainImage: imageBundle.representativeImage,
+    thumbnail: imageBundle.representativeImage,
+    coverImage: imageBundle.representativeImage,
+    image: imageBundle.representativeImage,
+    imageUrl: imageBundle.representativeImage,
+    photo: imageBundle.representativeImage,
+    picture: imageBundle.representativeImage,
+  };
+}
+
+function normalizeShopResponseItem(item = {}) {
+  const obj = item && item.toObject ? item.toObject() : item;
+  return withShopImages(obj || {});
+}
+
+function normalizeShopResponseItems(items = []) {
+  return Array.isArray(items)
+    ? items.map((item) => normalizeShopResponseItem(item))
+    : [];
+}
+
 function normalizePayload(body = {}) {
+  const imageBundle = normalizeShopImages(body);
+
   const lat = safeNumber(
     body.lat ?? body.location?.lat,
     0
@@ -516,6 +676,19 @@ function normalizePayload(body = {}) {
     isReservable: body.isReservable !== false,
     status: body.status === "inactive" ? "inactive" : "active",
     isDeleted: body.isDeleted === true ? true : false,
+    images: imageBundle.images,
+    photos: imageBundle.images,
+    imageUrls: imageBundle.images,
+    gallery: imageBundle.images,
+    pictures: imageBundle.images,
+    representativeImage: imageBundle.representativeImage,
+    mainImage: imageBundle.representativeImage,
+    thumbnail: imageBundle.representativeImage,
+    coverImage: imageBundle.representativeImage,
+    image: imageBundle.representativeImage,
+    imageUrl: imageBundle.representativeImage,
+    photo: imageBundle.representativeImage,
+    picture: imageBundle.representativeImage,
   };
 }
 
@@ -572,7 +745,7 @@ function getShopCategory(shop = {}) {
 function enrichWithDistance(items, lat, lng) {
   if (!isValidCoord(lat, lng)) {
     return items.map((s) => {
-      const obj = s.toObject ? s.toObject() : s;
+      const obj = normalizeShopResponseItem(s);
 
       const premium =
         obj.premium === true ||
@@ -591,7 +764,7 @@ function enrichWithDistance(items, lat, lng) {
   }
 
   return items.map((s) => {
-    const obj = s.toObject ? s.toObject() : s;
+    const obj = normalizeShopResponseItem(s);
 
     const premium =
       obj.premium === true ||
@@ -771,9 +944,9 @@ async function buildShopAdminStatsPayload(req) {
     totalShops: total,
     shopCount: total,
     count: total,
-    items: recentItems,
-    list: recentItems,
-    data: recentItems,
+    items: normalizeShopResponseItems(recentItems),
+    list: normalizeShopResponseItems(recentItems),
+    data: normalizeShopResponseItems(recentItems),
   };
 }
 
@@ -817,9 +990,9 @@ async function sendShopAdminStats(req, res) {
         totalShops: total,
         shopCount: total,
         count: total,
-        items,
-        list: items,
-        data: items,
+        items: normalizeShopResponseItems(items),
+        list: normalizeShopResponseItems(items),
+        data: normalizeShopResponseItems(items),
       });
     } catch (fallbackErr) {
       console.error(
@@ -924,8 +1097,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium/on", auth, admin, async (req, 
     }
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
       premium: true,
       isPremium: true,
       premiumActive: true,
@@ -961,8 +1134,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium/off", auth, admin, async (req,
     }
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
       premium: false,
       isPremium: false,
       premiumActive: false,
@@ -1010,8 +1183,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium", auth, admin, async (req, res
     );
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
       premium: nextPremium,
       isPremium: nextPremium,
       premiumActive: nextPremium,
@@ -1033,7 +1206,7 @@ router.get("/top/list", async (req, res) => {
       .sort({ premium: -1, isPremium: -1, premiumActive: -1, likeCount: -1 })
       .limit(10);
 
-    res.json({ ok: true, items });
+    res.json({ ok: true, items: normalizeShopResponseItems(items) });
   } catch (e) {
     console.error("SHOP TOP ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1051,7 +1224,7 @@ router.get("/recent/list", async (req, res) => {
       .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
       .limit(10);
 
-    res.json({ ok: true, items });
+    res.json({ ok: true, items: normalizeShopResponseItems(items) });
   } catch (e) {
     console.error("SHOP RECENT ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1153,7 +1326,7 @@ router.get("/ranking/list", async (req, res) => {
     }));
     items.sort((a, b) => b.score - a.score);
 
-    res.json({ ok: true, items: items.slice(0, 20) });
+    res.json({ ok: true, items: normalizeShopResponseItems(items.slice(0, 20)) });
   } catch (e) {
     console.error("SHOP RANKING ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1170,7 +1343,7 @@ router.get("/random/list", async (req, res) => {
       { $sample: { size: 10 } },
     ]);
 
-    res.json({ ok: true, items });
+    res.json({ ok: true, items: normalizeShopResponseItems(items) });
   } catch (e) {
     console.error("SHOP RANDOM ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1271,6 +1444,7 @@ router.get("/", async (req, res) => {
 
     items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
     items = applySort(items, sort);
+    items = normalizeShopResponseItems(items);
 
     if (
       premiumNearby === "true" ||
@@ -1331,8 +1505,8 @@ router.post("/", auth, admin, async (req, res) => {
     const item = await Shop.create(payload);
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
     });
   } catch (e) {
     console.error("SHOP CREATE ERROR:", e);
@@ -1376,7 +1550,7 @@ router.get("/:id([0-9a-fA-F]{24})", async (req, res) => {
     res.json({
       ok: true,
       shop: {
-        ...shopObject,
+        ...normalizeShopResponseItem(shopObject),
         premium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
         isPremium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
         premiumActive: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
@@ -1401,12 +1575,24 @@ router.put("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
       req
     );
 
+    const currentItem = await Shop.findOne(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      })
+    ).lean();
+
+    if (!currentItem) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    const updatePayload = mergeShopImagesForMutation(currentItem, payload);
+
     const item = await Shop.findOneAndUpdate(
       buildShopBaseQuery(req, {
         _id: req.params.id,
       }),
       {
-        ...payload,
+        ...updatePayload,
         updatedAt: new Date(),
       },
       {
@@ -1419,8 +1605,8 @@ router.put("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
     });
   } catch (e) {
     console.error("SHOP UPDATE ERROR:", e);
@@ -1440,12 +1626,24 @@ router.patch("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
       req
     );
 
+    const currentItem = await Shop.findOne(
+      buildShopBaseQuery(req, {
+        _id: req.params.id,
+      })
+    ).lean();
+
+    if (!currentItem) {
+      return fail(res, 404, "매장 없음");
+    }
+
+    const updatePayload = mergeShopImagesForMutation(currentItem, payload);
+
     const item = await Shop.findOneAndUpdate(
       buildShopBaseQuery(req, {
         _id: req.params.id,
       }),
       {
-        ...payload,
+        ...updatePayload,
         updatedAt: new Date(),
       },
       {
@@ -1458,8 +1656,8 @@ router.patch("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
     });
   } catch (e) {
     console.error("SHOP PATCH UPDATE ERROR:", e);
@@ -1492,8 +1690,8 @@ router.delete("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: item,
-      item,
+      shop: normalizeShopResponseItem(item),
+      item: normalizeShopResponseItem(item),
     });
   } catch (e) {
     console.error("SHOP DELETE ERROR:", e);
@@ -1516,7 +1714,7 @@ router.get("/search/phone", auth, admin, safeAsync(async (req, res) => {
       })
     ).limit(50);
 
-    return ok(res, { items });
+    return ok(res, { items: normalizeShopResponseItems(items) });
   } catch (e) {
     console.error("SHOP SEARCH PHONE ERROR:", e);
     return ok(res, { items: [] });

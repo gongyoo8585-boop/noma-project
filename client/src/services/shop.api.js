@@ -1,39 +1,66 @@
 function normalizeShopApiResponse(response) {
   const payload =
-    response?.data ||
-    response ||
-    {};
+    response && Object.prototype.hasOwnProperty.call(response, "data")
+      ? response.data
+      : response ||
+        {};
+
+  const responseObject =
+    response && typeof response === "object" && !Array.isArray(response)
+      ? response
+      : {};
+
+  const payloadObject =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload
+      : {};
 
   const rawShops =
-    Array.isArray(payload?.shops)
-      ? payload.shops
-      : Array.isArray(payload?.items)
-      ? payload.items
-      : Array.isArray(payload?.list)
-      ? payload.list
-      : Array.isArray(payload?.data)
-      ? payload.data
-      : Array.isArray(payload?.data?.shops)
-      ? payload.data.shops
-      : Array.isArray(payload?.data?.items)
-      ? payload.data.items
-      : Array.isArray(payload?.data?.list)
-      ? payload.data.list
+    Array.isArray(payload)
+      ? payload
+      : Array.isArray(payloadObject?.shops)
+      ? payloadObject.shops
+      : Array.isArray(payloadObject?.items)
+      ? payloadObject.items
+      : Array.isArray(payloadObject?.list)
+      ? payloadObject.list
+      : Array.isArray(payloadObject?.data)
+      ? payloadObject.data
+      : Array.isArray(payloadObject?.data?.shops)
+      ? payloadObject.data.shops
+      : Array.isArray(payloadObject?.data?.items)
+      ? payloadObject.data.items
+      : Array.isArray(payloadObject?.data?.list)
+      ? payloadObject.data.list
       : Array.isArray(response)
       ? response
+      : Array.isArray(responseObject?.shops)
+      ? responseObject.shops
+      : Array.isArray(responseObject?.items)
+      ? responseObject.items
+      : Array.isArray(responseObject?.list)
+      ? responseObject.list
       : [];
 
   const shops = Array.isArray(rawShops)
     ? rawShops
     : [];
 
+  const basePayload =
+    Array.isArray(payload)
+      ? { ...responseObject }
+      : {
+          ...responseObject,
+          ...payloadObject,
+        };
+
   return {
-    ...payload,
+    ...basePayload,
     shops,
-    items: Array.isArray(payload?.items) ? payload.items : shops,
-    list: Array.isArray(payload?.list) ? payload.list : shops,
-    data: Array.isArray(payload?.data) ? payload.data : shops,
-    total: Number(payload?.total ?? shops.length),
+    items: Array.isArray(basePayload?.items) ? basePayload.items : shops,
+    list: Array.isArray(basePayload?.list) ? basePayload.list : shops,
+    data: Array.isArray(basePayload?.data) ? basePayload.data : shops,
+    total: Number(basePayload?.total ?? shops.length),
   };
 }
 
@@ -778,9 +805,9 @@ function getShopImageBankKeys(shop = {}) {
   );
 }
 
-function parseImageBankStorage(storage) {
+function parseImageBankStorage(storage, key = LOCAL_SHOP_IMAGE_BANK_KEY) {
   try {
-    const value = JSON.parse(storage.getItem(LOCAL_SHOP_IMAGE_BANK_KEY) || "{}");
+    const value = JSON.parse(storage.getItem(key) || "{}");
 
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch (e) {
@@ -788,30 +815,56 @@ function parseImageBankStorage(storage) {
   }
 }
 
-function readShopImageBank() {
+function getImageBankStorageKeys(params = {}) {
+  const category = getEffectiveCategory(params) || getRuntimeAdminCategory();
+
+  return Array.from(
+    new Set(
+      [
+        LOCAL_SHOP_IMAGE_BANK_KEY,
+        "noma_admin_shop_image_bank",
+        "nora_admin_shop_image_bank",
+        "noma_shop_image_bank",
+        "nora_shop_image_bank",
+        category ? `${LOCAL_SHOP_IMAGE_BANK_KEY}_${category}` : "",
+        category ? `noma_admin_shop_image_bank_${category}` : "",
+        category ? `nora_admin_shop_image_bank_${category}` : "",
+        category ? `noma_shop_image_bank_${category}` : "",
+        category ? `nora_shop_image_bank_${category}` : "",
+      ].filter(Boolean)
+    )
+  );
+}
+
+function readShopImageBank(params = {}) {
   try {
-    return {
-      ...parseImageBankStorage(localStorage),
-      ...parseImageBankStorage(sessionStorage),
-    };
+    return getImageBankStorageKeys(params).reduce((acc, key) => {
+      return {
+        ...acc,
+        ...parseImageBankStorage(localStorage, key),
+        ...parseImageBankStorage(sessionStorage, key),
+      };
+    }, {});
   } catch (e) {
     return {};
   }
 }
 
-function safeWriteImageBank(bank) {
+function safeWriteImageBank(bank, params = {}) {
   try {
     const storageText = JSON.stringify(bank || {});
 
-    safeSetStorage(localStorage, LOCAL_SHOP_IMAGE_BANK_KEY, storageText);
-    safeSetStorage(sessionStorage, LOCAL_SHOP_IMAGE_BANK_KEY, storageText);
+    getImageBankStorageKeys(params).forEach((key) => {
+      safeSetStorage(localStorage, key, storageText);
+      safeSetStorage(sessionStorage, key, storageText);
+    });
   } catch (e) {
     console.warn("SHOP IMAGE BANK SAVE ERROR:", e.message);
   }
 }
 
-function getImageBankImages(shop = {}) {
-  const bank = readShopImageBank();
+function getImageBankImages(shop = {}, params = {}) {
+  const bank = readShopImageBank(params);
   const keys = getShopImageBankKeys(shop);
 
   return Array.from(
@@ -833,8 +886,9 @@ function getImageBankImages(shop = {}) {
 function writeShopImageBank(items = [], options = {}) {
   try {
     const replace = options?.replace === true || (Array.isArray(items) ? items : []).some((item) => item?.__replaceImages === true);
-    const currentBank = readShopImageBank();
-    const nextBank = replace ? { ...currentBank } : {};
+    const params = options?.params || (Array.isArray(items) ? items.find((item) => getCategoryFromShop(item)) : {}) || {};
+    const currentBank = readShopImageBank(params);
+    const nextBank = { ...currentBank };
 
     (Array.isArray(items) ? items : []).forEach((item) => {
       if (!item || typeof item !== "object") {
@@ -852,19 +906,33 @@ function writeShopImageBank(items = [], options = {}) {
         return;
       }
 
-      keys.forEach((key) => {
-        const currentImages = !replace && Array.isArray(nextBank[key]) ? nextBank[key] : [];
-        const fixedImages = replace
-          ? images.map((image) => normalizeImageValue(image)).filter(Boolean)
-          : Array.from(
-              new Set([...currentImages, ...images].map((image) => normalizeImageValue(image)).filter(Boolean))
-            );
+      const longestSavedImages = keys.reduce((acc, key) => {
+        const savedImages = Array.isArray(nextBank[key])
+          ? nextBank[key].map((image) => normalizeImageValue(image)).filter(Boolean)
+          : [];
 
+        return savedImages.length > acc.length ? savedImages : acc;
+      }, []);
+
+      const fixedImages = replace
+        ? images.map((image) => normalizeImageValue(image)).filter(Boolean)
+        : Array.from(
+            new Set(
+              [
+                ...images,
+                ...longestSavedImages,
+              ]
+                .map((image) => normalizeImageValue(image))
+                .filter(Boolean)
+            )
+          );
+
+      keys.forEach((key) => {
         nextBank[key] = fixedImages;
       });
     });
 
-    safeWriteImageBank(nextBank);
+    safeWriteImageBank(nextBank, params);
   } catch (e) {
     console.warn("SHOP IMAGE BANK WRITE ERROR:", e.message);
   }
@@ -875,18 +943,31 @@ function applyShopImageBank(shop = {}) {
     return shop;
   }
 
-  const bankImages = getImageBankImages(shop);
   const currentImages = collectImages(shop, {
     allowDataImage: true,
     allowBlob: false,
     maxLength: MAX_STORED_IMAGE_LENGTH,
   });
+  const bankImages = getImageBankImages(shop, shop);
 
   const fixedImages = shop?.__replaceImages === true
     ? currentImages
-    : bankImages.length
-    ? bankImages
-    : currentImages;
+    : Array.from(
+        new Set(
+          [
+            ...currentImages,
+            ...bankImages,
+          ]
+            .map((image) => normalizeImageValue(image))
+            .filter((image) =>
+              isSafeImageValue(image, {
+                allowDataImage: true,
+                allowBlob: false,
+                maxLength: MAX_STORED_IMAGE_LENGTH,
+              })
+            )
+        )
+      );
 
   if (!fixedImages.length) {
     return shop;
@@ -1742,8 +1823,7 @@ function getNetworkSafeShop(shop = {}) {
         allowBlob: false,
         maxLength: MAX_STORED_IMAGE_LENGTH,
       })
-    )
-    .slice(0, 5);
+    );
 
   const representativeImage =
     images.find((image) => image === normalizeImageValue(shop.representativeImage)) ||
@@ -2095,7 +2175,7 @@ function saveLocalShops(items = [], params = {}) {
     })
     .slice(0, MAX_STORED_SHOPS);
 
-  writeShopImageBank(memoryItems, { replace: replaceItems.length > 0 });
+  writeShopImageBank(memoryItems, { replace: replaceItems.length > 0, params: categoryParams });
 
   LOCAL_SHOP_MEMORY = mergeShopArrays([
     ...(
