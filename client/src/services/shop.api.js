@@ -1,66 +1,39 @@
 function normalizeShopApiResponse(response) {
   const payload =
-    response && Object.prototype.hasOwnProperty.call(response, "data")
-      ? response.data
-      : response ||
-        {};
-
-  const responseObject =
-    response && typeof response === "object" && !Array.isArray(response)
-      ? response
-      : {};
-
-  const payloadObject =
-    payload && typeof payload === "object" && !Array.isArray(payload)
-      ? payload
-      : {};
+    response?.data ||
+    response ||
+    {};
 
   const rawShops =
-    Array.isArray(payload)
-      ? payload
-      : Array.isArray(payloadObject?.shops)
-      ? payloadObject.shops
-      : Array.isArray(payloadObject?.items)
-      ? payloadObject.items
-      : Array.isArray(payloadObject?.list)
-      ? payloadObject.list
-      : Array.isArray(payloadObject?.data)
-      ? payloadObject.data
-      : Array.isArray(payloadObject?.data?.shops)
-      ? payloadObject.data.shops
-      : Array.isArray(payloadObject?.data?.items)
-      ? payloadObject.data.items
-      : Array.isArray(payloadObject?.data?.list)
-      ? payloadObject.data.list
+    Array.isArray(payload?.shops)
+      ? payload.shops
+      : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.list)
+      ? payload.list
+      : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.data?.shops)
+      ? payload.data.shops
+      : Array.isArray(payload?.data?.items)
+      ? payload.data.items
+      : Array.isArray(payload?.data?.list)
+      ? payload.data.list
       : Array.isArray(response)
       ? response
-      : Array.isArray(responseObject?.shops)
-      ? responseObject.shops
-      : Array.isArray(responseObject?.items)
-      ? responseObject.items
-      : Array.isArray(responseObject?.list)
-      ? responseObject.list
       : [];
 
   const shops = Array.isArray(rawShops)
     ? rawShops
     : [];
 
-  const basePayload =
-    Array.isArray(payload)
-      ? { ...responseObject }
-      : {
-          ...responseObject,
-          ...payloadObject,
-        };
-
   return {
-    ...basePayload,
+    ...payload,
     shops,
-    items: Array.isArray(basePayload?.items) ? basePayload.items : shops,
-    list: Array.isArray(basePayload?.list) ? basePayload.list : shops,
-    data: Array.isArray(basePayload?.data) ? basePayload.data : shops,
-    total: Number(basePayload?.total ?? shops.length),
+    items: Array.isArray(payload?.items) ? payload.items : shops,
+    list: Array.isArray(payload?.list) ? payload.list : shops,
+    data: Array.isArray(payload?.data) ? payload.data : shops,
+    total: Number(payload?.total ?? shops.length),
   };
 }
 
@@ -750,6 +723,39 @@ function collectImages(shop = {}, options = {}) {
   return images;
 }
 
+function hasExplicitImageArrayPayload(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  return [
+    "images",
+    "photos",
+    "imageUrls",
+    "gallery",
+    "pictures",
+    "files",
+  ].some((key) => Array.isArray(payload[key]));
+}
+
+function shouldReplaceShopImages(payload = {}, normalizedPayload = {}) {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  if (!hasExplicitImageArrayPayload(payload)) {
+    return false;
+  }
+
+  const images = collectImages(normalizedPayload || payload, {
+    allowDataImage: true,
+    allowBlob: false,
+    maxLength: MAX_STORED_IMAGE_LENGTH,
+  });
+
+  return true || images.length >= 0;
+}
+
 function isBase64Image(value) {
   const text = normalizeImageValue(value);
   return text.startsWith("data:image/") && text.includes(";base64,");
@@ -805,9 +811,9 @@ function getShopImageBankKeys(shop = {}) {
   );
 }
 
-function parseImageBankStorage(storage, key = LOCAL_SHOP_IMAGE_BANK_KEY) {
+function parseImageBankStorage(storage) {
   try {
-    const value = JSON.parse(storage.getItem(key) || "{}");
+    const value = JSON.parse(storage.getItem(LOCAL_SHOP_IMAGE_BANK_KEY) || "{}");
 
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch (e) {
@@ -815,56 +821,30 @@ function parseImageBankStorage(storage, key = LOCAL_SHOP_IMAGE_BANK_KEY) {
   }
 }
 
-function getImageBankStorageKeys(params = {}) {
-  const category = getEffectiveCategory(params) || getRuntimeAdminCategory();
-
-  return Array.from(
-    new Set(
-      [
-        LOCAL_SHOP_IMAGE_BANK_KEY,
-        "noma_admin_shop_image_bank",
-        "nora_admin_shop_image_bank",
-        "noma_shop_image_bank",
-        "nora_shop_image_bank",
-        category ? `${LOCAL_SHOP_IMAGE_BANK_KEY}_${category}` : "",
-        category ? `noma_admin_shop_image_bank_${category}` : "",
-        category ? `nora_admin_shop_image_bank_${category}` : "",
-        category ? `noma_shop_image_bank_${category}` : "",
-        category ? `nora_shop_image_bank_${category}` : "",
-      ].filter(Boolean)
-    )
-  );
-}
-
-function readShopImageBank(params = {}) {
+function readShopImageBank() {
   try {
-    return getImageBankStorageKeys(params).reduce((acc, key) => {
-      return {
-        ...acc,
-        ...parseImageBankStorage(localStorage, key),
-        ...parseImageBankStorage(sessionStorage, key),
-      };
-    }, {});
+    return {
+      ...parseImageBankStorage(localStorage),
+      ...parseImageBankStorage(sessionStorage),
+    };
   } catch (e) {
     return {};
   }
 }
 
-function safeWriteImageBank(bank, params = {}) {
+function safeWriteImageBank(bank) {
   try {
     const storageText = JSON.stringify(bank || {});
 
-    getImageBankStorageKeys(params).forEach((key) => {
-      safeSetStorage(localStorage, key, storageText);
-      safeSetStorage(sessionStorage, key, storageText);
-    });
+    safeSetStorage(localStorage, LOCAL_SHOP_IMAGE_BANK_KEY, storageText);
+    safeSetStorage(sessionStorage, LOCAL_SHOP_IMAGE_BANK_KEY, storageText);
   } catch (e) {
     console.warn("SHOP IMAGE BANK SAVE ERROR:", e.message);
   }
 }
 
-function getImageBankImages(shop = {}, params = {}) {
-  const bank = readShopImageBank(params);
+function getImageBankImages(shop = {}) {
+  const bank = readShopImageBank();
   const keys = getShopImageBankKeys(shop);
 
   return Array.from(
@@ -886,9 +866,8 @@ function getImageBankImages(shop = {}, params = {}) {
 function writeShopImageBank(items = [], options = {}) {
   try {
     const replace = options?.replace === true || (Array.isArray(items) ? items : []).some((item) => item?.__replaceImages === true);
-    const params = options?.params || (Array.isArray(items) ? items.find((item) => getCategoryFromShop(item)) : {}) || {};
-    const currentBank = readShopImageBank(params);
-    const nextBank = { ...currentBank };
+    const currentBank = readShopImageBank();
+    const nextBank = replace ? { ...currentBank } : {};
 
     (Array.isArray(items) ? items : []).forEach((item) => {
       if (!item || typeof item !== "object") {
@@ -906,33 +885,19 @@ function writeShopImageBank(items = [], options = {}) {
         return;
       }
 
-      const longestSavedImages = keys.reduce((acc, key) => {
-        const savedImages = Array.isArray(nextBank[key])
-          ? nextBank[key].map((image) => normalizeImageValue(image)).filter(Boolean)
-          : [];
-
-        return savedImages.length > acc.length ? savedImages : acc;
-      }, []);
-
-      const fixedImages = replace
-        ? images.map((image) => normalizeImageValue(image)).filter(Boolean)
-        : Array.from(
-            new Set(
-              [
-                ...images,
-                ...longestSavedImages,
-              ]
-                .map((image) => normalizeImageValue(image))
-                .filter(Boolean)
-            )
-          );
-
       keys.forEach((key) => {
+        const currentImages = !replace && Array.isArray(nextBank[key]) ? nextBank[key] : [];
+        const fixedImages = replace
+          ? images.map((image) => normalizeImageValue(image)).filter(Boolean)
+          : Array.from(
+              new Set([...currentImages, ...images].map((image) => normalizeImageValue(image)).filter(Boolean))
+            );
+
         nextBank[key] = fixedImages;
       });
     });
 
-    safeWriteImageBank(nextBank, params);
+    safeWriteImageBank(nextBank);
   } catch (e) {
     console.warn("SHOP IMAGE BANK WRITE ERROR:", e.message);
   }
@@ -943,31 +908,18 @@ function applyShopImageBank(shop = {}) {
     return shop;
   }
 
+  const bankImages = getImageBankImages(shop);
   const currentImages = collectImages(shop, {
     allowDataImage: true,
     allowBlob: false,
     maxLength: MAX_STORED_IMAGE_LENGTH,
   });
-  const bankImages = getImageBankImages(shop, shop);
 
   const fixedImages = shop?.__replaceImages === true
     ? currentImages
-    : Array.from(
-        new Set(
-          [
-            ...currentImages,
-            ...bankImages,
-          ]
-            .map((image) => normalizeImageValue(image))
-            .filter((image) =>
-              isSafeImageValue(image, {
-                allowDataImage: true,
-                allowBlob: false,
-                maxLength: MAX_STORED_IMAGE_LENGTH,
-              })
-            )
-        )
-      );
+    : bankImages.length
+    ? bankImages
+    : currentImages;
 
   if (!fixedImages.length) {
     return shop;
@@ -2175,7 +2127,7 @@ function saveLocalShops(items = [], params = {}) {
     })
     .slice(0, MAX_STORED_SHOPS);
 
-  writeShopImageBank(memoryItems, { replace: replaceItems.length > 0, params: categoryParams });
+  writeShopImageBank(memoryItems, { replace: replaceItems.length > 0 });
 
   LOCAL_SHOP_MEMORY = mergeShopArrays([
     ...(
@@ -2582,6 +2534,15 @@ function createLocalShop(payload = {}, params = {}) {
 function updateLocalShop(id, payload = {}, params = {}) {
   const saved = getLocalShops(params);
   const normalized = normalizeShopCategoryPayload(normalizeShopPayload(payload), params);
+  const replaceImages = normalized?.__replaceImages === true || shouldReplaceShopImages(payload, normalized);
+  const normalizedUpdatePayload = replaceImages
+    ? {
+        ...normalized,
+        __replaceImages: true,
+      }
+    : {
+        ...normalized,
+      };
   let found = false;
 
   const nextItems = saved.map((shop) => {
@@ -2599,8 +2560,7 @@ function updateLocalShop(id, payload = {}, params = {}) {
     found = true;
 
     return mergeShopObjects(shop, {
-      ...normalized,
-      __replaceImages: true,
+      ...normalizedUpdatePayload,
       _id: shop?._id || id,
       id: shop?.id || id,
       updatedAt: new Date().toISOString(),
@@ -2623,8 +2583,7 @@ function updateLocalShop(id, payload = {}, params = {}) {
       found = true;
 
       const updatedFallback = mergeShopObjects(fallbackItem, {
-        ...normalized,
-        __replaceImages: true,
+        ...normalizedUpdatePayload,
         _id: fallbackItem?._id || id,
         id: fallbackItem?.id || id,
         updatedAt: new Date().toISOString(),
@@ -2632,7 +2591,7 @@ function updateLocalShop(id, payload = {}, params = {}) {
 
       LOCAL_SHOP_MEMORY = mergeShopArrays([...saved, updatedFallback]);
 
-      saveLocalShops(LOCAL_SHOP_MEMORY, normalized);
+      saveLocalShops(LOCAL_SHOP_MEMORY, normalizedUpdatePayload);
 
       return {
         ok: true,
@@ -2655,13 +2614,12 @@ function updateLocalShop(id, payload = {}, params = {}) {
         {
           _id: id,
           id,
-          ...normalized,
-          __replaceImages: true,
+          ...normalizedUpdatePayload,
           updatedAt: new Date().toISOString(),
         },
       ]);
 
-  saveLocalShops(LOCAL_SHOP_MEMORY, normalized);
+  saveLocalShops(LOCAL_SHOP_MEMORY, normalizedUpdatePayload);
 
   const updatedItem =
     LOCAL_SHOP_MEMORY.find((shop) => String(shop?._id || shop?.id) === String(id)) ||
@@ -3334,10 +3292,16 @@ export const shopApi = {
   },
 
   update: async (id, payload, params = {}) => {
-    const normalizedPayload = {
-      ...normalizeShopCategoryPayload(normalizeShopPayload(payload), params),
-      __replaceImages: true,
-    };
+    const normalizedBasePayload = normalizeShopCategoryPayload(normalizeShopPayload(payload), params);
+    const replaceImages = normalizedBasePayload?.__replaceImages === true || shouldReplaceShopImages(payload, normalizedBasePayload);
+    const normalizedPayload = replaceImages
+      ? {
+          ...normalizedBasePayload,
+          __replaceImages: true,
+        }
+      : {
+          ...normalizedBasePayload,
+        };
     const categoryParams = Object.keys(makeCategoryParams(normalizedPayload)).length ? makeCategoryParams(normalizedPayload) : makeCategoryParams(params);
     const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery(`/shops/${id}`, categoryParams);
