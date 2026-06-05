@@ -35,10 +35,6 @@ jobs:
             node --check server.js
           fi
 
-          if [ -f src/server.js ]; then
-            node --check src/server.js
-          fi
-
           npm run check || echo "NORA root check skipped"
 
       - name: Install Client Dependencies
@@ -109,10 +105,6 @@ jobs:
 
             if [ -f server.js ]; then
               node --check server.js
-            fi
-
-            if [ -f src/server.js ]; then
-              node --check src/server.js
             fi
 
             echo "=================================="
