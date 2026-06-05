@@ -2,12 +2,12 @@
   "name": "noma-platform",
   "version": "1.0.0",
   "description": "노마 마사지 플랫폼",
-  "main": "src/server.js",
+  "main": "server.js",
   "private": true,
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "cross-env NODE_ENV=development nodemon src/server.js",
-    "prod": "cross-env NODE_ENV=production node src/server.js",
+    "start": "node server.js",
+    "dev": "cross-env NODE_ENV=development nodemon server.js",
+    "prod": "cross-env NODE_ENV=production node server.js",
     "restart": "npm install && npm run dev",
     "check": "node -e \"console.log('OK')\"",
     "postinstall": "echo Dependencies installed",
@@ -18,8 +18,8 @@
     "env": "node -e \"console.log(process.env)\"",
     "kill-port": "npx kill-port 10000",
     "start:clean": "npm run kill-port && npm start",
-    "debug": "node --inspect src/server.js",
-    "prod-safe": "cross-env NODE_ENV=production node --max-old-space-size=512 src/server.js",
+    "debug": "node --inspect server.js",
+    "prod-safe": "cross-env NODE_ENV=production node --max-old-space-size=512 server.js",
     "doctor": "npm doctor"
   },
   "keywords": [
