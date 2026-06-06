@@ -2020,6 +2020,162 @@ function ShopAdminPage() {
     return [];
   };
 
+  const getAdminAuthToken = () => {
+    try {
+      return (
+        localStorage.getItem("adminToken") ||
+        localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        sessionStorage.getItem("adminToken") ||
+        sessionStorage.getItem("token") ||
+        sessionStorage.getItem("accessToken") ||
+        ""
+      );
+    } catch (e) {
+      return "";
+    }
+  };
+
+  const getApiBaseUrl = () => {
+    try {
+      const env = import.meta.env || {};
+      const envBase =
+        env.VITE_API_BASE_URL ||
+        env.VITE_API_URL ||
+        env.VITE_API_SERVER_URL ||
+        "";
+
+      if (envBase) {
+        const base = String(envBase).replace(/\/+$/, "");
+
+        return base.endsWith("/api") ? base : `${base}/api`;
+      }
+
+      if (
+        typeof window !== "undefined" &&
+        (
+          window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1"
+        )
+      ) {
+        return "http://localhost:10000/api";
+      }
+
+      return "https://api.nora365.co.kr/api";
+    } catch (e) {
+      return "https://api.nora365.co.kr/api";
+    }
+  };
+
+  const extractDashboardShopItems = (res) => {
+    if (!res) {
+      return [];
+    }
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+
+    const normalized =
+      res.data ||
+      res ||
+      {};
+
+    const recent =
+      normalized.recent ||
+      normalized.data?.recent ||
+      {};
+
+    if (Array.isArray(recent.shops)) {
+      return recent.shops;
+    }
+
+    if (Array.isArray(normalized.recentShops)) {
+      return normalized.recentShops;
+    }
+
+    if (Array.isArray(normalized.shops)) {
+      return normalized.shops;
+    }
+
+    if (Array.isArray(normalized.items)) {
+      return normalized.items;
+    }
+
+    if (Array.isArray(normalized.list)) {
+      return normalized.list;
+    }
+
+    if (Array.isArray(normalized.data?.shops)) {
+      return normalized.data.shops;
+    }
+
+    if (Array.isArray(normalized.data?.items)) {
+      return normalized.data.items;
+    }
+
+    if (Array.isArray(normalized.data?.list)) {
+      return normalized.data.list;
+    }
+
+    return [];
+  };
+
+  const loadAdminDashboardShops = async () => {
+    try {
+      if (!isShopAdminRoute) {
+        return [];
+      }
+
+      const params = new URLSearchParams({
+        ...currentAdminCategoryParams,
+        category: currentAdminCategory,
+        shopCategory: currentAdminCategory,
+        serviceType: currentAdminCategory,
+        businessType: currentAdminCategory,
+        adminCategory: currentAdminCategory,
+        _t: String(Date.now()),
+      });
+
+      const token = getAdminAuthToken();
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        controller.abort();
+      }, 900);
+
+      const response = await fetch(
+        `${getApiBaseUrl()}/admin/dashboard?${params.toString()}`,
+        {
+          method: "GET",
+          headers: token
+            ? {
+                Authorization: `Bearer ${token}`,
+              }
+            : {},
+          signal: controller.signal,
+        }
+      );
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json();
+
+      return getAdminVisibleShops(
+        filterDeletedShops(
+          extractDashboardShopItems(data)
+        )
+      ).map((item) => applyShopImageBank(item));
+    } catch (e) {
+      console.warn("SHOP DASHBOARD SYNC SKIP:", e.message);
+      return [];
+    }
+  };
+
+
   const normalizeShopForList = (shop) => {
     if (!shop || typeof shop !== "object") {
       return null;
@@ -2609,7 +2765,10 @@ function ShopAdminPage() {
           }, 300);
         }),
       ])
-        .then((res) => {
+        .then(async (res) => {
+          const dashboardItems =
+            await loadAdminDashboardShops();
+
           const rawApiItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
 
           const apiItems = rawApiItems.map((apiItem) => {
@@ -2673,6 +2832,7 @@ function ShopAdminPage() {
             mergeShopList([
               ...localItems,
               ...apiItems,
+              ...dashboardItems,
             ])
           );
 
@@ -2932,12 +3092,16 @@ function ShopAdminPage() {
         }),
       ]);
 
+      const dashboardItems =
+        await loadAdminDashboardShops();
+
       const items = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
 
       setList((prev) => {
         const nextList = filterDeletedShops(mergeShopList([
           ...prev,
           ...items,
+          ...dashboardItems,
           ...localItems,
         ]));
 
@@ -3400,12 +3564,16 @@ function ShopAdminPage() {
             }),
           ]);
 
+          const dashboardItems =
+            await loadAdminDashboardShops();
+
           const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item));
 
           setList((prev) => {
             const nextList = filterDeletedShops(
               mergeShopList([
                 ...loadedItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
+                ...dashboardItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
                 ...prev.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
                 ...localItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
                 updatedShop,
@@ -3478,7 +3646,7 @@ function ShopAdminPage() {
       const nextList = beforeList.filter((item) => {
         const itemId = String(item?._id || item?.id || "");
 
-        return itemId !== deleteId && !isDeletedShop(item);
+        return itemId !== deleteId;
       });
 
       setList(nextList);
@@ -3512,7 +3680,7 @@ function ShopAdminPage() {
               const filtered = filterDeletedShops(mergeShopList([...prev, ...localItems])).filter((item) => {
                 const itemId = String(item?._id || item?.id || "");
 
-                return itemId !== deleteId && !isDeletedShop(item);
+                return itemId !== deleteId;
               });
 
               saveLocalShops(filtered);
@@ -3535,17 +3703,26 @@ function ShopAdminPage() {
             }),
           ]);
 
+          const dashboardItems =
+            await loadAdminDashboardShops();
+
           const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item)).filter((item) => {
             const itemId = String(item?._id || item?.id || item?.shopId || "");
 
-            return itemId !== deleteId && !isDeletedShop(item);
+            return itemId !== deleteId;
+          });
+
+          const dashboardLoadedItems = dashboardItems.filter((item) => {
+            const itemId = String(item?._id || item?.id || item?.shopId || "");
+
+            return itemId !== deleteId;
           });
 
           setList((prev) => {
-            const filtered = filterDeletedShops(mergeShopList([...prev, ...loadedItems, ...localItems])).filter((item) => {
+            const filtered = filterDeletedShops(mergeShopList([...prev, ...loadedItems, ...dashboardLoadedItems, ...localItems])).filter((item) => {
               const itemId = String(item?._id || item?.id || "");
 
-              return itemId !== deleteId && !isDeletedShop(item);
+              return itemId !== deleteId;
             });
 
             saveLocalShops(filtered);
@@ -3559,7 +3736,7 @@ function ShopAdminPage() {
             const filtered = filterDeletedShops(mergeShopList([...prev, ...readLocalShops()])).filter((item) => {
               const itemId = String(item?._id || item?.id || "");
 
-              return itemId !== deleteId && !isDeletedShop(item);
+              return itemId !== deleteId;
             });
 
             saveLocalShops(filtered);

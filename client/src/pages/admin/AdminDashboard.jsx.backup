@@ -5,21 +5,21 @@ import React, {
   useState,
 } from "react";
 
-import Loading from "../components/common/Loading";
-import ErrorMessage from "../components/common/ErrorMessage";
-import EmptyState from "../components/common/EmptyState";
+import Loading from "../../components/common/Loading";
+import ErrorMessage from "../../components/common/ErrorMessage";
+import EmptyState from "../../components/common/EmptyState";
 
-import AdminLayout from "../components/admin/AdminLayout";
+import AdminLayout from "../../components/admin/AdminLayout";
 
-import ShopAdminPage from "./admin/ShopAdminPage";
-import UserAdminPage from "./admin/UserAdminPage";
-import ReservationAdminPage from "./admin/ReservationAdminPage";
-import PaymentAdminPage from "./admin/PaymentAdminPage";
-import ReviewAdminPage from "./admin/ReviewAdminPage";
-import ReportAdminPage from "./admin/ReportAdminPage";
-import AdminAnalyticsPage from "./AdminAnalyticsPage";
+import ShopAdminPage from "./ShopAdminPage";
+import UserAdminPage from "./UserAdminPage";
+import ReservationAdminPage from "./ReservationAdminPage";
+import PaymentAdminPage from "./PaymentAdminPage";
+import ReviewAdminPage from "./ReviewAdminPage";
+import ReportAdminPage from "./ReportAdminPage";
+import AdminAnalyticsPage from "../AdminAnalyticsPage";
 
-import shopApi from "../services/shop.api";
+import shopApi from "../../services/shop.api";
 
 const API_BASE_RAW =
   (
@@ -28,14 +28,11 @@ const API_BASE_RAW =
     window.__ENV__.API_BASE_URL
   ) ||
   (
-    typeof import.meta !==
-      "undefined" &&
+    typeof import.meta !== "undefined" &&
     import.meta.env &&
     (
-      import.meta.env
-        .VITE_API_URL ||
-      import.meta.env
-        .VITE_API_BASE_URL
+      import.meta.env.VITE_API_URL ||
+      import.meta.env.VITE_API_BASE_URL
     )
   ) ||
   "https://api.nora365.co.kr/api";
@@ -44,31 +41,23 @@ const API_BASE = String(API_BASE_RAW)
   .replace("/api/api", "/api")
   .replace(/\/+$/, "");
 
-const EMPTY_DASHBOARD_DATA =
-  {
-    summary: {
-      totalShops: 0,
-      totalUsers: 0,
-      totalReservations: 0,
-      totalPayments: 0,
-      totalRevenue: 0,
-    },
-
-    recent: {
-      shops: [],
-      users: [],
-      reservations: [],
-    },
-  };
-
-const DASHBOARD_ALL_CATEGORIES = [
-  "massage",
-  "karaoke",
-];
+const EMPTY_DASHBOARD_DATA = {
+  summary: {
+    totalShops: 0,
+    totalUsers: 0,
+    totalReservations: 0,
+    totalPayments: 0,
+    totalRevenue: 0,
+  },
+  recent: {
+    shops: [],
+    users: [],
+    reservations: [],
+  },
+};
 
 function toNumber(value, fallback = 0) {
-  const number =
-    Number(value);
+  const number = Number(value);
 
   return Number.isFinite(number)
     ? number
@@ -82,10 +71,9 @@ function toArray(value) {
 }
 
 function normalizeDashboardCategory(value) {
-  const text =
-    String(value || "")
-      .toLowerCase()
-      .trim();
+  const text = String(value || "")
+    .toLowerCase()
+    .trim();
 
   if (
     text.includes("/admin/karaoke") ||
@@ -123,108 +111,49 @@ function normalizeDashboardCategory(value) {
 
 function getDashboardCategory() {
   try {
-    const path =
-      String(
-        window.location.pathname || ""
-      ).toLowerCase();
+    const path = String(window.location.pathname || "").toLowerCase();
 
-    const params =
-      new URLSearchParams(
-        window.location.search || ""
-      );
-
-    const queryCategory =
-      normalizeDashboardCategory(
-        params.get("category")
-      ) ||
-      normalizeDashboardCategory(
-        params.get("shopCategory")
-      ) ||
-      normalizeDashboardCategory(
-        params.get("serviceType")
-      ) ||
-      normalizeDashboardCategory(
-        params.get("businessType")
-      ) ||
-      normalizeDashboardCategory(
-        params.get("adminCategory")
-      ) ||
-      normalizeDashboardCategory(
-        window.location.search
-      );
-
-    if (queryCategory) {
-      return queryCategory;
-    }
-
-    const pathCategory =
-      normalizeDashboardCategory(path);
-
-    if (
-      path === "/admin" ||
-      path === "/admin/" ||
-      path === "/admin/dashboard" ||
-      path === "/admin/dashboard/"
-    ) {
-      return "";
-    }
+    const pathCategory = normalizeDashboardCategory(path);
 
     if (pathCategory) {
       return pathCategory;
     }
 
-    return "";
+    const params = new URLSearchParams(window.location.search || "");
+
+    const queryCategory =
+      normalizeDashboardCategory(params.get("category")) ||
+      normalizeDashboardCategory(params.get("shopCategory")) ||
+      normalizeDashboardCategory(params.get("serviceType")) ||
+      normalizeDashboardCategory(params.get("businessType")) ||
+      normalizeDashboardCategory(params.get("adminCategory")) ||
+      normalizeDashboardCategory(window.location.search);
+
+    if (queryCategory) {
+      return queryCategory;
+    }
+
+    return "massage";
   } catch (e) {
-    console.warn(
-      "ADMIN DASHBOARD CATEGORY ERROR:",
-      e.message
-    );
+    console.warn("ADMIN DASHBOARD CATEGORY ERROR:", e.message);
 
-    return "";
+    return "massage";
   }
-}
-
-function getDashboardCategories(category) {
-  const normalizedCategory =
-    normalizeDashboardCategory(category);
-
-  if (normalizedCategory) {
-    return [normalizedCategory];
-  }
-
-  return DASHBOARD_ALL_CATEGORIES;
 }
 
 function createDashboardUrl(category) {
   const normalizedCategory =
-    normalizeDashboardCategory(category);
+    normalizeDashboardCategory(category) ||
+    "massage";
 
   const query = new URLSearchParams({
+    category: normalizedCategory,
+    shopCategory: normalizedCategory,
+    serviceType: normalizedCategory,
+    businessType: normalizedCategory,
+    adminCategory: normalizedCategory,
     _t: String(Date.now()),
   });
-
-  if (normalizedCategory) {
-    query.set(
-      "category",
-      normalizedCategory
-    );
-    query.set(
-      "shopCategory",
-      normalizedCategory
-    );
-    query.set(
-      "serviceType",
-      normalizedCategory
-    );
-    query.set(
-      "businessType",
-      normalizedCategory
-    );
-    query.set(
-      "adminCategory",
-      normalizedCategory
-    );
-  }
 
   return `${API_BASE}/admin/dashboard?${query.toString()}`;
 }
@@ -247,10 +176,7 @@ function getAdminToken() {
       ""
     );
   } catch (e) {
-    console.warn(
-      "ADMIN TOKEN READ ERROR:",
-      e.message
-    );
+    console.warn("ADMIN TOKEN READ ERROR:", e.message);
 
     return "";
   }
@@ -269,8 +195,7 @@ function parseStoredJson(value) {
 }
 
 function collectArrayFromStoredValue(value) {
-  const parsed =
-    parseStoredJson(value);
+  const parsed = parseStoredJson(value);
 
   if (!parsed) {
     return [];
@@ -330,27 +255,26 @@ function getShopCategoryFromItem(item = {}, fallbackCategory = "") {
     return direct;
   }
 
-  const joined =
-    [
-      item.name,
-      item.shopName,
-      item.title,
-      item.description,
-      item.address,
-      item.course,
-      item.courses,
-      item.tags,
-      fallbackCategory,
-    ]
-      .map((value) => {
-        if (Array.isArray(value)) {
-          return value.join(" ");
-        }
+  const joined = [
+    item.name,
+    item.shopName,
+    item.title,
+    item.description,
+    item.address,
+    item.course,
+    item.courses,
+    item.tags,
+    fallbackCategory,
+  ]
+    .map((value) => {
+      if (Array.isArray(value)) {
+        return value.join(" ");
+      }
 
-        return String(value || "");
-      })
-      .join(" ")
-      .toLowerCase();
+      return String(value || "");
+    })
+    .join(" ")
+    .toLowerCase();
 
   return (
     normalizeDashboardCategory(joined) ||
@@ -403,8 +327,7 @@ const ALLOWED_RECENT_DASHBOARD_SHOP_KEYS =
   );
 
 function isHiddenDashboardName(value) {
-  const text =
-    normalizeHiddenDashboardText(value);
+  const text = normalizeHiddenDashboardText(value);
 
   if (!text) {
     return false;
@@ -424,15 +347,12 @@ function isAllowedRecentDashboardShop(item = {}) {
     typeof item === "object" &&
     !isDeletedShop(item) &&
     !isHiddenDashboardShop(item) &&
-    !isHiddenDashboardName(
-      getDashboardItemText(item)
-    )
+    !isHiddenDashboardName(getDashboardItemText(item))
   );
 }
 
 function sanitizeRecentDashboardShops(items) {
-  const uniqueMap =
-    new Map();
+  const uniqueMap = new Map();
 
   toArray(items).forEach((item) => {
     if (
@@ -440,25 +360,17 @@ function sanitizeRecentDashboardShops(items) {
       typeof item === "object" &&
       !isDeletedShop(item) &&
       !isHiddenDashboardShop(item) &&
-      !isHiddenDashboardName(
-        getDashboardItemText(item)
-      )
+      !isHiddenDashboardName(getDashboardItemText(item))
     ) {
-      uniqueMap.set(
-        getShopIdentity(item),
-        item
-      );
+      uniqueMap.set(getShopIdentity(item), item);
     }
   });
 
-  return Array.from(
-    uniqueMap.values()
-  );
+  return Array.from(uniqueMap.values());
 }
 
 function sanitizeDashboardShops(items) {
-  const uniqueMap =
-    new Map();
+  const uniqueMap = new Map();
 
   toArray(items).forEach((item) => {
     if (
@@ -466,20 +378,13 @@ function sanitizeDashboardShops(items) {
       typeof item === "object" &&
       !isDeletedShop(item) &&
       !isHiddenDashboardShop(item) &&
-      !isHiddenDashboardName(
-        getDashboardItemText(item)
-      )
+      !isHiddenDashboardName(getDashboardItemText(item))
     ) {
-      uniqueMap.set(
-        getShopIdentity(item),
-        item
-      );
+      uniqueMap.set(getShopIdentity(item), item);
     }
   });
 
-  return Array.from(
-    uniqueMap.values()
-  );
+  return Array.from(uniqueMap.values());
 }
 
 function removeHiddenDashboardShopsFromStorage(category) {
@@ -491,8 +396,9 @@ function removeHiddenDashboardShopsFromStorage(category) {
       return;
     }
 
-    const categories =
-      getDashboardCategories(category);
+    const normalizedCategory =
+      normalizeDashboardCategory(category) ||
+      "massage";
 
     const keys = [];
 
@@ -501,17 +407,14 @@ function removeHiddenDashboardShopsFromStorage(category) {
       i < window.localStorage.length;
       i += 1
     ) {
-      const key =
-        window.localStorage.key(i);
+      const key = window.localStorage.key(i);
 
       if (
         key &&
         (
           key.includes("shop") ||
           key.includes("shops") ||
-          categories.some((item) =>
-            key.includes(item)
-          )
+          key.includes(normalizedCategory)
         )
       ) {
         keys.push(key);
@@ -519,36 +422,27 @@ function removeHiddenDashboardShopsFromStorage(category) {
     }
 
     keys.forEach((key) => {
-      const rawValue =
-        window.localStorage.getItem(key);
+      const rawValue = window.localStorage.getItem(key);
 
-      const parsed =
-        parseStoredJson(rawValue);
+      const parsed = parseStoredJson(rawValue);
 
       if (!parsed) {
         return;
       }
 
-      const originalItems =
-        collectArrayFromStoredValue(rawValue);
+      const originalItems = collectArrayFromStoredValue(rawValue);
 
       if (!Array.isArray(originalItems)) {
         return;
       }
 
-      const cleanedItems =
-        originalItems.filter(
-          (item) =>
-            !isHiddenDashboardShop(item) &&
-            !isHiddenDashboardName(
-              getDashboardItemText(item)
-            )
-        );
+      const cleanedItems = originalItems.filter(
+        (item) =>
+          !isHiddenDashboardShop(item) &&
+          !isHiddenDashboardName(getDashboardItemText(item))
+      );
 
-      if (
-        cleanedItems.length ===
-        originalItems.length
-      ) {
+      if (cleanedItems.length === originalItems.length) {
         return;
       }
 
@@ -599,10 +493,7 @@ function removeHiddenDashboardShopsFromStorage(category) {
       );
     });
   } catch (e) {
-    console.warn(
-      "ADMIN DASHBOARD STORAGE CLEAN ERROR:",
-      e.message
-    );
+    console.warn("ADMIN DASHBOARD STORAGE CLEAN ERROR:", e.message);
   }
 }
 
@@ -641,11 +532,7 @@ function getDashboardItemText(item = {}) {
 }
 
 function isHiddenDashboardShop(item = {}) {
-  if (
-    isHiddenDashboardName(
-      getDashboardItemText(item)
-    )
-  ) {
+  if (isHiddenDashboardName(getDashboardItemText(item))) {
     return true;
   }
 
@@ -654,8 +541,7 @@ function isHiddenDashboardShop(item = {}) {
     typeof item === "object"
   ) {
     try {
-      const rawText =
-        JSON.stringify(item);
+      const rawText = JSON.stringify(item);
 
       return HIDDEN_DASHBOARD_SHOP_NAMES.some(
         (hiddenName) =>
@@ -679,24 +565,18 @@ function getStoredShopsByCategory(category) {
     }
 
     const normalizedCategory =
-      normalizeDashboardCategory(category);
-
-    const targetCategories =
-      normalizedCategory
-        ? [normalizedCategory]
-        : DASHBOARD_ALL_CATEGORIES;
+      normalizeDashboardCategory(category) ||
+      "massage";
 
     const storageKeys = [
       "nora_admin_shops",
       "nora_local_shops",
       "noma_admin_shops",
       "noma_local_shops",
-      ...targetCategories.flatMap((item) => [
-        `nora_admin_shops_${item}`,
-        `nora_local_shops_${item}`,
-        `noma_admin_shops_${item}`,
-        `noma_local_shops_${item}`,
-      ]),
+      `nora_admin_shops_${normalizedCategory}`,
+      `nora_local_shops_${normalizedCategory}`,
+      `noma_admin_shops_${normalizedCategory}`,
+      `noma_local_shops_${normalizedCategory}`,
     ];
 
     const keys = [];
@@ -712,8 +592,7 @@ function getStoredShopsByCategory(category) {
       i < window.localStorage.length;
       i += 1
     ) {
-      const key =
-        window.localStorage.key(i);
+      const key = window.localStorage.key(i);
 
       if (
         key &&
@@ -730,14 +609,11 @@ function getStoredShopsByCategory(category) {
     const collected = [];
 
     keys.forEach((key) => {
-      const value =
-        window.localStorage.getItem(key);
+      const value = window.localStorage.getItem(key);
 
-      const items =
-        collectArrayFromStoredValue(value);
+      const items = collectArrayFromStoredValue(value);
 
-      const fallbackCategory =
-        normalizeDashboardCategory(key);
+      const fallbackCategory = normalizeDashboardCategory(key);
 
       items.forEach((item) => {
         if (
@@ -751,15 +627,7 @@ function getStoredShopsByCategory(category) {
             );
 
           if (
-            (
-              targetCategories.includes(
-                categoryValue
-              ) ||
-              (
-                !categoryValue &&
-                !normalizedCategory
-              )
-            ) &&
+            categoryValue === normalizedCategory &&
             !isDeletedShop(item) &&
             !isHiddenDashboardShop(item)
           ) {
@@ -769,12 +637,10 @@ function getStoredShopsByCategory(category) {
       });
     });
 
-    const uniqueMap =
-      new Map();
+    const uniqueMap = new Map();
 
     collected.forEach((item) => {
-      const key =
-        getShopIdentity(item);
+      const key = getShopIdentity(item);
 
       if (!uniqueMap.has(key)) {
         uniqueMap.set(key, item);
@@ -782,15 +648,10 @@ function getStoredShopsByCategory(category) {
     });
 
     return sanitizeDashboardShops(
-      Array.from(
-        uniqueMap.values()
-      )
+      Array.from(uniqueMap.values())
     );
   } catch (e) {
-    console.warn(
-      "ADMIN LOCAL SHOP COUNT ERROR:",
-      e.message
-    );
+    console.warn("ADMIN LOCAL SHOP COUNT ERROR:", e.message);
 
     return [];
   }
@@ -798,8 +659,7 @@ function getStoredShopsByCategory(category) {
 
 async function fetchDashboard(category) {
   try {
-    const token =
-      getAdminToken();
+    const token = getAdminToken();
 
     if (!token) {
       return {
@@ -808,31 +668,24 @@ async function fetchDashboard(category) {
     }
 
     const headers = {
-      "Content-Type":
-        "application/json",
-
-      Authorization:
-        `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
     };
 
-    const controller =
-      new AbortController();
+    const controller = new AbortController();
 
-    const timeout =
-      setTimeout(() => {
-        controller.abort();
-      }, 5000);
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 5000);
 
     const res = await fetch(
       createDashboardUrl(category),
       {
         method: "GET",
         headers,
-        credentials:
-          "include",
+        credentials: "include",
         cache: "no-store",
-        signal:
-          controller.signal,
+        signal: controller.signal,
       }
     );
 
@@ -841,20 +694,16 @@ async function fetchDashboard(category) {
     let data = {};
 
     try {
-      data =
-        await res.json();
+      data = await res.json();
     } catch {
       data = {};
     }
 
     if (
       res.status === 401 ||
-      data?.msg ===
-        "AUTH_TOKEN_REQUIRED" ||
-      data?.message ===
-        "인증 토큰 없음" ||
-      data?.msg ===
-        "INVALID_TOKEN"
+      data?.msg === "AUTH_TOKEN_REQUIRED" ||
+      data?.message === "인증 토큰 없음" ||
+      data?.msg === "INVALID_TOKEN"
     ) {
       return {
         authRequired: true,
@@ -881,15 +730,10 @@ async function fetchDashboard(category) {
 
     return data;
   } catch (e) {
-    console.error(
-      "ADMIN DASHBOARD FETCH ERROR:",
-      e.message
-    );
+    console.error("ADMIN DASHBOARD FETCH ERROR:", e.message);
 
     const fallbackSnapshot =
-      await fetchShopDashboardSnapshot(
-        category
-      );
+      await fetchShopDashboardSnapshot(category);
 
     return mergeShopSnapshotIntoDashboard(
       EMPTY_DASHBOARD_DATA,
@@ -904,98 +748,15 @@ function normalizeDashboardResponse(response, category) {
     response ||
     {};
 
-  const summary =
-    normalized.summary ||
-    {};
+  const summary = normalized.summary || {};
 
-  const stats =
-    normalized.stats ||
-    {};
-
-  const recent =
-    normalized.recent ||
-    {};
-
-  const serverShops =
-    toArray(recent.shops).length > 0
-      ? toArray(recent.shops)
-      : toArray(normalized.shops);
-
-  const targetCategories =
-    getDashboardCategories(category);
-
-  const filteredServerShops =
-    serverShops.filter((shop) => {
-      if (
-        !shop ||
-        typeof shop !== "object" ||
-        isDeletedShop(shop) ||
-        isHiddenDashboardShop(shop)
-      ) {
-        return false;
-      }
-
-      const shopCategory =
-        getShopCategoryFromItem(
-          shop,
-          ""
-        );
-
-      return (
-        targetCategories.includes(
-          shopCategory
-        ) ||
-        !shopCategory
-      );
-    });
-
-  const uniqueServerMap =
-    new Map();
-
-  filteredServerShops.forEach((shop) => {
-    uniqueServerMap.set(
-      getShopIdentity(shop),
-      shop
-    );
-  });
-
-  const localShops =
-    getStoredShopsByCategory(
-      category
-    );
-
-  localShops.forEach((shop) => {
-    if (
-      shop &&
-      typeof shop === "object" &&
-      !isDeletedShop(shop) &&
-      !isHiddenDashboardShop(shop)
-    ) {
-      uniqueServerMap.set(
-        getShopIdentity(shop),
-        shop
-      );
-    }
-  });
-
-  const mergedShops =
-    sanitizeRecentDashboardShops(
-      Array.from(
-        uniqueServerMap.values()
-      )
-    );
-
-  const effectiveTotalShops =
-    mergedShops.length;
+  const stats = normalized.stats || {};
 
   return {
     summary: {
       ...EMPTY_DASHBOARD_DATA.summary,
       ...summary,
-
-      totalShops:
-        effectiveTotalShops,
-
+      totalShops: 0,
       totalUsers:
         toNumber(
           summary.totalUsers ??
@@ -1004,7 +765,6 @@ function normalizeDashboardResponse(response, category) {
             normalized.users,
           EMPTY_DASHBOARD_DATA.summary.totalUsers
         ),
-
       totalReservations:
         toNumber(
           summary.totalReservations ??
@@ -1013,7 +773,6 @@ function normalizeDashboardResponse(response, category) {
             normalized.reservations,
           EMPTY_DASHBOARD_DATA.summary.totalReservations
         ),
-
       totalPayments:
         toNumber(
           summary.totalPayments ??
@@ -1022,7 +781,6 @@ function normalizeDashboardResponse(response, category) {
             normalized.payments,
           EMPTY_DASHBOARD_DATA.summary.totalPayments
         ),
-
       totalRevenue:
         toNumber(
           summary.totalRevenue ??
@@ -1032,15 +790,10 @@ function normalizeDashboardResponse(response, category) {
           EMPTY_DASHBOARD_DATA.summary.totalRevenue
         ),
     },
-
     recent: {
       ...EMPTY_DASHBOARD_DATA.recent,
-      ...recent,
-
-      shops:
-        sanitizeRecentDashboardShops(
-          mergedShops
-        ),
+      ...(normalized.recent || {}),
+      shops: [],
     },
   };
 }
@@ -1085,13 +838,13 @@ function normalizeShopSnapshotResponse(response) {
 }
 
 async function fetchShopDashboardSnapshot(category) {
-  const targetCategories =
-    getDashboardCategories(category);
+  const normalizedCategory =
+    normalizeDashboardCategory(category) ||
+    "massage";
 
-  const results =
-    await Promise.allSettled(
-      targetCategories.flatMap((normalizedCategory) => {
-        const categoryParams = {
+  const categoryParams =
+    normalizedCategory === "karaoke"
+      ? {
           category: normalizedCategory,
           shopCategory: normalizedCategory,
           serviceType: normalizedCategory,
@@ -1104,91 +857,72 @@ async function fetchShopDashboardSnapshot(category) {
           fromAdmin: "true",
           management: "true",
           _t: String(Date.now()),
+        }
+      : {
+          admin: "true",
+          adminMode: "true",
+          adminList: "true",
+          forAdmin: "true",
+          fromAdmin: "true",
+          management: "true",
+          _t: String(Date.now()),
         };
 
-        return [
-          shopApi.getStats(categoryParams),
-          shopApi.getList(categoryParams),
-        ];
-      })
-    );
+  let list = {
+    total: 0,
+    shops: [],
+  };
 
-  const mergedMap =
-    new Map();
-
-  results.forEach((result) => {
-    if (result.status !== "fulfilled") {
-      console.error(
-        "ADMIN DASHBOARD SHOP SNAPSHOT ERROR:",
-        result.reason?.message ||
-          result.reason
-      );
-
-      return;
-    }
-
-    const normalized =
+  try {
+    list =
       normalizeShopSnapshotResponse(
-        result.value
+        await shopApi.getList(categoryParams)
       );
-
-    toArray(normalized.shops).forEach((shop) => {
-      if (
-        shop &&
-        typeof shop === "object" &&
-        !isDeletedShop(shop) &&
-        !isHiddenDashboardShop(shop)
-      ) {
-        const shopCategory =
-          getShopCategoryFromItem(
-            shop,
-            ""
-          );
-
-        if (
-          targetCategories.includes(
-            shopCategory
-          ) ||
-          !shopCategory
-        ) {
-          mergedMap.set(
-            getShopIdentity(shop),
-            shop
-          );
-        }
-      }
-    });
-  });
-
-  const localShops =
-    getStoredShopsByCategory(
-      category
+  } catch (e) {
+    console.error(
+      "ADMIN DASHBOARD SHOP LIST ERROR:",
+      e.message || e
     );
+  }
 
-  localShops.forEach((shop) => {
+  const uniqueMap = new Map();
+
+  toArray(list.shops).forEach((shop) => {
     if (
       shop &&
       typeof shop === "object" &&
       !isDeletedShop(shop) &&
       !isHiddenDashboardShop(shop)
     ) {
-      mergedMap.set(
-        getShopIdentity(shop),
-        shop
-      );
+      if (normalizedCategory === "karaoke") {
+        if (
+          getShopCategoryFromItem(
+            shop,
+            normalizedCategory
+          ) !== "karaoke"
+        ) {
+          return;
+        }
+      } else if (
+        getShopCategoryFromItem(
+          shop,
+          normalizedCategory
+        ) === "karaoke"
+      ) {
+        return;
+      }
+
+      uniqueMap.set(getShopIdentity(shop), shop);
     }
   });
 
   const shops =
     sanitizeDashboardShops(
-      Array.from(
-        mergedMap.values()
-      )
+      Array.from(uniqueMap.values())
     );
 
   return {
-    totalShops:
-      shops.length,
+    totalShops: shops.length,
     shops,
   };
 }
@@ -1199,33 +933,8 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
     EMPTY_DASHBOARD_DATA;
 
   const snapshotShops =
-    toArray(shopSnapshot?.shops);
-
-  const currentShops =
-    toArray(safeDashboard?.recent?.shops);
-
-  const mergedMap =
-    new Map();
-
-  [...currentShops, ...snapshotShops].forEach((shop) => {
-    if (
-      shop &&
-      typeof shop === "object" &&
-      !isDeletedShop(shop) &&
-      !isHiddenDashboardShop(shop)
-    ) {
-      mergedMap.set(
-        getShopIdentity(shop),
-        shop
-      );
-    }
-  });
-
-  const mergedShops =
     sanitizeDashboardShops(
-      Array.from(
-        mergedMap.values()
-      )
+      toArray(shopSnapshot?.shops)
     );
 
   return {
@@ -1233,25 +942,19 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
     summary: {
       ...EMPTY_DASHBOARD_DATA.summary,
       ...(safeDashboard.summary || {}),
-      totalShops:
-        mergedShops.length,
+      totalShops: snapshotShops.length,
     },
     recent: {
       ...EMPTY_DASHBOARD_DATA.recent,
       ...(safeDashboard.recent || {}),
-      shops:
-        sanitizeRecentDashboardShops(
-          mergedShops
-        ),
+      shops: sanitizeRecentDashboardShops(snapshotShops),
     },
   };
 }
 
 function AdminDashboard() {
   const [data, setData] =
-    useState(
-      EMPTY_DASHBOARD_DATA
-    );
+    useState(EMPTY_DASHBOARD_DATA);
 
   const [loading, setLoading] =
     useState(true);
@@ -1270,28 +973,16 @@ function AdminDashboard() {
       setLoading(true);
       setError("");
 
-      const dashboardCategory =
-        getDashboardCategory();
+      const dashboardCategory = getDashboardCategory();
 
-      removeHiddenDashboardShopsFromStorage(
-        dashboardCategory
-      );
+      removeHiddenDashboardShopsFromStorage(dashboardCategory);
 
-      const res =
-        await fetchDashboard(
-          dashboardCategory
-        );
+      const res = await fetchDashboard(dashboardCategory);
 
-      if (
-        res?.authRequired
-      ) {
-        alert(
-          "로그인이 필요합니다."
-        );
+      if (res?.authRequired) {
+        alert("로그인이 필요합니다.");
 
-        window.location.replace(
-          "/login"
-        );
+        window.location.replace("/login");
 
         return;
       }
@@ -1303,9 +994,7 @@ function AdminDashboard() {
         );
 
       const shopSnapshot =
-        await fetchShopDashboardSnapshot(
-          dashboardCategory
-        );
+        await fetchShopDashboardSnapshot(dashboardCategory);
 
       setData(
         mergeShopSnapshotIntoDashboard(
@@ -1314,10 +1003,7 @@ function AdminDashboard() {
         )
       );
     } catch (e) {
-      console.error(
-        "ADMIN DASHBOARD LOAD ERROR:",
-        e.message
-      );
+      console.error("ADMIN DASHBOARD LOAD ERROR:", e.message);
 
       setError(
         e.message ||
@@ -1362,54 +1048,38 @@ function AdminDashboard() {
     );
   }
 
-  const { summary, recent } =
-    data;
+  const { summary, recent } = data;
 
   const safeRecent = {
-    shops:
-      sanitizeDashboardShops(
-        recent?.shops
-      ),
-    users:
-      recent?.users || [],
-    reservations:
-      recent?.reservations ||
-      [],
+    shops: sanitizeDashboardShops(recent?.shops),
+    users: recent?.users || [],
+    reservations: recent?.reservations || [],
   };
 
   const safeSummary = {
     ...summary,
-    totalShops:
-      safeRecent.shops.length,
+    totalShops: safeRecent.shops.length,
   };
 
   return (
     <AdminLayout title="통합 관리자 시스템">
-
       <div style={styles.page}>
         <h2 style={styles.title}>
           📊 NORA 관리자 대시보드
         </h2>
 
         <div style={styles.tabWrap}>
-
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "dashboard"
-              )
-            }
+            onClick={() => setActiveTab("dashboard")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "dashboard"
+                activeTab === "dashboard"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "dashboard"
+                activeTab === "dashboard"
                   ? "#000"
                   : "#fff",
             }}
@@ -1419,21 +1089,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "shop"
-              )
-            }
+            onClick={() => setActiveTab("shop")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "shop"
+                activeTab === "shop"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "shop"
+                activeTab === "shop"
                   ? "#000"
                   : "#fff",
             }}
@@ -1443,21 +1107,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "user"
-              )
-            }
+            onClick={() => setActiveTab("user")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "user"
+                activeTab === "user"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "user"
+                activeTab === "user"
                   ? "#000"
                   : "#fff",
             }}
@@ -1467,21 +1125,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "reservation"
-              )
-            }
+            onClick={() => setActiveTab("reservation")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "reservation"
+                activeTab === "reservation"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "reservation"
+                activeTab === "reservation"
                   ? "#000"
                   : "#fff",
             }}
@@ -1491,21 +1143,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "payment"
-              )
-            }
+            onClick={() => setActiveTab("payment")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "payment"
+                activeTab === "payment"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "payment"
+                activeTab === "payment"
                   ? "#000"
                   : "#fff",
             }}
@@ -1515,21 +1161,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "review"
-              )
-            }
+            onClick={() => setActiveTab("review")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "review"
+                activeTab === "review"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "review"
+                activeTab === "review"
                   ? "#000"
                   : "#fff",
             }}
@@ -1539,21 +1179,15 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "report"
-              )
-            }
+            onClick={() => setActiveTab("report")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "report"
+                activeTab === "report"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "report"
+                activeTab === "report"
                   ? "#000"
                   : "#fff",
             }}
@@ -1563,104 +1197,73 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "analytics"
-              )
-            }
+            onClick={() => setActiveTab("analytics")}
             style={{
               ...styles.tabBtn,
               background:
-                activeTab ===
-                "analytics"
+                activeTab === "analytics"
                   ? "#d4af37"
                   : "#111",
               color:
-                activeTab ===
-                "analytics"
+                activeTab === "analytics"
                   ? "#000"
                   : "#fff",
             }}
           >
             분석
           </button>
-
         </div>
 
-        {activeTab ===
-          "dashboard" && (
+        {activeTab === "dashboard" && (
           <>
             <div style={styles.grid}>
               <Card
                 title="매장 수"
-                value={
-                  safeSummary.totalShops
-                }
+                value={safeSummary.totalShops}
               />
 
               <Card
                 title="유저 수"
-                value={
-                  safeSummary.totalUsers
-                }
+                value={safeSummary.totalUsers}
               />
 
               <Card
                 title="예약 수"
-                value={
-                  safeSummary.totalReservations
-                }
+                value={safeSummary.totalReservations}
               />
 
               <Card
                 title="결제 수"
-                value={
-                  safeSummary.totalPayments
-                }
+                value={safeSummary.totalPayments}
               />
 
               <Card
                 title="총 매출"
-                value={
-                  safeSummary.totalRevenue
-                }
+                value={safeSummary.totalRevenue}
               />
             </div>
 
             <div style={styles.section}>
               <h3>최근 매장</h3>
 
-              <RecentShopList
-                items={
-                  safeRecent.shops
-                }
-              />
+              <RecentShopList items={safeRecent.shops} />
             </div>
 
             <div style={styles.section}>
               <h3>최근 유저</h3>
 
-              <List
-                items={
-                  safeRecent.users
-                }
-              />
+              <List items={safeRecent.users} />
             </div>
 
             <div style={styles.section}>
               <h3>최근 예약</h3>
 
-              <List
-                items={
-                  safeRecent.reservations
-                }
-              />
+              <List items={safeRecent.reservations} />
             </div>
           </>
         )}
 
-        {activeTab ===
-          "shop" && (
+        {activeTab === "shop" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               🏪 업체 관리
@@ -1670,8 +1273,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "user" && (
+        {activeTab === "user" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               👤 회원 관리
@@ -1681,8 +1283,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "reservation" && (
+        {activeTab === "reservation" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               📅 예약 관리
@@ -1692,8 +1293,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "payment" && (
+        {activeTab === "payment" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               💳 결제 관리
@@ -1703,8 +1303,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "review" && (
+        {activeTab === "review" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               ⭐ 리뷰 관리
@@ -1714,8 +1313,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "report" && (
+        {activeTab === "report" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               🚨 신고 관리
@@ -1725,8 +1323,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        {activeTab ===
-          "analytics" && (
+        {activeTab === "analytics" && (
           <div style={styles.adminSection}>
             <div style={styles.sectionTitle}>
               📈 분석 / 통계
@@ -1735,7 +1332,6 @@ function AdminDashboard() {
             <AdminAnalyticsPage />
           </div>
         )}
-
       </div>
     </AdminLayout>
   );
@@ -1775,28 +1371,26 @@ function RecentShopList({
 
   return (
     <div style={styles.list}>
-      {visibleItems.map(
-        (item, idx) => {
-          const displayText =
-            getDashboardItemText(item) ||
-            "데이터";
+      {visibleItems.map((item, idx) => {
+        const displayText =
+          getDashboardItemText(item) ||
+          "데이터";
 
-          return (
-            <div
-              key={
-                item?._id ||
-                item?.id ||
-                item?.shopId ||
-                displayText ||
-                idx
-              }
-              style={styles.item}
-            >
-              {displayText}
-            </div>
-          );
-        }
-      )}
+        return (
+          <div
+            key={
+              item?._id ||
+              item?.id ||
+              item?.shopId ||
+              displayText ||
+              idx
+            }
+            style={styles.item}
+          >
+            {displayText}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1826,36 +1420,30 @@ function List({
 
   return (
     <div style={styles.list}>
-      {visibleItems.map(
-        (item, idx) => {
-          const displayText =
-            getDashboardItemText(item) ||
-            "데이터";
+      {visibleItems.map((item, idx) => {
+        const displayText =
+          getDashboardItemText(item) ||
+          "데이터";
 
-          if (
-            isHiddenDashboardName(
-              displayText
-            )
-          ) {
-            return null;
-          }
-
-          return (
-            <div
-              key={
-                item?._id ||
-                item?.id ||
-                item?.shopId ||
-                displayText ||
-                idx
-              }
-              style={styles.item}
-            >
-              {displayText}
-            </div>
-          );
+        if (isHiddenDashboardName(displayText)) {
+          return null;
         }
-      )}
+
+        return (
+          <div
+            key={
+              item?._id ||
+              item?.id ||
+              item?.shopId ||
+              displayText ||
+              idx
+            }
+            style={styles.item}
+          >
+            {displayText}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1866,8 +1454,7 @@ const styles = {
     background: "#000",
     color: "#d4af37",
     minHeight: "100vh",
-    boxSizing:
-      "border-box",
+    boxSizing: "border-box",
   },
 
   title: {
@@ -1884,8 +1471,7 @@ const styles = {
   tabBtn: {
     padding: "12px 16px",
     borderRadius: 10,
-    border:
-      "1px solid #333",
+    border: "1px solid #333",
     cursor: "pointer",
     fontWeight: 700,
   },
@@ -1902,8 +1488,7 @@ const styles = {
     background: "#111",
     padding: 15,
     borderRadius: 8,
-    border:
-      "1px solid #333",
+    border: "1px solid #333",
   },
 
   cardTitle: {
@@ -1930,8 +1515,7 @@ const styles = {
     padding: 10,
     background: "#111",
     borderRadius: 6,
-    border:
-      "1px solid #333",
+    border: "1px solid #333",
   },
 
   adminSection: {
@@ -1939,8 +1523,7 @@ const styles = {
     marginBottom: 20,
     padding: 20,
     background: "#0b0b0b",
-    border:
-      "1px solid #222",
+    border: "1px solid #222",
     borderRadius: 12,
   },
 

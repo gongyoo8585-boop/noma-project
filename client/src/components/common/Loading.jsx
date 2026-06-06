@@ -21,9 +21,6 @@ function Loading({
 }) {
   const safeMessage = message || "로딩중...";
 
-  /* =========================
-  🔥 최소 추가: SSR/document 방어
-  ========================= */
   const canUseDOM =
     typeof window !== "undefined" &&
     typeof document !== "undefined";
@@ -34,7 +31,6 @@ function Loading({
 
   return (
     <>
-      {/* 🔥 기존 유지 + SSR 안정화 */}
       {!hasStyle && (
         <style id="loading-spin-style">
           {`
@@ -85,9 +81,6 @@ function Loading({
   );
 }
 
-/* =========================
-🔥 STYLE
-========================= */
 const styles = {
   fullPage: {
     minHeight: "100vh",

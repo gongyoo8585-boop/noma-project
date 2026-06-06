@@ -53,11 +53,12 @@ function EmptyState({
           typeof onAction ===
             "function" && (
             <button
-              onClick={(e) => {
+              onClick={(event) => {
+                const button =
+                  event.currentTarget;
+
                 try {
-                  /* 🔥 최소 추가:
-                  중복 클릭 방어 */
-                  e.currentTarget.disabled = true;
+                  button.disabled = true;
 
                   Promise.resolve(
                     onAction()
@@ -69,15 +70,15 @@ function EmptyState({
                       );
                     })
                     .finally(() => {
-                      e.currentTarget.disabled = false;
+                      button.disabled = false;
                     });
-                } catch (e) {
+                } catch (err) {
                   console.error(
                     "EmptyState action error:",
-                    e
+                    err
                   );
 
-                  e.currentTarget.disabled = false;
+                  button.disabled = false;
                 }
               }}
               style={styles.btn}
@@ -90,10 +91,6 @@ function EmptyState({
     </div>
   );
 }
-
-/* =========================
-🔥 STYLE
-========================= */
 
 const styles = {
   fullPage: {

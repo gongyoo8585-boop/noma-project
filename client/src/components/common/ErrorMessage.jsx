@@ -41,11 +41,12 @@ function ErrorMessage({
 
         {typeof onRetry === "function" && (
           <button
-            onClick={(e) => {
+            onClick={(event) => {
+              const button =
+                event.currentTarget;
+
               try {
-                /* 🔥 최소 추가:
-                연속 클릭 방어 */
-                e.currentTarget.disabled = true;
+                button.disabled = true;
 
                 Promise.resolve(onRetry())
                   .catch((err) => {
@@ -55,15 +56,15 @@ function ErrorMessage({
                     );
                   })
                   .finally(() => {
-                    e.currentTarget.disabled = false;
+                    button.disabled = false;
                   });
-              } catch (e) {
+              } catch (err) {
                 console.error(
                   "Retry Error:",
-                  e
+                  err
                 );
 
-                e.currentTarget.disabled = false;
+                button.disabled = false;
               }
             }}
             style={styles.btn}
@@ -76,10 +77,6 @@ function ErrorMessage({
     </div>
   );
 }
-
-/* =========================
-🔥 STYLE
-========================= */
 
 const styles = {
   fullPage: {

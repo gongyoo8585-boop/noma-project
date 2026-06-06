@@ -76,7 +76,7 @@ mongoose.connection.on("error", (error) => {
   console.error("❌ DB CONNECTION ERROR:", error?.message || error);
 });
 
-const PROJECT_ROOT = path.resolve(__dirname, "..");
+const PROJECT_ROOT = path.resolve(__dirname);
 
 function resolveExistingModule(relativePath) {
   const basePath = path.resolve(PROJECT_ROOT, relativePath);
@@ -127,11 +127,27 @@ function normalizeRouteModule(mod, label = "route") {
       mod.routes,
       mod.route,
       mod.app,
+      mod.authRouter,
+      mod.adminRouter,
+      mod.userRouter,
+      mod.shopRouter,
+      mod.reservationRouter,
+      mod.reviewRouter,
+      mod.paymentRouter,
+      mod.paymentVerifyRouter,
+      mod.notificationRouter,
+      mod.analyticsRouter,
     ];
 
     for (const candidate of candidates) {
       if (typeof candidate === "function") {
         return candidate;
+      }
+    }
+
+    for (const value of Object.values(mod)) {
+      if (typeof value === "function") {
+        return value;
       }
     }
   }
@@ -1013,17 +1029,21 @@ app.post("/api/auth/login", async (req, res) => {
   applicationRoutesMounted = true;
 }
 
-io.on("connection", (socket) => {
-  console.log("🔌 SOCKET CONNECT:", socket.id);
+if (!global.__NORA_SERVER_SOCKET_BOUND__) {
+  global.__NORA_SERVER_SOCKET_BOUND__ = true;
 
-  socket.on("ping", () => {
-    socket.emit("pong");
-  });
+  io.on("connection", (socket) => {
+    console.log("🔌 SOCKET CONNECT:", socket.id);
 
-  socket.on("disconnect", () => {
-    console.log("❌ SOCKET DISCONNECT:", socket.id);
+    socket.on("ping", () => {
+      socket.emit("pong");
+    });
+
+    socket.on("disconnect", () => {
+      console.log("❌ SOCKET DISCONNECT:", socket.id);
+    });
   });
-});
+}
 
 let finalHandlersMounted = false;
 
@@ -1054,10 +1074,12 @@ function mountFinalHandlers() {
 let isServerListening = false;
 
 function startServer() {
-  if (isServerListening) {
+  if (isServerListening || global.__NORA_ROOT_SERVER_LISTENING__) {
     console.warn("⚠️ SERVER ALREADY LISTENING");
     return;
   }
+
+  global.__NORA_ROOT_SERVER_LISTENING__ = true;
 
   server.once("error", (error) => {
     if (error.code === "EADDRINUSE") {
@@ -1095,16 +1117,31 @@ async function start() {
   } catch (e) {
     console.error("❌ START ERROR:", e);
 
-    loadApplicationModules({ includeDbRoutes: false });
-    mountApplicationRoutes();
-    mountFinalHandlers();
-    startServer();
+    if (!applicationModulesLoaded) {
+      loadApplicationModules({ includeDbRoutes: false });
+    }
 
-    console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
+    if (!applicationRoutesMounted) {
+      mountApplicationRoutes();
+    }
+
+    if (!finalHandlersMounted) {
+      mountFinalHandlers();
+    }
+
+    if (!isServerListening) {
+      startServer();
+      console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
+    }
   }
 }
 
-if (require.main === module) {
+if (
+  require.main === module &&
+  !global.__NORA_SERVER_BOOTSTRAPPED__
+) {
+  global.__NORA_SERVER_BOOTSTRAPPED__ = true;
+
   start();
 }
 

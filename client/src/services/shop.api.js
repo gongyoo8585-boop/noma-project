@@ -1,3 +1,5 @@
+"use strict";
+
 function normalizeShopApiResponse(response) {
   const payload =
     response?.data ||
@@ -36,8 +38,6 @@ function normalizeShopApiResponse(response) {
     total: Number(payload?.total ?? shops.length),
   };
 }
-
-"use strict";
 
 /**
  * =====================================================
@@ -3455,4 +3455,4 @@ export const shopApi = {
     ),
 };
 
-export default shopApi;
+export default shopApi; 
