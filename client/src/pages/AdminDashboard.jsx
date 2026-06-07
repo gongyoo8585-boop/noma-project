@@ -2,6 +2,7 @@
 
 import React, {
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -63,6 +64,26 @@ const EMPTY_DASHBOARD_DATA =
 const DASHBOARD_CACHE_KEY =
   "nora_admin_dashboard_cache";
 
+const DASHBOARD_REQUEST_CACHE_MS =
+  5000;
+
+const DASHBOARD_SYNC_DEBOUNCE_MS =
+  0;
+
+const DASHBOARD_LOAD_RELEASE_MS =
+  800;
+
+const dashboardRequestCache =
+  new Map();
+
+const shopSnapshotRequestCache =
+  new Map();
+
+function clearDashboardRequestCaches() {
+  dashboardRequestCache.clear();
+  shopSnapshotRequestCache.clear();
+}
+
 function getDashboardCacheKey(category) {
   const normalizedCategory =
     normalizeDashboardCategory(category) ||
@@ -117,15 +138,21 @@ function setCachedDashboardData(value, category) {
       return;
     }
 
+    const normalizedCategory =
+      normalizeDashboardCategory(category) ||
+      getDashboardCategory();
+
     window.localStorage.setItem(
-      getDashboardCacheKey(category),
+      getDashboardCacheKey(normalizedCategory),
       JSON.stringify(value)
     );
 
-    window.localStorage.setItem(
-      DASHBOARD_CACHE_KEY,
-      JSON.stringify(value)
-    );
+    if (!normalizedCategory) {
+      window.localStorage.setItem(
+        DASHBOARD_CACHE_KEY,
+        JSON.stringify(value)
+      );
+    }
   } catch {
     return;
   }
@@ -144,6 +171,17 @@ function toArray(value) {
   return Array.isArray(value)
     ? value
     : [];
+}
+
+function hasDashboardShopData(value) {
+  return (
+    value &&
+    value.summary &&
+    (
+      toNumber(value.summary.totalShops, 0) > 0 ||
+      toArray(value.recent?.shops).length > 0
+    )
+  );
 }
 
 function normalizeDashboardCategory(value) {
@@ -258,7 +296,6 @@ function createDashboardUrl(category) {
       adminCategory:
         normalizeDashboardCategory(category) ||
         "massage",
-      _t: String(Date.now()),
     });
 
   return `${API_BASE}/admin/dashboard?${query.toString()}`;
@@ -303,103 +340,33 @@ function parseStoredJson(value) {
   }
 }
 
-function getDashboardShopStorageKeys(category) {
-  const normalizedCategory =
-    normalizeDashboardCategory(category) ||
-    "massage";
-
-  return Array.from(
-    new Set([
-      `noma_admin_shops_${normalizedCategory}`,
-      `noma_local_shops_${normalizedCategory}`,
-      `noma_admin_shop_backup_${normalizedCategory}`,
-      `nora_admin_shops_${normalizedCategory}`,
-      `nora_local_shops_${normalizedCategory}`,
-      `nora_admin_shop_backup_${normalizedCategory}`,
-      "noma_admin_shops",
-      "noma_local_shops",
-      "noma_admin_shop_backup",
-      "nora_admin_shops",
-      "nora_local_shops",
-      "nora_admin_shop_backup",
-    ])
-  );
-}
-
-function extractDashboardShopArray(value) {
-  const parsed =
-    typeof value === "string"
-      ? parseStoredJson(value)
-      : value;
-
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  if (
-    parsed &&
-    typeof parsed === "object"
-  ) {
-    return (
-      toArray(parsed.shops).length
-        ? toArray(parsed.shops)
-        : toArray(parsed.items).length
-        ? toArray(parsed.items)
-        : toArray(parsed.list).length
-        ? toArray(parsed.list)
-        : toArray(parsed.data)
-    );
-  }
-
-  return [];
-}
-
-function readDashboardStoredShops(category) {
-  try {
-    if (
-      typeof window === "undefined" ||
-      !window.localStorage
-    ) {
-      return [];
-    }
-
-    const items = [];
-
-    getDashboardShopStorageKeys(category).forEach((key) => {
-      [window.localStorage, window.sessionStorage].forEach((storage) => {
-        if (!storage) {
-          return;
-        }
-
-        extractDashboardShopArray(
-          storage.getItem(key)
-        ).forEach((item) => {
-          if (
-            item &&
-            typeof item === "object"
-          ) {
-            items.push(item);
-          }
-        });
-      });
-    });
-
-    return sanitizeRecentDashboardShops(items);
-  } catch {
-    return [];
-  }
-}
-
 function getShopIdentity(item = {}) {
+  const name = normalizeDeletedShopIdentity(
+    item.name ||
+      item.shopName ||
+      item.title ||
+      ""
+  );
+
+  const address = normalizeDeletedShopIdentity(
+    item.address ||
+      item.roadAddress ||
+      item.fullAddress ||
+      ""
+  );
+
+  const nameAddressKey =
+    name && address
+      ? `name-address:${name}:${address}`
+      : "";
+
   return String(
     item._id ||
       item.id ||
       item.shopId ||
-      item.name ||
-      item.shopName ||
-      item.title ||
-      item.phone ||
-      item.address ||
+      item.uuid ||
+      item.slug ||
+      nameAddressKey ||
       JSON.stringify(item)
   );
 }
@@ -422,6 +389,57 @@ function normalizeDeletedShopIdentity(value) {
     .toLowerCase()
     .replace(/\s/g, "")
     .trim();
+}
+
+function isSafeDashboardDeletedShopIdentityValue(value) {
+  const text =
+    String(value || "").trim();
+
+  if (!text) {
+    return false;
+  }
+
+  if (
+    text.startsWith("name:") ||
+    text.startsWith("phone:") ||
+    text.startsWith("address:") ||
+    text.startsWith("name-address:") ||
+    text.startsWith("nameAddress:") ||
+    text.includes("::")
+  ) {
+    return false;
+  }
+
+  if (/^0\d{1,2}-?\d{3,4}-?\d{4}$/.test(text)) {
+    return false;
+  }
+
+  const plainText =
+    text
+      .replace(/^id:/, "")
+      .replace(/^shopId:/, "")
+      .replace(/^uuid:/, "")
+      .trim();
+
+  if (
+    plainText.startsWith("local-shop-") ||
+    plainText.startsWith("local-noma-") ||
+    plainText.startsWith("local-nora-") ||
+    plainText.startsWith("local-massage-shop-") ||
+    plainText.startsWith("local-karaoke-shop-")
+  ) {
+    return true;
+  }
+
+  if (/^[a-f0-9]{24}$/i.test(plainText)) {
+    return true;
+  }
+
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(plainText)) {
+    return true;
+  }
+
+  return false;
 }
 
 function readDashboardDeletedShopIds(category) {
@@ -455,6 +473,9 @@ function readDashboardDeletedShopIds(category) {
     return Array.from(
       new Set(
         values
+          .filter((item) =>
+            isSafeDashboardDeletedShopIdentityValue(item)
+          )
           .flatMap((item) => [
             String(item || "").trim(),
             normalizeDeletedShopIdentity(item),
@@ -468,25 +489,24 @@ function readDashboardDeletedShopIds(category) {
 }
 
 function getDashboardShopDeleteIdentityValues(item = {}) {
+  const id =
+    String(item?._id || item?.id || "").trim();
+
+  const shopId =
+    String(item?.shopId || "").trim();
+
+  const uuid =
+    String(item?.uuid || "").trim();
+
   return Array.from(
     new Set(
       [
-        item._id,
-        item.id,
-        item.shopId,
-        item.uuid,
-        item.slug,
-        item.name,
-        item.shopName,
-        item.title,
-        item.address,
-        item.roadAddress,
-        item.fullAddress,
-        item.phone,
-        item.tel,
-        item.name && (item.address || item.roadAddress || item.fullAddress)
-          ? `${normalizeDeletedShopIdentity(item.name)}::${normalizeDeletedShopIdentity(item.address || item.roadAddress || item.fullAddress)}`
-          : "",
+        id,
+        id ? `id:${id}` : "",
+        shopId,
+        shopId ? `shopId:${shopId}` : "",
+        uuid,
+        uuid ? `uuid:${uuid}` : "",
       ]
         .flatMap((value) => [
           String(value || "").trim(),
@@ -586,7 +606,7 @@ function isHiddenDashboardShop(item = {}) {
     );
 }
 
-function sanitizeRecentDashboardShops(items) {
+function sanitizeRecentDashboardShops(items, category = "") {
   const uniqueMap =
     new Map();
 
@@ -594,7 +614,7 @@ function sanitizeRecentDashboardShops(items) {
     if (
       item &&
       typeof item === "object" &&
-      !isDeletedShop(item) &&
+      !isDeletedShop(item, category) &&
       !isHiddenDashboardShop(item)
     ) {
       uniqueMap.set(
@@ -626,7 +646,6 @@ function buildAdminShopParams(category) {
     forAdmin: "true",
     fromAdmin: "true",
     management: "true",
-    _t: String(Date.now()),
   };
 }
 
@@ -669,70 +688,148 @@ function normalizeShopSnapshotResponse(response) {
   };
 }
 
-async function fetchShopDashboardSnapshot(category) {
-  try {
-    if (
-      !shopApi ||
-      typeof shopApi.getList !== "function"
-    ) {
-      return {
-        ok: false,
-        totalShops: 0,
-        shops: [],
-      };
-    }
+function getDashboardRequestCacheKey(prefix, category) {
+  return [
+    prefix,
+    normalizeDashboardCategory(category) ||
+      "massage",
+  ].join("|");
+}
 
-    const response =
-      await shopApi.getList(
-        buildAdminShopParams(category)
-      );
+function getCachedRequest(map, key) {
+  const cached =
+    map.get(key);
 
-    const normalized =
-      normalizeShopSnapshotResponse(
-        response
-      );
-
-    const storedShops =
-      readDashboardStoredShops(
-        category
-      );
-
-    const shops =
-      sanitizeRecentDashboardShops([
-        ...storedShops,
-        ...toArray(normalized.shops),
-      ]);
-
-    return {
-      ok: true,
-      totalShops: shops.length,
-      shops,
-    };
-  } catch (e) {
-    const message =
-      String(e?.message || "");
-
-    if (
-      e?.name !== "AbortError" &&
-      !message.toLowerCase().includes("aborted")
-    ) {
-      console.error(
-        "ADMIN SHOP SNAPSHOT ERROR:",
-        e.message
-      );
-    }
-
-    const storedShops =
-      readDashboardStoredShops(
-        category
-      );
-
-    return {
-      ok: storedShops.length > 0,
-      totalShops: storedShops.length,
-      shops: storedShops,
-    };
+  if (
+    cached &&
+    cached.promise &&
+    Date.now() - cached.time <
+      DASHBOARD_REQUEST_CACHE_MS
+  ) {
+    return cached.promise;
   }
+
+  if (cached) {
+    map.delete(key);
+  }
+
+  return null;
+}
+
+function setCachedRequest(map, key, promise) {
+  map.set(key, {
+    promise,
+    time: Date.now(),
+  });
+
+  promise.finally(() => {
+    const cached =
+      map.get(key);
+
+    if (
+      cached &&
+      cached.promise === promise &&
+      Date.now() - cached.time >=
+        DASHBOARD_REQUEST_CACHE_MS
+    ) {
+      map.delete(key);
+    }
+  });
+
+  return promise;
+}
+
+async function fetchShopDashboardSnapshot(category) {
+  const cacheKey =
+    getDashboardRequestCacheKey(
+      "shops",
+      category
+    );
+
+  const cachedRequest =
+    getCachedRequest(
+      shopSnapshotRequestCache,
+      cacheKey
+    );
+
+  if (cachedRequest) {
+    return cachedRequest;
+  }
+
+  const requestPromise =
+    (async () => {
+      try {
+        if (
+          !shopApi ||
+          typeof shopApi.getList !== "function"
+        ) {
+          return {
+            ok: false,
+            totalShops: 0,
+            shops: [],
+          };
+        }
+
+        const response =
+          await shopApi.getList(
+            buildAdminShopParams(category)
+          );
+
+        const normalized =
+          normalizeShopSnapshotResponse(
+            response
+          );
+
+        const storedShops =
+          getDashboardStoredShopItems(
+            category
+          );
+
+        const shops =
+          sanitizeRecentDashboardShops(
+            [
+              ...toArray(normalized.shops),
+              ...toArray(normalized.items),
+              ...toArray(normalized.list),
+              ...toArray(normalized.data),
+              ...storedShops,
+            ],
+            category
+          );
+
+        return {
+          ok: true,
+          totalShops:
+            shops.length,
+          shops,
+        };
+      } catch (e) {
+        const message =
+          String(e?.message || "");
+
+        if (
+          e?.name !== "AbortError" &&
+          !message.toLowerCase().includes("aborted")
+        ) {
+          console.error(
+            "ADMIN SHOP SNAPSHOT ERROR:",
+            e.message
+          );
+        }
+
+        return {
+          ok: false,
+          totalShops: 0,
+          shops: [],
+        };
+      }
+    })();
+
+  return setCachedRequest(
+    shopSnapshotRequestCache,
+    cacheKey,
+    requestPromise
+  );
 }
 
 function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
@@ -742,12 +839,8 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
 
   const snapshotShops =
     sanitizeRecentDashboardShops(
-      toArray(shopSnapshot?.shops)
-    );
-
-  const safeDashboardShops =
-    sanitizeRecentDashboardShops(
-      toArray(safeDashboard?.recent?.shops)
+      toArray(shopSnapshot?.shops),
+      getDashboardCategory()
     );
 
   const hasSnapshot =
@@ -758,7 +851,10 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
   const nextShops =
     hasSnapshot
       ? snapshotShops
-      : safeDashboardShops;
+      : sanitizeRecentDashboardShops(
+          toArray(safeDashboard?.recent?.shops),
+          getDashboardCategory()
+        );
 
   return {
     ...safeDashboard,
@@ -766,12 +862,106 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
       ...EMPTY_DASHBOARD_DATA.summary,
       ...(safeDashboard.summary || {}),
       totalShops:
-        hasSnapshot
-          ? nextShops.length
-          : toNumber(
-              safeDashboard?.summary?.totalShops,
-              nextShops.length
-            ),
+        nextShops.length,
+    },
+    recent: {
+      ...EMPTY_DASHBOARD_DATA.recent,
+      ...(safeDashboard.recent || {}),
+      shops:
+        nextShops,
+    },
+  };
+}
+
+function readDashboardStorageArray(storage, key) {
+  try {
+    if (!storage || !key) {
+      return [];
+    }
+
+    const parsed =
+      parseStoredJson(
+        storage.getItem(key)
+      );
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function getDashboardShopStorageKeys(category) {
+  const normalizedCategory =
+    normalizeDashboardCategory(category) ||
+    getDashboardCategory() ||
+    "massage";
+
+  return Array.from(
+    new Set([
+      `nora_admin_shops_${normalizedCategory}`,
+      `nora_local_shops_${normalizedCategory}`,
+      `nora_admin_shop_backup_${normalizedCategory}`,
+      `noma_admin_shops_${normalizedCategory}`,
+      `noma_local_shops_${normalizedCategory}`,
+      `noma_admin_shop_backup_${normalizedCategory}`,
+      "nora_admin_shops",
+      "nora_local_shops",
+      "nora_admin_shop_backup",
+      "noma_admin_shops",
+      "noma_local_shops",
+      "noma_admin_shop_backup",
+    ])
+  );
+}
+
+function getDashboardStoredShopItems(category) {
+  try {
+    if (
+      typeof window === "undefined" ||
+      !window.localStorage
+    ) {
+      return [];
+    }
+
+    return sanitizeRecentDashboardShops(
+      getDashboardShopStorageKeys(category)
+        .flatMap((key) => [
+          ...readDashboardStorageArray(
+            window.localStorage,
+            key
+          ),
+          ...readDashboardStorageArray(
+            window.sessionStorage,
+            key
+          ),
+        ]),
+      category
+    );
+  } catch {
+    return [];
+  }
+}
+
+function buildDashboardWithShops(dashboardData, shops, category) {
+  const safeDashboard =
+    dashboardData ||
+    EMPTY_DASHBOARD_DATA;
+
+  const nextShops =
+    sanitizeRecentDashboardShops(
+      shops,
+      category
+    );
+
+  return {
+    ...safeDashboard,
+    summary: {
+      ...EMPTY_DASHBOARD_DATA.summary,
+      ...(safeDashboard.summary || {}),
+      totalShops:
+        nextShops.length,
     },
     recent: {
       ...EMPTY_DASHBOARD_DATA.recent,
@@ -783,125 +973,151 @@ function mergeShopSnapshotIntoDashboard(dashboardData, shopSnapshot) {
 }
 
 async function fetchDashboard(category) {
-  let timeout = null;
-
-  try {
-    const token =
-      getAdminToken();
-
-    if (!token) {
-      return {
-        authRequired: true,
-      };
-    }
-
-    const headers = {
-      "Content-Type":
-        "application/json",
-
-      Authorization:
-        `Bearer ${token}`,
-    };
-
-    const controller =
-      new AbortController();
-
-    timeout =
-      setTimeout(() => {
-        controller.abort();
-      }, 500);
-
-    const res = await fetch(
-      createDashboardUrl(category),
-      {
-        method: "GET",
-        headers,
-        credentials:
-          "include",
-        cache: "no-store",
-        signal:
-          controller.signal,
-      }
+  const cacheKey =
+    getDashboardRequestCacheKey(
+      "dashboard",
+      category
     );
 
-    if (timeout) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-
-    let data = {};
-
-    try {
-      data =
-        await res.json();
-    } catch {
-      data = {};
-    }
-
-    if (
-      res.status === 401 ||
-      data?.msg ===
-        "AUTH_TOKEN_REQUIRED" ||
-      data?.message ===
-        "인증 토큰 없음" ||
-      data?.msg ===
-        "INVALID_TOKEN"
-    ) {
-      return {
-        authRequired: true,
-      };
-    }
-
-    if (
-      !res.ok ||
-      data.ok === false
-    ) {
-      if (
-        res.status >= 500 ||
-        res.status === 404
-      ) {
-        return EMPTY_DASHBOARD_DATA;
-      }
-
-      throw new Error(
-        data.msg ||
-          data.message ||
-          "DASHBOARD_ERROR"
-      );
-    }
-
-    return data;
-  } catch (e) {
-    if (timeout) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-
-    const message =
-      String(e?.message || "");
-
-    if (
-      e?.name === "AbortError" ||
-      message.toLowerCase().includes("aborted")
-    ) {
-      return EMPTY_DASHBOARD_DATA;
-    }
-
-    console.error(
-      "ADMIN DASHBOARD FETCH ERROR:",
-      e.message
+  const cachedRequest =
+    getCachedRequest(
+      dashboardRequestCache,
+      cacheKey
     );
 
-    const fallbackSnapshot =
-      await fetchShopDashboardSnapshot(
-        category
-      );
-
-    return mergeShopSnapshotIntoDashboard(
-      EMPTY_DASHBOARD_DATA,
-      fallbackSnapshot
-    );
+  if (cachedRequest) {
+    return cachedRequest;
   }
+
+  const requestPromise =
+    (async () => {
+      let timeout = null;
+
+      try {
+        const token =
+          getAdminToken();
+
+        if (!token) {
+          return {
+            authRequired: true,
+          };
+        }
+
+        const headers = {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${token}`,
+        };
+
+        const controller =
+          new AbortController();
+
+        timeout =
+          setTimeout(() => {
+            controller.abort();
+          }, 1500);
+
+        const res = await fetch(
+          createDashboardUrl(category),
+          {
+            method: "GET",
+            headers,
+            credentials:
+              "include",
+            cache: "default",
+            signal:
+              controller.signal,
+          }
+        );
+
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+
+        let data = {};
+
+        try {
+          data =
+            await res.json();
+        } catch {
+          data = {};
+        }
+
+        if (
+          res.status === 401 ||
+          data?.msg ===
+            "AUTH_TOKEN_REQUIRED" ||
+          data?.message ===
+            "인증 토큰 없음" ||
+          data?.msg ===
+            "INVALID_TOKEN"
+        ) {
+          return {
+            authRequired: true,
+          };
+        }
+
+        if (
+          !res.ok ||
+          data.ok === false
+        ) {
+          if (
+            res.status >= 500 ||
+            res.status === 404 ||
+            res.status === 429
+          ) {
+            return EMPTY_DASHBOARD_DATA;
+          }
+
+          throw new Error(
+            data.msg ||
+              data.message ||
+              "DASHBOARD_ERROR"
+          );
+        }
+
+        return data;
+      } catch (e) {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+
+        const message =
+          String(e?.message || "");
+
+        if (
+          e?.name === "AbortError" ||
+          message.toLowerCase().includes("aborted")
+        ) {
+          return EMPTY_DASHBOARD_DATA;
+        }
+
+        console.error(
+          "ADMIN DASHBOARD FETCH ERROR:",
+          e.message
+        );
+
+        const fallbackSnapshot =
+          await fetchShopDashboardSnapshot(
+            category
+          );
+
+        return mergeShopSnapshotIntoDashboard(
+          EMPTY_DASHBOARD_DATA,
+          fallbackSnapshot
+        );
+      }
+    })();
+
+  return setCachedRequest(
+    dashboardRequestCache,
+    cacheKey,
+    requestPromise
+  );
 }
 
 function normalizeDashboardResponse(response, category) {
@@ -933,21 +1149,12 @@ function normalizeDashboardResponse(response, category) {
           normalized.data?.shops ||
           normalized.data?.items ||
           normalized.data?.list
-      )
+      ),
+      category
     );
 
   const effectiveTotalShops =
-    toNumber(
-      summary.totalShops ??
-        stats.totalShops ??
-        stats.shops ??
-        normalized.totalShops ??
-        normalized.shopsCount ??
-        normalized.shopCount ??
-        normalized.total ??
-        normalized.count,
-      serverRecentShops.length
-    );
+    serverRecentShops.length;
 
   return {
     summary: {
@@ -1009,6 +1216,15 @@ function normalizeDashboardResponse(response, category) {
 }
 
 function AdminDashboard() {
+  const dashboardLoadKeyRef =
+    useRef("");
+
+  const dashboardLoadRunningRef =
+    useRef(false);
+
+  const dashboardSyncTimerRef =
+    useRef(null);
+
   const [data, setData] =
     useState(() =>
       getCachedDashboardData()
@@ -1026,7 +1242,129 @@ function AdminDashboard() {
   const [activeTab, setActiveTab] =
     useState("dashboard");
 
+  const dashboardLocationKey =
+    typeof window !== "undefined"
+      ? [
+          window.location.pathname || "",
+          window.location.search || "",
+          getDashboardCategory(),
+        ].join("|")
+      : "server";
+
+  const applyDashboardShopsNow = (shops, category = getDashboardCategory()) => {
+    const nextShops =
+      sanitizeRecentDashboardShops(
+        shops,
+        category
+      );
+
+    setData((prevData) => {
+      const safeData =
+        prevData ||
+        getCachedDashboardData(category) ||
+        EMPTY_DASHBOARD_DATA;
+
+      const currentShops =
+        sanitizeRecentDashboardShops(
+          safeData?.recent?.shops,
+          category
+        );
+
+      const finalShops =
+        nextShops.length > 0 ||
+        currentShops.length === 0
+          ? nextShops
+          : currentShops;
+
+      const nextDashboard =
+        buildDashboardWithShops(
+          safeData,
+          finalShops,
+          category
+        );
+
+      setCachedDashboardData(
+        nextDashboard,
+        category
+      );
+
+      return nextDashboard;
+    });
+
+    setInitialized(true);
+    setLoading(false);
+    setError("");
+
+    return nextShops.length;
+  };
+
+  const refreshDashboardShopsNow = async () => {
+    const dashboardCategory =
+      getDashboardCategory();
+
+    clearDashboardRequestCaches();
+
+    const storedShops =
+      getDashboardStoredShopItems(
+        dashboardCategory
+      );
+
+    if (storedShops.length) {
+      applyDashboardShopsNow(
+        storedShops,
+        dashboardCategory
+      );
+    }
+
+    try {
+      const shopSnapshot =
+        await fetchShopDashboardSnapshot(
+          dashboardCategory
+        );
+
+      if (
+        shopSnapshot?.ok === true &&
+        Array.isArray(shopSnapshot.shops)
+      ) {
+        applyDashboardShopsNow(
+          shopSnapshot.shops,
+          dashboardCategory
+        );
+      }
+    } catch (e) {
+      const message =
+        String(e?.message || "");
+
+      if (
+        e?.name !== "AbortError" &&
+        !message.toLowerCase().includes("aborted")
+      ) {
+        console.error(
+          "ADMIN DASHBOARD IMMEDIATE SHOP SYNC ERROR:",
+          e.message
+        );
+      }
+    }
+  };
+
+  const openDashboardTab = () => {
+    setActiveTab(
+      "dashboard"
+    );
+
+    refreshDashboardShopsNow();
+  };
+
   const load = async () => {
+    if (
+      dashboardLoadRunningRef.current
+    ) {
+      return;
+    }
+
+    dashboardLoadRunningRef.current =
+      true;
+
     try {
       setError("");
 
@@ -1034,15 +1372,28 @@ function AdminDashboard() {
         getDashboardCategory();
 
       const cachedDashboard =
-        getCachedDashboardData(dashboardCategory);
+        getCachedDashboardData(
+          dashboardCategory
+        );
 
-      setData(
-        cachedDashboard
-      );
+      if (
+        hasDashboardShopData(
+          cachedDashboard
+        ) ||
+        initialized
+      ) {
+        setData(
+          cachedDashboard
+        );
+      }
 
       setInitialized(true);
 
-      setLoading(false);
+      setLoading(
+        !hasDashboardShopData(
+          cachedDashboard
+        )
+      );
 
       fetchShopDashboardSnapshot(
         dashboardCategory
@@ -1050,13 +1401,17 @@ function AdminDashboard() {
         .then((shopSnapshot) => {
           const shopDashboard =
             mergeShopSnapshotIntoDashboard(
-              getCachedDashboardData(),
+              getCachedDashboardData(
+                dashboardCategory
+              ),
               shopSnapshot
             );
 
           setData(
             shopDashboard
           );
+
+          setLoading(false);
 
           setCachedDashboardData(
             shopDashboard,
@@ -1101,6 +1456,8 @@ function AdminDashboard() {
             mergedDashboard
           );
 
+          setLoading(false);
+
           setCachedDashboardData(
             mergedDashboard,
             dashboardCategory
@@ -1119,8 +1476,22 @@ function AdminDashboard() {
               e.message
             );
           }
+        })
+        .finally(() => {
+          if (typeof window !== "undefined") {
+            window.setTimeout(() => {
+              dashboardLoadRunningRef.current =
+                false;
+            }, DASHBOARD_LOAD_RELEASE_MS);
+          } else {
+            dashboardLoadRunningRef.current =
+              false;
+          }
         });
     } catch (e) {
+      dashboardLoadRunningRef.current =
+        false;
+
       const message =
         String(e?.message || "");
 
@@ -1135,7 +1506,9 @@ function AdminDashboard() {
       }
 
       setData(
-        getCachedDashboardData()
+        getCachedDashboardData(
+          getDashboardCategory()
+        )
       );
 
       setInitialized(true);
@@ -1145,12 +1518,19 @@ function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (initialized) {
+    if (
+      dashboardLoadKeyRef.current ===
+        dashboardLocationKey &&
+      initialized
+    ) {
       return;
     }
 
+    dashboardLoadKeyRef.current =
+      dashboardLocationKey;
+
     load();
-  }, [initialized]);
+  }, [initialized, dashboardLocationKey]);
 
   useEffect(() => {
     if (
@@ -1159,8 +1539,156 @@ function AdminDashboard() {
       return undefined;
     }
 
-    const handleDashboardShopSync = () => {
-      load();
+    const getEventCategory = (event) => {
+      const detail =
+        event?.detail ||
+        {};
+
+      return (
+        normalizeDashboardCategory(
+          detail.category
+        ) ||
+        normalizeDashboardCategory(
+          detail.shopCategory
+        ) ||
+        normalizeDashboardCategory(
+          detail.serviceType
+        ) ||
+        normalizeDashboardCategory(
+          detail.businessType
+        ) ||
+        normalizeDashboardCategory(
+          detail.adminCategory
+        ) ||
+        getDashboardCategory()
+      );
+    };
+
+    const getEventShops = (event) => {
+      const detail =
+        event?.detail ||
+        {};
+
+      if (Array.isArray(detail.shops)) {
+        return detail.shops;
+      }
+
+      if (Array.isArray(detail.items)) {
+        return detail.items;
+      }
+
+      if (Array.isArray(detail.list)) {
+        return detail.list;
+      }
+
+      if (Array.isArray(detail.data)) {
+        return detail.data;
+      }
+
+      return null;
+    };
+
+    const applyDashboardShopEvent = (event) => {
+      const eventShops =
+        getEventShops(event);
+
+      if (!Array.isArray(eventShops)) {
+        const fallbackShops =
+          getDashboardStoredShopItems(
+            getDashboardCategory()
+          );
+
+        if (!fallbackShops.length) {
+          return false;
+        }
+
+        applyDashboardShopsNow(
+          fallbackShops,
+          getDashboardCategory()
+        );
+
+        return true;
+      }
+
+      const currentCategory =
+        getDashboardCategory();
+
+      const eventCategory =
+        getEventCategory(event);
+
+      if (
+        eventCategory &&
+        currentCategory &&
+        eventCategory !== currentCategory
+      ) {
+        return false;
+      }
+
+      applyDashboardShopsNow(
+        eventShops,
+        currentCategory
+      );
+
+      return true;
+    };
+
+    const scheduleDashboardShopSync = (delay = DASHBOARD_SYNC_DEBOUNCE_MS) => {
+      clearDashboardRequestCaches();
+
+      if (dashboardSyncTimerRef.current) {
+        window.clearTimeout(
+          dashboardSyncTimerRef.current
+        );
+      }
+
+      dashboardSyncTimerRef.current =
+        window.setTimeout(() => {
+          dashboardSyncTimerRef.current =
+            null;
+
+          refreshDashboardShopsNow();
+        }, delay);
+    };
+
+    const handleDashboardShopSync = (event) => {
+      const applied =
+        applyDashboardShopEvent(event);
+
+      scheduleDashboardShopSync(
+        applied
+          ? 0
+          : 50
+      );
+    };
+
+    const handleDashboardStorageSync = (event) => {
+      const key =
+        String(event?.key || "");
+
+      if (
+        !key ||
+        (
+          !key.includes("shop") &&
+          !key.includes("deleted") &&
+          !key.includes("dashboard")
+        )
+      ) {
+        return;
+      }
+
+      const storedShops =
+        getDashboardStoredShopItems(
+          getDashboardCategory()
+        );
+
+      if (storedShops.length) {
+        applyDashboardShopsNow(
+          storedShops,
+          getDashboardCategory()
+        );
+      }
+
+      scheduleDashboardShopSync(50);
     };
 
     window.addEventListener(
@@ -1175,10 +1703,16 @@ function AdminDashboard() {
 
     window.addEventListener(
       "storage",
-      handleDashboardShopSync
+      handleDashboardStorageSync
     );
 
     return () => {
+      if (dashboardSyncTimerRef.current) {
+        window.clearTimeout(
+          dashboardSyncTimerRef.current
+        );
+      }
+
       window.removeEventListener(
         "shops-updated",
         handleDashboardShopSync
@@ -1191,10 +1725,20 @@ function AdminDashboard() {
 
       window.removeEventListener(
         "storage",
-        handleDashboardShopSync
+        handleDashboardStorageSync
       );
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      activeTab !== "dashboard"
+    ) {
+      return;
+    }
+
+    refreshDashboardShopsNow();
+  }, [activeTab, dashboardLocationKey]);
 
   if (loading) {
     return (
@@ -1226,7 +1770,8 @@ function AdminDashboard() {
   const safeRecent = {
     shops:
       sanitizeRecentDashboardShops(
-        recent?.shops
+        recent?.shops,
+        getDashboardCategory()
       ),
     users:
       recent?.users || [],
@@ -1238,10 +1783,7 @@ function AdminDashboard() {
   const safeSummary = {
     ...summary,
     totalShops:
-      toNumber(
-        summary.totalShops,
-        0
-      ),
+      safeRecent.shops.length,
   };
 
   return (
@@ -1256,11 +1798,7 @@ function AdminDashboard() {
 
           <button
             type="button"
-            onClick={() =>
-              setActiveTab(
-                "dashboard"
-              )
-            }
+            onClick={openDashboardTab}
             style={{
               ...styles.tabBtn,
               background:
@@ -1495,6 +2033,9 @@ function AdminDashboard() {
                 items={
                   safeRecent.shops
                 }
+                category={
+                  getDashboardCategory()
+                }
               />
             </div>
 
@@ -1505,6 +2046,9 @@ function AdminDashboard() {
                 items={
                   safeRecent.users
                 }
+                category={
+                  getDashboardCategory()
+                }
               />
             </div>
 
@@ -1514,6 +2058,9 @@ function AdminDashboard() {
               <List
                 items={
                   safeRecent.reservations
+                }
+                category={
+                  getDashboardCategory()
                 }
               />
             </div>
@@ -1621,11 +2168,12 @@ function Card({
 
 function List({
   items,
+  category = "",
 }) {
   const visibleItems =
     toArray(items).filter(
       (item) =>
-        !isDeletedShop(item) &&
+        !isDeletedShop(item, category) &&
         !isHiddenDashboardShop(item)
     );
 

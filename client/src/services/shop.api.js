@@ -203,8 +203,8 @@ const LOCAL_SHOP_STORAGE_KEY = "nora_local_shops";
 const LOCAL_ADMIN_SHOP_STORAGE_KEY = "nora_admin_shops";
 const LOCAL_SHOP_IMAGE_BANK_KEY = "nora_admin_shop_image_bank";
 const DELETED_SHOP_STORAGE_KEY = "nora_deleted_shop_ids";
-const MUTATION_TIMEOUT_MS = 5000;
-const SHOP_QUERY_TIMEOUT_MS = 2000;
+const MUTATION_TIMEOUT_MS = 3000;
+const SHOP_QUERY_TIMEOUT_MS = 3000;
 const MAX_STORED_IMAGE_LENGTH = Number.POSITIVE_INFINITY;
 const MAX_STORED_SHOPS = 80;
 
@@ -237,6 +237,128 @@ const FALLBACK_STATS = {
 let AUTH_ALERT_LOCK = false;
 let AUTH_REDIRECT_LOCK = false;
 let LOCAL_SHOP_MEMORY = [];
+let SHOP_EVENT_TIMER = null;
+let SHOP_EVENT_KEY = "";
+
+const SHOP_EVENT_THROTTLE_MS = 800;
+const SHOP_GET_CACHE_TTL_MS = 5000;
+const SHOP_REQUEST_CACHE_TTL_MS = 5000;
+const SHOP_LIST_IN_FLIGHT = new Map();
+const SHOP_LIST_CACHE = new Map();
+const SHOP_REQUEST_IN_FLIGHT = new Map();
+const SHOP_REQUEST_CACHE = new Map();
+
+function getStableObjectKey(value = {}) {
+  try {
+    return JSON.stringify(
+      Object.keys(value || {})
+        .sort()
+        .reduce((acc, key) => {
+          const item = value[key];
+
+          if (
+            item !== undefined &&
+            item !== null &&
+            item !== "" &&
+            key !== "_t" &&
+            key !== "cacheBust" &&
+            key !== "timestamp"
+          ) {
+            acc[key] = item;
+          }
+
+          return acc;
+        }, {})
+    );
+  } catch (e) {
+    return String(Date.now());
+  }
+}
+
+function getStableRequestCacheKey(url = "", options = {}) {
+  try {
+    const method = String(options?.method || "GET").toUpperCase();
+    const [path, queryText = ""] = String(url || "").split("?");
+    const query = new URLSearchParams(queryText);
+
+    ["_t", "cacheBust", "timestamp"].forEach((key) => {
+      query.delete(key);
+    });
+
+    const normalizedQuery = Array.from(query.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${key}=${value}`)
+      .join("&");
+
+    return `${method}:${path}${normalizedQuery ? `?${normalizedQuery}` : ""}:${getStableObjectKey(options?.categoryParams || {})}`;
+  } catch (e) {
+    return `${String(options?.method || "GET").toUpperCase()}:${String(url || "")}`;
+  }
+}
+
+function getCachedMapValue(map, key, ttl) {
+  const cached = map.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - Number(cached.time || 0) > ttl) {
+    map.delete(key);
+    return null;
+  }
+
+  return cached.value;
+}
+
+function setCachedMapValue(map, key, value) {
+  map.set(key, {
+    time: Date.now(),
+    value,
+  });
+}
+
+function cleanupLimitedMap(map, maxSize = 30) {
+  if (!map || map.size <= maxSize) {
+    return;
+  }
+
+  Array.from(map.keys())
+    .slice(0, Math.max(0, map.size - maxSize))
+    .forEach((key) => map.delete(key));
+}
+
+function clearShopApiCaches() {
+  try {
+    SHOP_LIST_CACHE.clear();
+    SHOP_REQUEST_CACHE.clear();
+    SHOP_LIST_IN_FLIGHT.clear();
+    SHOP_REQUEST_IN_FLIGHT.clear();
+    SHOP_EVENT_KEY = "";
+  } catch (e) {
+    console.warn("SHOP API CACHE CLEAR ERROR:", e.message);
+  }
+}
+
+function isShopApiDebugEnabled() {
+  try {
+    return (
+      typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      import.meta.env.DEV === true
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function logShopApiDebug(...args) {
+  if (!isShopApiDebugEnabled()) {
+    return;
+  }
+
+  console.log(...args);
+}
 
 function normalizeTextKey(value) {
   return String(value || "")
@@ -738,46 +860,12 @@ function hasExplicitImageArrayPayload(payload = {}) {
   ].some((key) => Array.isArray(payload[key]));
 }
 
-function shouldReplaceShopImages(payload = {}, normalizedPayload = {}) {
+function shouldReplaceShopImages(payload = {}) {
   if (!payload || typeof payload !== "object") {
     return false;
   }
 
-  if (!hasExplicitImageArrayPayload(payload)) {
-    return false;
-  }
-
-  const images = collectImages(normalizedPayload || payload, {
-    allowDataImage: true,
-    allowBlob: false,
-    maxLength: MAX_STORED_IMAGE_LENGTH,
-  });
-
-  return true || images.length >= 0;
-}
-
-function isBase64Image(value) {
-  const text = normalizeImageValue(value);
-  return text.startsWith("data:image/") && text.includes(";base64,");
-}
-
-function isLargeLocalImage(value) {
-  const text = normalizeImageValue(value);
-
-  if (!isBase64Image(text)) {
-    return false;
-  }
-
-  if (!Number.isFinite(MAX_STORED_IMAGE_LENGTH)) {
-    return false;
-  }
-
-  return text.length > MAX_STORED_IMAGE_LENGTH;
-}
-
-function isNetworkUnsafeImage(value) {
-  const text = String(value || "").trim();
-  return text.startsWith("blob:");
+  return hasExplicitImageArrayPayload(payload);
 }
 
 function getShopIdentityKeys(shop = {}) {
@@ -1106,23 +1194,50 @@ function mergeShopArrays(items = []) {
   const map = new Map();
   const aliasMap = new Map();
 
+  const isTemporaryId = (value) => {
+    const text = String(value || "").trim().toLowerCase();
+
+    return (
+      text.startsWith("local-") ||
+      text.startsWith("local_shop") ||
+      text.startsWith("local-shop") ||
+      text.startsWith("temp-") ||
+      text.startsWith("temporary-")
+    );
+  };
+
   const getPrimaryKey = (shop) => {
     const keys = getShopIdentityKeys(shop);
 
-    return keys.id
-      ? `id:${keys.id}`
-      : keys.nameAddressKey || keys.phoneKey || keys.nameKey || `local:${Date.now()}:${Math.random()}`;
+    if (keys.id && !isTemporaryId(keys.id)) {
+      return `id:${keys.id}`;
+    }
+
+    return (
+      keys.nameAddressKey ||
+      keys.phoneKey ||
+      keys.nameKey ||
+      (keys.id ? `id:${keys.id}` : "") ||
+      `local:${Date.now()}:${Math.random()}`
+    );
   };
 
   const getAliases = (shop) => {
     const keys = getShopIdentityKeys(shop);
-
-    return [
-      keys.id ? `id:${keys.id}` : "",
+    const idKey = keys.id ? `id:${keys.id}` : "";
+    const semanticKeys = [
       keys.nameAddressKey,
       keys.phoneKey,
       keys.nameKey,
     ].filter(Boolean);
+
+    return Array.from(
+      new Set(
+        isTemporaryId(keys.id)
+          ? [...semanticKeys, idKey].filter(Boolean)
+          : [idKey, ...semanticKeys].filter(Boolean)
+      )
+    );
   };
 
   items
@@ -1144,7 +1259,6 @@ function mergeShopArrays(items = []) {
 
   return Array.from(map.values());
 }
-
 async function fetchWithTimeout(url, options = {}, timeout = MUTATION_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -1826,6 +1940,55 @@ function normalizeDeletedShopValue(value) {
     .replace(/\s/g, "");
 }
 
+function isSafeDeletedShopIdentityValue(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return false;
+  }
+
+  if (
+    text.startsWith("name:") ||
+    text.startsWith("phone:") ||
+    text.startsWith("address:") ||
+    text.startsWith("name-address:") ||
+    text.startsWith("nameAddress:") ||
+    text.includes("::")
+  ) {
+    return false;
+  }
+
+  if (/^0\d{1,2}-?\d{3,4}-?\d{4}$/.test(text)) {
+    return false;
+  }
+
+  const plainText = text
+    .replace(/^id:/, "")
+    .replace(/^shopId:/, "")
+    .replace(/^uuid:/, "")
+    .trim();
+
+  if (
+    plainText.startsWith("local-shop-") ||
+    plainText.startsWith("local-noma-") ||
+    plainText.startsWith("local-nora-") ||
+    plainText.startsWith("local-massage-shop-") ||
+    plainText.startsWith("local-karaoke-shop-")
+  ) {
+    return true;
+  }
+
+  if (/^[a-f0-9]{24}$/i.test(plainText)) {
+    return true;
+  }
+
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(plainText)) {
+    return true;
+  }
+
+  return false;
+}
+
 function getDeletedShopIds() {
   try {
     const values = [
@@ -1836,6 +1999,7 @@ function getDeletedShopIds() {
     return Array.from(
       new Set(
         values
+          .filter((value) => isSafeDeletedShopIdentityValue(value))
           .flatMap((value) => [
             String(value || "").trim(),
             normalizeDeletedShopValue(value),
@@ -1849,37 +2013,17 @@ function getDeletedShopIds() {
 }
 
 function getDeletedShopIdentityValues(shop = {}) {
-  const keys = getShopIdentityKeys(shop);
+  const id = String(shop?._id || shop?.id || "").trim();
+  const shopId = String(shop?.shopId || "").trim();
+  const uuid = String(shop?.uuid || "").trim();
 
   const rawValues = [
-    shop._id,
-    shop.id,
-    shop.shopId,
-    shop.uuid,
-    shop.slug,
-    keys.id,
-    keys.nameKey,
-    keys.nameAddressKey,
-    keys.phoneKey,
-    keys.name,
-    keys.address,
-    keys.phone,
-    shop.name,
-    shop.title,
-    shop.shopName,
-    shop.address,
-    shop.roadAddress,
-    shop.fullAddress,
-    shop.phone,
-    shop.tel,
-    shop.virtualPhone,
-    shop.fakePhone,
-    shop.callNumber,
-    keys.name && keys.address ? `${keys.name}::${keys.address}` : "",
-    keys.name && keys.address ? `${keys.name}_${keys.address}` : "",
-    shop.name && (shop.address || shop.roadAddress || shop.fullAddress)
-      ? `${shop.name}_${shop.address || shop.roadAddress || shop.fullAddress}`
-      : "",
+    id,
+    id ? `id:${id}` : "",
+    shopId,
+    shopId ? `shopId:${shopId}` : "",
+    uuid,
+    uuid ? `uuid:${uuid}` : "",
   ];
 
   return Array.from(
@@ -1932,11 +2076,13 @@ function rememberDeletedShop(shopOrId) {
         ? getDeletedShopIdentityValues(shopOrId)
         : [String(shopOrId || "").trim()].filter(Boolean);
 
-    if (!values.length) {
+    const safeValues = values.filter((value) => isSafeDeletedShopIdentityValue(value));
+
+    if (!safeValues.length) {
       return;
     }
 
-    const nextIds = Array.from(new Set([...getDeletedShopIds(), ...values]));
+    const nextIds = Array.from(new Set([...getDeletedShopIds(), ...safeValues]));
     const storageText = JSON.stringify(nextIds);
 
     localStorage.setItem(DELETED_SHOP_STORAGE_KEY, storageText);
@@ -1953,11 +2099,13 @@ function forgetDeletedShop(shopOrId) {
         ? getDeletedShopIdentityValues(shopOrId)
         : [String(shopOrId || "").trim()].filter(Boolean);
 
-    if (!values.length) {
+    const safeValues = values.filter((value) => isSafeDeletedShopIdentityValue(value));
+
+    if (!safeValues.length) {
       return;
     }
 
-    const nextIds = getDeletedShopIds().filter((item) => !values.includes(item));
+    const nextIds = getDeletedShopIds().filter((item) => !safeValues.includes(item));
     const storageText = JSON.stringify(nextIds);
 
     localStorage.setItem(DELETED_SHOP_STORAGE_KEY, storageText);
@@ -2080,22 +2228,56 @@ function clearShopStorage(params = {}) {
   }
 }
 
-function dispatchShopStorageEvent(shops) {
+function dispatchShopStorageEvent(shops, params = {}) {
   try {
-    window.setTimeout(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const safeShops = Array.isArray(shops) ? shops : [];
+    const categoryParams = makeCategoryParams(params);
+    const category = categoryParams.category || getEffectiveCategory(params);
+    const eventKey = [
+      category || "all",
+      safeShops.length,
+      safeShops
+        .slice(0, 20)
+        .map((shop) => String(shop?._id || shop?.id || shop?.shopId || shop?.name || ""))
+        .join(","),
+    ].join("|");
+
+    if (SHOP_EVENT_KEY === eventKey && SHOP_EVENT_TIMER) {
+      return;
+    }
+
+    SHOP_EVENT_KEY = eventKey;
+
+    if (SHOP_EVENT_TIMER) {
+      window.clearTimeout(SHOP_EVENT_TIMER);
+    }
+
+    SHOP_EVENT_TIMER = window.setTimeout(() => {
       try {
+        SHOP_EVENT_TIMER = null;
+
         window.dispatchEvent(
           new CustomEvent("shops-updated", {
             detail: {
-              shops,
+              shops: safeShops,
+              category,
+              shopCategory: category,
+              serviceType: category,
+              businessType: category,
+              adminCategory: category,
+              total: safeShops.length,
+              count: safeShops.length,
             },
           })
         );
-        window.dispatchEvent(new Event("storage"));
       } catch (e) {
         console.warn("SHOP EVENT DISPATCH ERROR:", e.message);
       }
-    }, 0);
+    }, SHOP_EVENT_THROTTLE_MS);
   } catch (e) {
     console.warn("SHOP EVENT TIMER ERROR:", e.message);
   }
@@ -2158,7 +2340,7 @@ function saveLocalShops(items = [], params = {}) {
 
     if (!localPublicOk || !localAdminOk) {
       if (sessionPublicOk && sessionAdminOk) {
-        dispatchShopStorageEvent(storageItems);
+        dispatchShopStorageEvent(storageItems, categoryParams);
         return;
       }
 
@@ -2191,7 +2373,7 @@ function saveLocalShops(items = [], params = {}) {
       const compactSessionAdminOk = safeSetStorage(sessionStorage, localAdminKey, compactStorageText);
 
       if (compactSessionPublicOk && compactSessionAdminOk) {
-        dispatchShopStorageEvent(compactItems);
+        dispatchShopStorageEvent(compactItems, categoryParams);
         return;
       }
 
@@ -2235,11 +2417,11 @@ function saveLocalShops(items = [], params = {}) {
       safeSetStorage(sessionStorage, localPublicKey, textOnlyStorageText);
       safeSetStorage(sessionStorage, localAdminKey, textOnlyStorageText);
 
-      dispatchShopStorageEvent(textOnlyItems);
+      dispatchShopStorageEvent(textOnlyItems, categoryParams);
       return;
     }
 
-    dispatchShopStorageEvent(storageItems);
+    dispatchShopStorageEvent(storageItems, categoryParams);
   } catch (e) {
     console.warn("LOCAL SHOP SAVE ERROR:", e.message);
   }
@@ -2425,6 +2607,21 @@ function shouldUseShopFallback(url, options = {}) {
 }
 
 function shouldUseLocalMutation(url, options = {}) {
+  const method = String(options?.method || "GET").toUpperCase();
+  const path = getPathOnly(url);
+
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    return false;
+  }
+
+  if (path === "/shops" && method === "POST") {
+    return true;
+  }
+
+  if (/^\/shops\/[^/]+$/.test(path) && ["PUT", "PATCH", "DELETE"].includes(method)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -2517,6 +2714,7 @@ function createLocalShop(payload = {}, params = {}) {
   LOCAL_SHOP_MEMORY = mergeShopArrays([...saved, nextShop]);
 
   saveLocalShops(LOCAL_SHOP_MEMORY, normalized);
+  clearShopApiCaches();
 
   return {
     ok: true,
@@ -2592,6 +2790,7 @@ function updateLocalShop(id, payload = {}, params = {}) {
       LOCAL_SHOP_MEMORY = mergeShopArrays([...saved, updatedFallback]);
 
       saveLocalShops(LOCAL_SHOP_MEMORY, normalizedUpdatePayload);
+      clearShopApiCaches();
 
       return {
         ok: true,
@@ -2620,6 +2819,7 @@ function updateLocalShop(id, payload = {}, params = {}) {
       ]);
 
   saveLocalShops(LOCAL_SHOP_MEMORY, normalizedUpdatePayload);
+  clearShopApiCaches();
 
   const updatedItem =
     LOCAL_SHOP_MEMORY.find((shop) => String(shop?._id || shop?.id) === String(id)) ||
@@ -2668,6 +2868,7 @@ function removeLocalShop(id, params = {}) {
   LOCAL_SHOP_MEMORY = filterDeletedShops(nextItems);
 
   saveLocalShops(LOCAL_SHOP_MEMORY, params);
+  clearShopApiCaches();
 
   return {
     ok: true,
@@ -2767,16 +2968,34 @@ async function request(url, options = {}) {
 
     const requestUrl = buildApiRequestUrl(url);
 
-    console.log("SHOP API REQUEST:", requestUrl);
+    logShopApiDebug("SHOP API REQUEST:", requestUrl);
 
     const method = String(fetchOptions.method || "GET").toUpperCase();
     const isMutation = method !== "GET";
+    const requestCacheKey = getStableRequestCacheKey(url, options);
 
-    const res = await fetchWithTimeout(
+    if (!isMutation && shouldUseShopFallback(url, options)) {
+      const cachedResponse = getCachedMapValue(
+        SHOP_REQUEST_CACHE,
+        requestCacheKey,
+        SHOP_REQUEST_CACHE_TTL_MS
+      );
+
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+    }
+
+    const fetchPromise = fetchWithTimeout(
       requestUrl,
       fetchOptions,
       isMutation ? MUTATION_TIMEOUT_MS : SHOP_QUERY_TIMEOUT_MS
     );
+
+
+    const res = await fetchPromise;
+
 
     let data = {};
 
@@ -2786,7 +3005,7 @@ async function request(url, options = {}) {
       data = {};
     }
 
-    console.log("SHOP API RESPONSE:", data);
+    logShopApiDebug("SHOP API RESPONSE:", data);
 
     try {
       const nextToken = extractToken(data);
@@ -2797,7 +3016,10 @@ async function request(url, options = {}) {
 
     if (res.status === 429 && shouldUseShopFallback(url, options)) {
       console.warn("SHOP API 429 FALLBACK");
-      return getFallbackByUrl(url, options.categoryParams || {});
+      const fallbackResult = getFallbackByUrl(url, options.categoryParams || {});
+      setCachedMapValue(SHOP_REQUEST_CACHE, requestCacheKey, fallbackResult);
+      cleanupLimitedMap(SHOP_REQUEST_CACHE);
+      return fallbackResult;
     }
 
     if (res.status === 401) {
@@ -2816,7 +3038,11 @@ async function request(url, options = {}) {
       }
 
       if (shouldUseLocalMutation(url, options)) {
-        return handleLocalMutation(url, options);
+        const localMutationResult = handleLocalMutation(url, options);
+
+        if (localMutationResult) {
+          return localMutationResult;
+        }
       }
 
       if (!isLoginPage && !isAdminPage) {
@@ -2847,7 +3073,11 @@ async function request(url, options = {}) {
 
     if (!res.ok || data?.ok === false) {
       if (shouldUseLocalMutation(url, options)) {
-        return handleLocalMutation(url, options);
+        const localMutationResult = handleLocalMutation(url, options);
+
+        if (localMutationResult) {
+          return localMutationResult;
+        }
       }
 
       if (shouldUseShopFallback(url, options)) {
@@ -2876,9 +3106,13 @@ async function request(url, options = {}) {
           requestCategoryParams
         );
 
+        setCachedMapValue(SHOP_REQUEST_CACHE, requestCacheKey, nextResult);
+        cleanupLimitedMap(SHOP_REQUEST_CACHE);
         return nextResult;
       }
 
+      setCachedMapValue(SHOP_REQUEST_CACHE, requestCacheKey, nextResult);
+      cleanupLimitedMap(SHOP_REQUEST_CACHE);
       return nextResult;
     }
 
@@ -2886,8 +3120,21 @@ async function request(url, options = {}) {
       ? data
       : normalized;
   } catch (err) {
+    try {
+      const method = String(options?.method || "GET").toUpperCase();
+
+      if (method === "GET") {
+        SHOP_REQUEST_IN_FLIGHT.delete(getStableRequestCacheKey(url, options));
+      }
+    } catch (e) {}
+
     if (shouldUseLocalMutation(url, options)) {
-      return handleLocalMutation(url, options);
+      const localMutationResult = handleLocalMutation(url, options);
+
+      if (localMutationResult) {
+        clearShopApiCaches();
+        return localMutationResult;
+      }
     }
 
     if (shouldUseShopFallback(url, options)) {
@@ -3096,6 +3343,65 @@ function normalizeShopPayload(payload = {}) {
   return nextPayload;
 }
 
+
+function getCreatedShopFromResponse(response = {}, fallbackPayload = {}) {
+  if (response?.shop && typeof response.shop === "object" && !Array.isArray(response.shop)) {
+    return response.shop;
+  }
+
+  if (response?.item && typeof response.item === "object" && !Array.isArray(response.item)) {
+    return response.item;
+  }
+
+  if (response?.data && typeof response.data === "object" && !Array.isArray(response.data)) {
+    return response.data;
+  }
+
+  if (response && typeof response === "object" && !Array.isArray(response) && (response._id || response.id || response.name)) {
+    return response;
+  }
+
+  return fallbackPayload && typeof fallbackPayload === "object" ? fallbackPayload : {};
+}
+
+function syncMutationShopToLocal(response = {}, fallbackPayload = {}, categoryParams = {}) {
+  try {
+    const sourceShop = getCreatedShopFromResponse(response, fallbackPayload);
+    const normalizedShop = normalizeShopResponseItem(
+      normalizeShopCategoryPayload(
+        {
+          ...fallbackPayload,
+          ...sourceShop,
+        },
+        categoryParams
+      ),
+      categoryParams
+    );
+
+    if (!normalizedShop || typeof normalizedShop !== "object") {
+      return [];
+    }
+
+    const nextItems = filterShopsByCategory(
+      filterDeletedShops(
+        mergeShopArrays([
+          ...getLocalShops(categoryParams),
+          normalizedShop,
+        ]).map((shop) => applyShopImageBank(shop))
+      ),
+      categoryParams
+    );
+
+    saveLocalShops(nextItems, categoryParams);
+    clearShopApiCaches();
+
+    return nextItems;
+  } catch (e) {
+    console.warn("SHOP MUTATION LOCAL SYNC ERROR:", e.message);
+    return [];
+  }
+}
+
 export const shopApi = {
   getList: async (params = {}) => {
     const listParams = makeAdminListParams(params);
@@ -3104,10 +3410,29 @@ export const shopApi = {
     );
 
     const query = new URLSearchParams(cleanParams).toString();
-
-    const res = await request(query ? `/shops?${query}` : `/shops`, {
+    const cacheKey = getStableRequestCacheKey(query ? `/shops?${query}` : `/shops`, {
       categoryParams: cleanParams,
     });
+    const cachedList = getCachedMapValue(
+      SHOP_LIST_CACHE,
+      cacheKey,
+      SHOP_GET_CACHE_TTL_MS
+    );
+
+    if (cachedList) {
+      return cachedList;
+    }
+
+    const pendingList = SHOP_LIST_IN_FLIGHT.get(cacheKey);
+
+    if (pendingList) {
+      return pendingList;
+    }
+
+    const listPromise = (async () => {
+      const res = await request(query ? `/shops?${query}` : `/shops`, {
+        categoryParams: cleanParams,
+      });
 
     const responseShape = normalizeShopApiResponse(res);
     const normalized = normalizeShopResponseShape(responseShape, cleanParams);
@@ -3135,22 +3460,36 @@ export const shopApi = {
       ? mergedRawItems
       : filterShopsByCategory(mergedRawItems, cleanParams);
 
-    if (mergedItems.length || localItems.length) {
-      saveLocalShops(mergedItems, cleanParams);
+      if (mergedItems.length || localItems.length) {
+        saveLocalShops(mergedItems, cleanParams);
 
-      return {
-        ...normalized,
-        ok: normalized?.ok !== false,
-        shops: mergedItems,
-        list: mergedItems,
-        items: mergedItems,
-        data: mergedItems,
-        total: mergedItems.length,
-        count: mergedItems.length,
-      };
+        return {
+          ...normalized,
+          ok: normalized?.ok !== false,
+          shops: mergedItems,
+          list: mergedItems,
+          items: mergedItems,
+          data: mergedItems,
+          total: mergedItems.length,
+          count: mergedItems.length,
+        };
+      }
+
+      return normalized;
+    })();
+
+    SHOP_LIST_IN_FLIGHT.set(cacheKey, listPromise);
+
+    try {
+      const result = await listPromise;
+
+      setCachedMapValue(SHOP_LIST_CACHE, cacheKey, result);
+      cleanupLimitedMap(SHOP_LIST_CACHE);
+
+      return result;
+    } finally {
+      SHOP_LIST_IN_FLIGHT.delete(cacheKey);
     }
-
-    return normalized;
   },
 
   getDetail: async (id, params = {}) => {
@@ -3282,13 +3621,29 @@ export const shopApi = {
     const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery("/shops", categoryParams);
 
+    clearShopApiCaches();
+
     const res = await request(requestUrl, {
       method: "POST",
       body: JSON.stringify(networkPayload),
       categoryParams,
     });
 
-    return res;
+    const syncedItems = syncMutationShopToLocal(res, networkPayload, categoryParams);
+
+    clearShopApiCaches();
+
+    return syncedItems.length
+      ? {
+          ...res,
+          shops: syncedItems,
+          list: syncedItems,
+          items: syncedItems,
+          data: Array.isArray(res?.data) ? syncedItems : res?.data,
+          total: syncedItems.length,
+          count: syncedItems.length,
+        }
+      : res;
   },
 
   update: async (id, payload, params = {}) => {
@@ -3306,23 +3661,59 @@ export const shopApi = {
     const networkPayload = getNetworkSafeShop(normalizedPayload);
     const requestUrl = appendCategoryQuery(`/shops/${id}`, categoryParams);
 
+    clearShopApiCaches();
+
     const res = await request(requestUrl, {
       method: "PATCH",
       body: JSON.stringify(networkPayload),
       categoryParams,
     });
 
-    return res;
+    const syncedItems = syncMutationShopToLocal(res, networkPayload, categoryParams);
+
+    clearShopApiCaches();
+
+    return syncedItems.length
+      ? {
+          ...res,
+          shops: syncedItems,
+          list: syncedItems,
+          items: syncedItems,
+          data: Array.isArray(res?.data) ? syncedItems : res?.data,
+          total: syncedItems.length,
+          count: syncedItems.length,
+        }
+      : res;
   },
 
   remove: async (id, params = {}) => {
     const categoryParams = makeCategoryParams(params);
     const requestUrl = appendCategoryQuery(`/shops/${id}`, categoryParams);
 
+    clearShopApiCaches();
+
     const res = await request(requestUrl, {
       method: "DELETE",
       categoryParams,
     });
+
+    try {
+      const nextItems = filterShopsByCategory(
+        filterDeletedShops(
+          getLocalShops(categoryParams).filter((shop) => {
+            const shopId = String(shop?._id || shop?.id || shop?.shopId || "");
+            return shopId !== String(id || "");
+          })
+        ),
+        categoryParams
+      );
+
+      saveLocalShops(nextItems, categoryParams);
+    } catch (e) {
+      console.warn("SHOP REMOVE LOCAL SYNC ERROR:", e.message);
+    }
+
+    clearShopApiCaches();
 
     return res;
   },

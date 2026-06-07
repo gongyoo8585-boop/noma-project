@@ -76,11 +76,6 @@ const EMPTY_FORM = {
   coursePricing: cloneCoursePricing(),
 };
 
-const LOCAL_SHOP_KEY = "noma_admin_shops";
-const LOCAL_PUBLIC_SHOP_KEY = "noma_local_shops";
-const LOCAL_SHOP_IMAGE_BANK_KEY = "noma_admin_shop_image_bank";
-const LOCAL_SHOP_BACKUP_KEY = "noma_admin_shop_backup";
-const DELETED_SHOP_KEY = "noma_deleted_shop_ids";
 const MAX_LOCAL_IMAGE_COUNT = Number.POSITIVE_INFINITY;
 const MAX_LOCAL_IMAGE_LENGTH = Number.POSITIVE_INFINITY;
 const MAX_MIRROR_STORAGE_LENGTH = 250000;
@@ -130,6 +125,18 @@ const normalizeShopCategory = (value) => {
 
 function ShopAdminPage() {
   const formRef = useRef(null);
+  const categorySyncKeyRef = useRef("");
+  const loadSyncKeyRef = useRef("");
+  const dashboardCacheRef = useRef({
+    category: "",
+    items: [],
+  });
+  const dashboardCacheTimeRef = useRef(0);
+  const loadRunningRef = useRef(false);
+  const statsRunningRef = useRef(false);
+  const statsTimerRef = useRef(null);
+  const storageEventTimerRef = useRef(null);
+  const storageEventKeyRef = useRef("");
 
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -161,13 +168,22 @@ function ShopAdminPage() {
   const currentPath = currentLocation.pathname;
   const currentSearch = currentLocation.search;
 
+  const isAdminDashboardEmbeddedRoute =
+    currentPath === "/admin" ||
+    currentPath === "/admin/dashboard" ||
+    currentPath.startsWith("/admin/dashboard/");
+
   const isShopAdminRoute =
+    isAdminDashboardEmbeddedRoute ||
     currentPath === "/admin/shops" ||
     currentPath.startsWith("/admin/shops/") ||
     currentPath === "/admin/shop" ||
     currentPath.startsWith("/admin/shop/") ||
     currentPath === "/admin/karaoke" ||
     currentPath.startsWith("/admin/karaoke/");
+
+  const shouldWrapAdminLayout =
+    !isAdminDashboardEmbeddedRoute;
 
   const isKaraokeAdminPath =
     currentPath.startsWith("/admin/karaoke") ||
@@ -196,8 +212,66 @@ function ShopAdminPage() {
       ? "karaoke"
       : "massage";
 
-  if (typeof window !== "undefined" && isShopAdminRoute) {
+
+  const currentAdminCategoryParams = {
+    category: currentAdminCategory,
+    shopCategory: currentAdminCategory,
+    serviceType: currentAdminCategory,
+    businessType: currentAdminCategory,
+    adminCategory: currentAdminCategory,
+    admin: "true",
+    adminMode: "true",
+    adminList: "true",
+    forAdmin: "true",
+    fromAdmin: "true",
+    management: "true",
+  };
+
+  const pageTitle =
+    currentAdminCategory === "karaoke"
+      ? "노래방 업체 관리"
+      : "업체 관리";
+
+  const pageDescription =
+    currentAdminCategory === "karaoke"
+      ? "노래방 업체명 / 주소 / 전화번호 / 영업시간 / 코스 / 금액 / 상태 / 사진 / 대표사진 관리"
+      : "업체명 / 주소 / 전화번호 / 영업시간 / 코스 / 금액 / 상태 / 사진 / 대표사진 관리";
+
+  const LOCAL_SHOP_KEY = `noma_admin_shops_${currentAdminCategory}`;
+  const LOCAL_PUBLIC_SHOP_KEY = `noma_local_shops_${currentAdminCategory}`;
+  const LOCAL_SHOP_IMAGE_BANK_KEY = `noma_admin_shop_image_bank_${currentAdminCategory}`;
+  const LOCAL_SHOP_BACKUP_KEY = `noma_admin_shop_backup_${currentAdminCategory}`;
+  const DELETED_SHOP_KEY = `noma_deleted_shop_ids_${currentAdminCategory}`;
+
+  const [stats, setStats] = useState([]);
+  const [statsStartDate, setStatsStartDate] = useState("");
+  const [statsEndDate, setStatsEndDate] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isShopAdminRoute) {
+      return;
+    }
+
+    const syncKey = [
+      currentPath,
+      currentSearch,
+      currentAdminCategory,
+      isKaraokeAdminPath ? "karaoke" : "massage",
+    ].join("|");
+
+    if (categorySyncKeyRef.current === syncKey) {
+      return;
+    }
+
+    categorySyncKeyRef.current = syncKey;
+
     try {
+      dashboardCacheRef.current = {
+        category: "",
+        items: [],
+      };
+      dashboardCacheTimeRef.current = 0;
+
       const params = new URLSearchParams(window.location.search || "");
       const urlCategory =
         normalizeShopCategory(params.get("category")) ||
@@ -240,51 +314,13 @@ function ShopAdminPage() {
     } catch (e) {
       console.warn("SHOP ADMIN CATEGORY SYNC SKIP:", e.message);
     }
-  }
-
-  const currentAdminCategoryParams =
-    currentAdminCategory === "karaoke"
-      ? {
-          category: currentAdminCategory,
-          shopCategory: currentAdminCategory,
-          serviceType: currentAdminCategory,
-          businessType: currentAdminCategory,
-          adminCategory: currentAdminCategory,
-          admin: "true",
-          adminMode: "true",
-          adminList: "true",
-          forAdmin: "true",
-          fromAdmin: "true",
-          management: "true",
-        }
-      : {
-          admin: "true",
-          adminMode: "true",
-          adminList: "true",
-          forAdmin: "true",
-          fromAdmin: "true",
-          management: "true",
-        };
-
-  const pageTitle =
-    currentAdminCategory === "karaoke"
-      ? "노래방 업체 관리"
-      : "업체 관리";
-
-  const pageDescription =
-    currentAdminCategory === "karaoke"
-      ? "노래방 업체명 / 주소 / 전화번호 / 영업시간 / 코스 / 금액 / 상태 / 사진 / 대표사진 관리"
-      : "업체명 / 주소 / 전화번호 / 영업시간 / 코스 / 금액 / 상태 / 사진 / 대표사진 관리";
-
-  const LOCAL_SHOP_KEY = `noma_admin_shops_${currentAdminCategory}`;
-  const LOCAL_PUBLIC_SHOP_KEY = `noma_local_shops_${currentAdminCategory}`;
-  const LOCAL_SHOP_IMAGE_BANK_KEY = `noma_admin_shop_image_bank_${currentAdminCategory}`;
-  const LOCAL_SHOP_BACKUP_KEY = `noma_admin_shop_backup_${currentAdminCategory}`;
-  const DELETED_SHOP_KEY = `noma_deleted_shop_ids_${currentAdminCategory}`;
-
-  const [stats, setStats] = useState([]);
-  const [statsStartDate, setStatsStartDate] = useState("");
-  const [statsEndDate, setStatsEndDate] = useState("");
+  }, [
+    currentPath,
+    currentSearch,
+    currentAdminCategory,
+    isKaraokeAdminPath,
+    isShopAdminRoute,
+  ]);
 
   const normalizeText = (value) =>
     String(value || "")
@@ -708,7 +744,6 @@ function ShopAdminPage() {
     return currentMinutes >= startMinutes || currentMinutes < endMinutes;
   };
 
-
   const isCompletePricingRow = (row) => {
     const duration = String(row?.duration || row?.time || "").trim();
     const originalPrice = toNumber(row?.originalPrice || row?.originPrice || row?.regularPrice);
@@ -1030,14 +1065,6 @@ function ShopAdminPage() {
       .slice(0, MAX_LOCAL_IMAGE_COUNT);
   };
 
-  const hasImageField = (value) => {
-    if (!value || typeof value !== "object") {
-      return false;
-    }
-
-    return makeSafeImages(value).length > 0;
-  };
-
   const makeSafeCourses = (shop) => {
     const rawCourses = Array.isArray(shop?.courses)
       ? shop.courses
@@ -1079,23 +1106,16 @@ function ShopAdminPage() {
       return text ? [text, `id:${text}`] : [];
     }
 
-    const id = String(shop._id || shop.id || shop.shopId || "").trim();
-    const name = normalizeText(shop.name);
-    const address = normalizeText(shop.address || shop.roadAddress || shop.fullAddress);
-    const phone = normalizeText(shop.phone || shop.tel || shop.virtualPhone);
-    const nameAddressKey = name && address ? `${name}::${address}` : "";
+    const id = String(shop._id || shop.id || "").trim();
+    const shopId = String(shop.shopId || "").trim();
 
     return Array.from(
       new Set(
         [
           id,
           id ? `id:${id}` : "",
-          shop.shopId ? `shopId:${String(shop.shopId).trim()}` : "",
-          nameAddressKey,
-          nameAddressKey ? `nameAddress:${nameAddressKey}` : "",
-          phone ? `phone:${phone}` : "",
-          name ? `name:${name}` : "",
-          address ? `address:${address}` : "",
+          shopId,
+          shopId ? `shopId:${shopId}` : "",
         ]
           .map((item) => String(item || "").trim())
           .filter(Boolean)
@@ -1103,16 +1123,90 @@ function ShopAdminPage() {
     );
   };
 
+  const isSafeDeletedIdentityValue = (value) => {
+    const text = String(value || "").trim();
+
+    if (!text) {
+      return false;
+    }
+
+    if (
+      text.startsWith("phone:") ||
+      text.startsWith("name:") ||
+      text.startsWith("address:") ||
+      text.startsWith("nameAddress:") ||
+      text.includes("::")
+    ) {
+      return false;
+    }
+
+    if (/^0\d{1,2}-?\d{3,4}-?\d{4}$/.test(text)) {
+      return false;
+    }
+
+    if (text.startsWith("id:")) {
+      const idText = text.replace(/^id:/, "").trim();
+
+      return (
+        isLocalShopId(idText) ||
+        /^[a-f0-9]{24}$/i.test(idText) ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idText)
+      );
+    }
+
+    if (text.startsWith("shopId:")) {
+      const shopIdText = text.replace(/^shopId:/, "").trim();
+
+      return (
+        isLocalShopId(shopIdText) ||
+        /^[a-f0-9]{24}$/i.test(shopIdText) ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shopIdText)
+      );
+    }
+
+    if (isLocalShopId(text)) {
+      return true;
+    }
+
+    if (/^[a-f0-9]{24}$/i.test(text)) {
+      return true;
+    }
+
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const getDeletedShopStorageKeys = () => [
+    DELETED_SHOP_KEY,
+    `nora_deleted_shop_ids_${currentAdminCategory}`,
+    `noma_deleted_shop_ids_${currentAdminCategory}`,
+  ];
+
   const readDeletedShopIds = () => {
     try {
-      const localSaved = JSON.parse(localStorage.getItem(DELETED_SHOP_KEY) || "[]");
-      const sessionSaved = JSON.parse(sessionStorage.getItem(DELETED_SHOP_KEY) || "[]");
+      const readStorageItems = (storage, key) => {
+        try {
+          const value = JSON.parse(storage.getItem(key) || "[]");
+
+          return Array.isArray(value) ? value : [];
+        } catch (e) {
+          return [];
+        }
+      };
 
       return Array.from(
-        new Set([
-          ...(Array.isArray(localSaved) ? localSaved : []),
-          ...(Array.isArray(sessionSaved) ? sessionSaved : []),
-        ].map((item) => String(item || "").trim()).filter(Boolean))
+        new Set(
+          getDeletedShopStorageKeys()
+            .flatMap((key) => [
+              ...readStorageItems(localStorage, key),
+              ...readStorageItems(sessionStorage, key),
+            ])
+            .map((item) => String(item || "").trim())
+            .filter((item) => isSafeDeletedIdentityValue(item))
+        )
       );
     } catch (e) {
       return [];
@@ -1122,13 +1216,19 @@ function ShopAdminPage() {
   const writeDeletedShopIds = (ids) => {
     try {
       const safeIds = Array.from(
-        new Set((Array.isArray(ids) ? ids : []).map((item) => String(item || "").trim()).filter(Boolean))
+        new Set(
+          (Array.isArray(ids) ? ids : [])
+            .map((item) => String(item || "").trim())
+            .filter((item) => isSafeDeletedIdentityValue(item))
+        )
       );
 
       const storageText = JSON.stringify(safeIds);
 
-      localStorage.setItem(DELETED_SHOP_KEY, storageText);
-      sessionStorage.setItem(DELETED_SHOP_KEY, storageText);
+      getDeletedShopStorageKeys().forEach((key) => {
+        localStorage.setItem(key, storageText);
+        sessionStorage.setItem(key, storageText);
+      });
     } catch (e) {
       console.warn("SHOP DELETE STORAGE SAVE SKIP:", e.message);
     }
@@ -1283,18 +1383,6 @@ function ShopAdminPage() {
     });
   };
 
-  const getShopImageBankKey = (shop) => {
-    if (!shop || typeof shop !== "object") {
-      return "";
-    }
-
-    const id = String(shop._id || shop.id || shop.shopId || "").trim();
-    const name = normalizeText(shop.name);
-    const address = normalizeText(shop.address || shop.roadAddress || shop.fullAddress);
-
-    return id || (name && address ? `${name}::${address}` : "");
-  };
-
   const getShopImageBankAliasKeys = (shop) => {
     if (!shop || typeof shop !== "object") {
       return [];
@@ -1339,7 +1427,6 @@ function ShopAdminPage() {
       return {};
     }
   };
-
 
   const removeShopImageBank = (shopOrId) => {
     try {
@@ -1720,12 +1807,38 @@ function ShopAdminPage() {
 
   const dispatchShopStorageEvent = (shops) => {
     try {
-      window.setTimeout(() => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const safeShops = Array.isArray(shops) ? shops : [];
+      const eventKey = [
+        currentAdminCategory,
+        safeShops.length,
+        safeShops
+          .slice(0, 20)
+          .map((shop) => String(shop?._id || shop?.id || shop?.shopId || shop?.name || ""))
+          .join(","),
+      ].join("|");
+
+      if (storageEventKeyRef.current === eventKey && storageEventTimerRef.current) {
+        return;
+      }
+
+      storageEventKeyRef.current = eventKey;
+
+      if (storageEventTimerRef.current) {
+        window.clearTimeout(storageEventTimerRef.current);
+      }
+
+      storageEventTimerRef.current = window.setTimeout(() => {
         try {
+          storageEventTimerRef.current = null;
+
           window.dispatchEvent(
             new CustomEvent("shops-updated", {
               detail: {
-                shops,
+                shops: safeShops,
                 category: currentAdminCategory,
                 shopCategory: currentAdminCategory,
                 serviceType: currentAdminCategory,
@@ -1745,7 +1858,7 @@ function ShopAdminPage() {
           window.dispatchEvent(
             new CustomEvent("karaoke-shops-updated", {
               detail: {
-                shops,
+                shops: safeShops,
                 category: currentAdminCategory,
                 shopCategory: currentAdminCategory,
                 serviceType: currentAdminCategory,
@@ -1761,12 +1874,10 @@ function ShopAdminPage() {
               },
             })
           );
-
-          window.dispatchEvent(new Event("storage"));
         } catch (e) {
           console.warn("SHOP STORAGE EVENT SKIP:", e.message);
         }
-      }, 0);
+      }, 200);
     } catch (e) {
       console.warn("SHOP STORAGE EVENT TIMER SKIP:", e.message);
     }
@@ -2127,6 +2238,19 @@ function ShopAdminPage() {
         return [];
       }
 
+      const cachedDashboard = dashboardCacheRef.current;
+      const cacheAge = Date.now() - Number(dashboardCacheTimeRef.current || 0);
+
+      if (
+        cachedDashboard?.category === currentAdminCategory &&
+        Array.isArray(cachedDashboard.items) &&
+        cachedDashboard.items.length > 0 &&
+        cacheAge >= 0 &&
+        cacheAge < 5000
+      ) {
+        return cachedDashboard.items;
+      }
+
       const params = new URLSearchParams({
         ...currentAdminCategoryParams,
         category: currentAdminCategory,
@@ -2134,14 +2258,13 @@ function ShopAdminPage() {
         serviceType: currentAdminCategory,
         businessType: currentAdminCategory,
         adminCategory: currentAdminCategory,
-        _t: String(Date.now()),
       });
 
       const token = getAdminAuthToken();
       const controller = new AbortController();
       const timer = setTimeout(() => {
         controller.abort();
-      }, 900);
+      }, 250);
 
       const response = await fetch(
         `${getApiBaseUrl()}/admin/dashboard?${params.toString()}`,
@@ -2164,17 +2287,34 @@ function ShopAdminPage() {
 
       const data = await response.json();
 
-      return getAdminVisibleShops(
+      const dashboardItems = getAdminVisibleShops(
         filterDeletedShops(
           extractDashboardShopItems(data)
         )
       ).map((item) => applyShopImageBank(item));
+
+      dashboardCacheRef.current = {
+        category: currentAdminCategory,
+        items: dashboardItems,
+      };
+      dashboardCacheTimeRef.current = Date.now();
+
+      return dashboardItems;
     } catch (e) {
+      const cachedDashboard = dashboardCacheRef.current;
+
+      if (
+        cachedDashboard?.category === currentAdminCategory &&
+        Array.isArray(cachedDashboard.items) &&
+        cachedDashboard.items.length > 0
+      ) {
+        return cachedDashboard.items;
+      }
+
       console.warn("SHOP DASHBOARD SYNC SKIP:", e.message);
       return [];
     }
   };
-
 
   const normalizeShopForList = (shop) => {
     if (!shop || typeof shop !== "object") {
@@ -2490,6 +2630,12 @@ function ShopAdminPage() {
   };
 
   const loadStats = async () => {
+    if (statsRunningRef.current) {
+      return;
+    }
+
+    statsRunningRef.current = true;
+
     try {
       if (!isShopAdminRoute) {
         setStats([]);
@@ -2501,25 +2647,17 @@ function ShopAdminPage() {
         return;
       }
 
-      const params =
-        currentAdminCategory === "karaoke"
-          ? {
-              category: currentAdminCategory,
-              shopCategory: currentAdminCategory,
-              serviceType: currentAdminCategory,
-              businessType: currentAdminCategory,
-              adminCategory: currentAdminCategory,
-              admin: "true",
-              adminMode: "true",
-              adminList: "true",
-              management: "true",
-            }
-          : {
-              admin: "true",
-              adminMode: "true",
-              adminList: "true",
-              management: "true",
-            };
+      const params = {
+        category: currentAdminCategory,
+        shopCategory: currentAdminCategory,
+        serviceType: currentAdminCategory,
+        businessType: currentAdminCategory,
+        adminCategory: currentAdminCategory,
+        admin: "true",
+        adminMode: "true",
+        adminList: "true",
+        management: "true",
+      };
 
       if (statsStartDate) {
         params.startDate = statsStartDate;
@@ -2538,7 +2676,7 @@ function ShopAdminPage() {
               list: [],
               shopStats: [],
             });
-          }, 300);
+          }, 150);
         }),
       ]);
 
@@ -2551,6 +2689,23 @@ function ShopAdminPage() {
       setStats(Array.isArray(items) ? items : []);
     } catch (e) {
       setStats([]);
+    } finally {
+      statsRunningRef.current = false;
+    }
+  };
+
+  const scheduleLoadStats = () => {
+    try {
+      if (statsTimerRef.current) {
+        window.clearTimeout(statsTimerRef.current);
+      }
+
+      statsTimerRef.current = window.setTimeout(() => {
+        statsTimerRef.current = null;
+        loadStats();
+      }, 250);
+    } catch (e) {
+      loadStats();
     }
   };
 
@@ -2735,7 +2890,19 @@ function ShopAdminPage() {
   };
 
   const load = async () => {
+    if (loadRunningRef.current) {
+      return;
+    }
+
+    loadRunningRef.current = true;
+
     try {
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          loadRunningRef.current = false;
+        }, 1000);
+      }
+
       if (!isShopAdminRoute) {
         setInitialized(true);
         setLoading(false);
@@ -2762,13 +2929,10 @@ function ShopAdminPage() {
             resolve({
               items: localItems,
             });
-          }, 300);
+          }, 80);
         }),
       ])
         .then(async (res) => {
-          const dashboardItems =
-            await loadAdminDashboardShops();
-
           const rawApiItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
 
           const apiItems = rawApiItems.map((apiItem) => {
@@ -2828,10 +2992,24 @@ function ShopAdminPage() {
             };
           });
 
-          const nextList = filterDeletedShops(
+          const quickList = filterDeletedShops(
             mergeShopList([
               ...localItems,
               ...apiItems,
+            ])
+          );
+
+          if (quickList.length) {
+            saveLocalShops(quickList);
+            setList(quickList);
+          }
+
+          const dashboardItems =
+            await loadAdminDashboardShops();
+
+          const nextList = filterDeletedShops(
+            mergeShopList([
+              ...quickList,
               ...dashboardItems,
             ])
           );
@@ -2850,7 +3028,7 @@ function ShopAdminPage() {
             }
           }
 
-          loadStats();
+          scheduleLoadStats();
         })
         .catch((e) => {
           console.warn("SHOP LOAD BACKGROUND SKIP:", e.message);
@@ -2884,7 +3062,16 @@ function ShopAdminPage() {
   };
 
   useEffect(() => {
+    const loadSyncKey = [
+      currentPath,
+      currentSearch,
+      currentAdminCategory,
+      isShopAdminRoute ? "shop-admin" : "not-shop-admin",
+    ].join("|");
+
     if (!isShopAdminRoute) {
+      loadSyncKeyRef.current = loadSyncKey;
+
       if (!initialized) {
         setInitialized(true);
       }
@@ -2894,12 +3081,19 @@ function ShopAdminPage() {
       return;
     }
 
-    if (initialized) {
+    if (loadSyncKeyRef.current === loadSyncKey && initialized) {
       return;
     }
 
+    loadSyncKeyRef.current = loadSyncKey;
     load();
-  }, [initialized, currentAdminCategory, isShopAdminRoute]);
+  }, [
+    initialized,
+    currentPath,
+    currentSearch,
+    currentAdminCategory,
+    isShopAdminRoute,
+  ]);
 
   const onChange = (e) => {
     const { name, value } = e.target;
@@ -3088,7 +3282,7 @@ function ShopAdminPage() {
             resolve({
               items: localItems,
             });
-          }, 300);
+          }, 120);
         }),
       ]);
 
@@ -3112,7 +3306,7 @@ function ShopAdminPage() {
         return nextList;
       });
 
-      loadStats();
+      scheduleLoadStats();
     } catch (e) {
       const localItems = mergeShopList([
         ...readBackupShops(),
@@ -3239,8 +3433,43 @@ function ShopAdminPage() {
     }));
   };
 
-  const onCreate = () => {
+  const resetDashboardShopSyncCache = () => {
     try {
+      dashboardCacheRef.current = {
+        category: "",
+        items: [],
+      };
+      dashboardCacheTimeRef.current = 0;
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      [window.localStorage, window.sessionStorage]
+        .filter(Boolean)
+        .forEach((storage) => {
+          [
+            "nora_admin_dashboard_cache",
+            `nora_admin_dashboard_cache_${currentAdminCategory}`,
+          ].forEach((key) => {
+            try {
+              storage.removeItem(key);
+            } catch (e) {
+              return;
+            }
+          });
+        });
+    } catch (e) {
+      console.warn("SHOP DASHBOARD CACHE CLEAR SKIP:", e.message);
+    }
+  };
+
+  const onCreate = async () => {
+    try {
+      if (submitting) {
+        return;
+      }
+
       if (!form.name.trim()) {
         alert("업체명 필요");
         return;
@@ -3251,111 +3480,132 @@ function ShopAdminPage() {
         return;
       }
 
+      setSubmitting(true);
       setError("");
 
       const payload = getSubmitPayload();
 
-      const tempId = `local-${currentAdminCategory}-shop-${Date.now()}`;
+      resetDashboardShopSyncCache();
 
-      const optimisticShop = normalizeShopForList({
-        ...payload,
-        _id: tempId,
-        id: tempId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      const res = await shopApi.create(payload);
 
-      writeShopImageBank([optimisticShop]);
-      saveBackupShops([optimisticShop]);
+      const serverShop =
+        res?.shop ||
+        res?.item ||
+        (res?.data && !Array.isArray(res.data) ? res.data : null) ||
+        {};
 
-      forgetDeletedShop(optimisticShop);
+      const createdId =
+        serverShop?._id ||
+        serverShop?.id ||
+        serverShop?.shopId ||
+        `local-${currentAdminCategory}-shop-${Date.now()}`;
 
-      setList((prev) => {
-        const nextList = mergeShopList(prev, optimisticShop);
+      const createdShop = mergeShopRecord(
+        {},
+        {
+          ...serverShop,
+          ...payload,
+          _id: createdId,
+          id: createdId,
+          name: payload.name,
+          address: payload.address,
+          roadAddress: payload.address,
+          fullAddress: payload.address,
+          phone: payload.phone,
+          businessHours: payload.businessHours,
+          openingHours: payload.businessHours,
+          hours: payload.businessHours,
+          intro: payload.intro,
+          description: payload.description,
+          shopIntro: payload.shopIntro,
+          coursePricing: payload.coursePricing,
+          pricing: payload.pricing,
+          priceTable: payload.priceTable,
+          courseSections: payload.courseSections,
+          premium: payload.premium,
+          premiumType: payload.premiumType,
+          isPremium: payload.isPremium,
+          premiumActive: payload.premiumActive,
+          createdAt:
+            serverShop?.createdAt ||
+            new Date().toISOString(),
+          updatedAt:
+            serverShop?.updatedAt ||
+            new Date().toISOString(),
+        }
+      );
 
-        saveLocalShops(nextList);
+      writeShopImageBank([createdShop]);
+      saveBackupShops([createdShop]);
+      forgetDeletedShop(createdShop);
 
-        return nextList;
-      });
+      let loadedItems = [];
+      let dashboardItems = [];
+
+      try {
+        const listRes = await Promise.race([
+          shopApi.getList(currentAdminCategoryParams),
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                items: [],
+              });
+            }, 300);
+          }),
+        ]);
+
+        loadedItems = getAdminVisibleShops(
+          filterDeletedShops(
+            extractShopItems(listRes)
+          )
+        ).map((item) => applyShopImageBank(item));
+      } catch (e) {
+        loadedItems = [];
+      }
+
+      try {
+        dashboardItems =
+          await loadAdminDashboardShops();
+      } catch (e) {
+        dashboardItems = [];
+      }
+
+      const localItems = mergeShopList([
+        ...readBackupShops(),
+        ...readLocalShops(),
+      ]);
+
+      const nextList = filterDeletedShops(
+        mergeShopList([
+          ...localItems,
+          ...loadedItems,
+          ...dashboardItems,
+          createdShop,
+        ])
+      );
+
+      saveLocalShops(nextList);
+      dispatchShopStorageEvent(nextList);
+      setList(nextList);
 
       setForm({
         ...EMPTY_FORM,
         coursePricing: cloneCoursePricing(),
       });
-      setSubmitting(false);
-      setLoading(false);
+
+      resetDashboardShopSyncCache();
+      scheduleLoadStats();
 
       alert("업체 생성 완료");
-
-      Promise.resolve()
-        .then(async () => {
-          try {
-            const res = await shopApi.create(payload);
-
-            const serverShop =
-              res?.shop ||
-              res?.item ||
-              (res?.data && !Array.isArray(res.data) ? res.data : null) ||
-              {};
-
-            const createdShop = mergeShopRecord(
-              optimisticShop,
-              {
-                ...serverShop,
-                ...payload,
-                _id: serverShop?._id || serverShop?.id || optimisticShop._id,
-                id: serverShop?._id || serverShop?.id || optimisticShop.id,
-                name: payload.name,
-                address: payload.address,
-                roadAddress: payload.address,
-                fullAddress: payload.address,
-                phone: payload.phone,
-                businessHours: payload.businessHours,
-                openingHours: payload.businessHours,
-                hours: payload.businessHours,
-                intro: payload.intro,
-                description: payload.description,
-                shopIntro: payload.shopIntro,
-                coursePricing: payload.coursePricing,
-                pricing: payload.pricing,
-                priceTable: payload.priceTable,
-                courseSections: payload.courseSections,
-                premium: payload.premium,
-                premiumType: payload.premiumType,
-                isPremium: payload.isPremium,
-                premiumActive: payload.premiumActive,
-              }
-            );
-
-            setList((prev) => {
-              const withoutTemp = prev.filter((item) => {
-                const itemId = String(item?._id || item?.id || "");
-
-                return itemId !== String(tempId);
-              });
-
-              const nextList = mergeShopList(withoutTemp, createdShop);
-
-              saveLocalShops(nextList);
-
-              return nextList;
-            });
-          } catch (e) {
-            console.warn("SHOP CREATE BACKGROUND SAVE SKIP:", e.message);
-
-            setList((prev) => {
-              const nextList = mergeShopList(prev, optimisticShop);
-
-              saveLocalShops(nextList);
-
-              return nextList;
-            });
-          }
-
-          loadStats();
-        });
     } catch (e) {
+      console.warn(
+        "SHOP CREATE ERROR:",
+        e.message
+      );
+
       setError(e.message || "업체 생성 실패");
+    } finally {
       setSubmitting(false);
       setLoading(false);
     }
@@ -3549,9 +3799,9 @@ function ShopAdminPage() {
       setTimeout(async () => {
         try {
           const localItems = mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]);
+            ...readBackupShops(),
+            ...readLocalShops(),
+          ]);
 
           const listRes = await Promise.race([
             shopApi.getList(currentAdminCategoryParams),
@@ -3560,7 +3810,7 @@ function ShopAdminPage() {
                 resolve({
                   items: localItems,
                 });
-              }, 900);
+              }, 250);
             }),
           ]);
 
@@ -3604,7 +3854,7 @@ function ShopAdminPage() {
           });
         }
 
-        loadStats();
+        scheduleLoadStats();
       }, 50);
     } catch (e) {
       setError(e.message || "업체 수정 실패");
@@ -3642,6 +3892,11 @@ function ShopAdminPage() {
 
       rememberDeletedShop(deleteTarget);
       removeShopImageBank(deleteTarget);
+      dashboardCacheRef.current = {
+        category: "",
+        items: [],
+      };
+      dashboardCacheTimeRef.current = 0;
 
       const nextList = beforeList.filter((item) => {
         const itemId = String(item?._id || item?.id || "");
@@ -3671,9 +3926,9 @@ function ShopAdminPage() {
       setTimeout(async () => {
         try {
           const localItems = mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]);
+            ...readBackupShops(),
+            ...readLocalShops(),
+          ]);
 
           if (isLocalShopId(deleteId)) {
             setList((prev) => {
@@ -3688,7 +3943,7 @@ function ShopAdminPage() {
               return filtered;
             });
 
-            loadStats();
+            scheduleLoadStats();
             return;
           }
 
@@ -3699,7 +3954,7 @@ function ShopAdminPage() {
                 resolve({
                   items: localItems,
                 });
-              }, 500);
+              }, 250);
             }),
           ]);
 
@@ -3745,7 +4000,7 @@ function ShopAdminPage() {
           });
         }
 
-        loadStats();
+        scheduleLoadStats();
       }, 50);
 
       if (!targetShop || nextList.length !== beforeList.length) {
@@ -3873,9 +4128,8 @@ function ShopAdminPage() {
     return <ErrorMessage message={error} onRetry={load} />;
   }
 
-  return (
-    <AdminLayout title={pageTitle}>
-      <div style={styles.page}>
+  const pageContent = (
+    <div style={styles.page}>
         <div style={styles.header}>
           <h1 style={styles.title}>{pageTitle}</h1>
 
@@ -4031,7 +4285,6 @@ function ShopAdminPage() {
             }}
             style={styles.textarea}
           />
-
 
           <div style={styles.imageBox}>
             <label style={styles.imageLabel}>
@@ -4589,7 +4842,7 @@ function ShopAdminPage() {
 
                     <div style={styles.section}>
                       <strong>추가 코스:</strong>{" "}
-                      {form.courses.length || makeSafeCourses(shop).length
+                      {makeSafeCourses(shop).length
                         ? makeSafeCourses(shop).join(", ")
                         : "-"}
                     </div>
@@ -4738,9 +4991,14 @@ function ShopAdminPage() {
             })}
           </div>
         )}
-      </div>
-    </AdminLayout>
+    </div>
   );
+
+  return shouldWrapAdminLayout ? (
+    <AdminLayout title={pageTitle}>
+      {pageContent}
+    </AdminLayout>
+  ) : pageContent;
 }
 
 const styles = {
@@ -4917,7 +5175,6 @@ const styles = {
     fontWeight: "bold",
     whiteSpace: "nowrap",
   },
-
   imageBox: {
     display: "flex",
     alignItems: "center",

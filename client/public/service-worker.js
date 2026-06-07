@@ -51,11 +51,25 @@ self.addEventListener("activate", (event) => {
 FETCH
 ========================= */
 self.addEventListener("fetch", (event) => {
-  if (!event.request) return;
+  if (!event.request) {
+    return;
+  }
 
   event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
+    fetch(event.request).catch(async () => {
+      const cachedResponse = await caches.match(event.request);
+
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      return new Response("", {
+        status: 504,
+        statusText: "Gateway Timeout",
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+        },
+      });
     })
   );
 });

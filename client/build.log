@@ -1,0 +1,15 @@
+
+> noma-client@1.0.0 build
+> vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 122 modules transformed.
+x Build failed in 1.89s
+error during build:
+Could not resolve "../../services/shop.api" from "src/pages/AdminDashboard.jsx"
+file: /home/ubuntu/noma-project/client/src/pages/AdminDashboard.jsx
+    at getRollupError (file:///home/ubuntu/noma-project/client/node_modules/rollup/dist/es/shared/parseAst.js:406:41)
+    at error (file:///home/ubuntu/noma-project/client/node_modules/rollup/dist/es/shared/parseAst.js:402:42)
+    at ModuleLoader.handleInvalidResolvedId (file:///home/ubuntu/noma-project/client/node_modules/rollup/dist/es/shared/node-entry.js:22120:24)
+    at file:///home/ubuntu/noma-project/client/node_modules/rollup/dist/es/shared/node-entry.js:22080:26
