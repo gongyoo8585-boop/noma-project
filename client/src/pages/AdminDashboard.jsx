@@ -606,6 +606,58 @@ function isHiddenDashboardShop(item = {}) {
     );
 }
 
+function getDashboardShopCategory(item = {}) {
+  if (
+    !item ||
+    typeof item !== "object"
+  ) {
+    return "";
+  }
+
+  return (
+    normalizeDashboardCategory(item.category) ||
+    normalizeDashboardCategory(item.shopCategory) ||
+    normalizeDashboardCategory(item.serviceType) ||
+    normalizeDashboardCategory(item.businessType) ||
+    normalizeDashboardCategory(item.adminCategory) ||
+    normalizeDashboardCategory(item.type) ||
+    normalizeDashboardCategory(item.categoryGroup) ||
+    normalizeDashboardCategory(item.shop?.category) ||
+    normalizeDashboardCategory(item.shop?.shopCategory) ||
+    normalizeDashboardCategory(item.data?.category) ||
+    normalizeDashboardCategory(item.data?.shopCategory) ||
+    ""
+  );
+}
+
+function isSameDashboardShopCategory(item = {}, category = "") {
+  const normalizedCategory =
+    normalizeDashboardCategory(category) ||
+    getDashboardCategory();
+
+  if (!normalizedCategory) {
+    return true;
+  }
+
+  const shopCategory =
+    getDashboardShopCategory(item);
+
+  if (shopCategory) {
+    return shopCategory === normalizedCategory;
+  }
+
+  const textCategory =
+    normalizeDashboardCategory(
+      getDashboardItemText(item)
+    );
+
+  if (textCategory) {
+    return textCategory === normalizedCategory;
+  }
+
+  return normalizedCategory === "massage";
+}
+
 function sanitizeRecentDashboardShops(items, category = "") {
   const uniqueMap =
     new Map();
@@ -614,6 +666,7 @@ function sanitizeRecentDashboardShops(items, category = "") {
     if (
       item &&
       typeof item === "object" &&
+      isSameDashboardShopCategory(item, category) &&
       !isDeletedShop(item, category) &&
       !isHiddenDashboardShop(item)
     ) {
@@ -2173,6 +2226,7 @@ function List({
   const visibleItems =
     toArray(items).filter(
       (item) =>
+        isSameDashboardShopCategory(item, category) &&
         !isDeletedShop(item, category) &&
         !isHiddenDashboardShop(item)
     );
