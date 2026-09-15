@@ -1,61 +1,49 @@
-# =========================================
-# 🔥 BASE IMAGE
-# =========================================
-FROM node:20-alpine
+name: Deploy Massage Platform
 
-# =========================================
-# 🔥 SYSTEM DEPENDENCIES (추가)
-# =========================================
-RUN apk add --no-cache \
-    curl \
-    bash
+on:
+  push:
+    branches:
+      - main
 
-# =========================================
-# 🔥 APP DIRECTORY
-# =========================================
-WORKDIR /app
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-# =========================================
-# 🔥 INSTALL DEPENDENCIES (캐시 최적화)
-# =========================================
-COPY package*.json ./
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-RUN npm ci --omit=dev || npm install --production || npm install
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-# =========================================
-# 🔥 COPY SOURCE
-# =========================================
-COPY . .
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            cd ${{ secrets.PROJECT_PATH }}
 
-# =========================================
-# 🔥 PERMISSIONS (추가 안정성)
-# =========================================
-RUN mkdir -p /app/logs /app/uploads && \
-    chmod -R 755 /app
+            git pull origin main
 
-# =========================================
-# 🔥 ENV
-# =========================================
-ENV NODE_ENV=production
-ENV PORT=3000
+            npm install
 
-# =========================================
-# 🔥 EXPOSE
-# =========================================
-EXPOSE 3000
+            cd client
+            npm install
+            npm run build
+            cd ..
 
-# =========================================
-# 🔥 HEALTHCHECK (강화)
-# =========================================
-HEALTHCHECK --interval=20s --timeout=5s --start-period=15s --retries=5 \
-  CMD curl -f http://localhost:3000/health || exit 1
+            pm2 restart nora-api || pm2 start ecosystem.config.js --only nora-api
 
-# =========================================
-# 🔥 GRACEFUL SHUTDOWN (추가)
-# =========================================
-STOPSIGNAL SIGTERM
+            pm2 save
 
-# =========================================
-# 🔥 RUN (안정성 개선)
-# =========================================
-CMD ["node", "server.js"]
+            sudo systemctl reload nginx
+
+      - name: Health Check
+        run: |
+          curl -fsSI https://api.nora365.co.kr
+          curl -fsSI https://www.nora365.co.kr

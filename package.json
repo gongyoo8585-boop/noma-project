@@ -1,15 +1,16 @@
 {
-  "name": "noma-platform",
+  "name": "nora-platform",
   "version": "1.0.0",
-  "description": "노마 마사지 플랫폼",
+  "description": "노라 마사지 플랫폼",
   "main": "server.js",
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "dev": "cross-env NODE_ENV=development nodemon server.js",
+    "dev": "cross-env NODE_ENV=development HOST=0.0.0.0 nodemon server.js",
     "prod": "cross-env NODE_ENV=production node server.js",
+    "prod-safe": "cross-env NODE_ENV=production node --max-old-space-size=512 server.js",
     "restart": "npm install && npm run dev",
-    "check": "node -e \"console.log('OK')\"",
+    "check": "node -c server.js && node -e \"console.log('OK')\"",
     "postinstall": "echo Dependencies installed",
     "lint": "echo lint pass",
     "format": "prettier --write .",
@@ -18,17 +19,16 @@
     "env": "node -e \"console.log(process.env)\"",
     "kill-port": "npx kill-port 10000",
     "start:clean": "npm run kill-port && npm start",
-    "debug": "node --inspect server.js",
-    "prod-safe": "cross-env NODE_ENV=production node --max-old-space-size=512 server.js",
+    "debug": "node --inspect=0.0.0.0:9229 server.js",
     "doctor": "npm doctor"
   },
   "keywords": [
-    "noma",
+    "nora",
     "platform",
     "massage",
     "booking"
   ],
-  "author": "NOMA",
+  "author": "NORA",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=18.0.0"
@@ -46,11 +46,14 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.23.0",
     "morgan": "^1.10.1",
+    "multer": "^2.3.0",
+    "nodemailer": "^6.9.16",
     "redis": "^5.12.1",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
+    "kill-port": "^2.0.1",
     "nodemon": "^3.1.14",
     "prettier": "^3.3.3"
   }

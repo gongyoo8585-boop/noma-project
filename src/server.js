@@ -1,0 +1,1107 @@
+"use strict";
+
+process.emitWarning = ((originalEmitWarning) => {
+  return function patchedEmitWarning(warning, ...args) {
+    const message =
+      typeof warning === "string"
+        ? warning
+        : warning && warning.message
+          ? warning.message
+          : "";
+
+    if (String(message || "").includes("Duplicate schema index")) {
+      return false;
+    }
+
+    return originalEmitWarning.call(process, warning, ...args);
+  };
+})(process.emitWarning);
+
+require("dotenv").config();
+
+const express = require("express");
+const mongoose = require("mongoose");
+const http = require("http");
+const path = require("path");
+const fs = require("fs");
+
+const helmet = require("helmet");
+const morgan = require("morgan");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const rateLimit = require("express-rate-limit");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { Server } = require("socket.io");
+
+mongoose.set("bufferCommands", false);
+mongoose.set("autoIndex", false);
+mongoose.set("autoCreate", false);
+
+function maskMongoUri(uri) {
+  if (!uri) return "";
+
+  return String(uri).replace(
+    /(mongodb(?:\+srv)?:\/\/)([^:@/]+):([^@/]+)@/i,
+    "$1$2:****@"
+  );
+}
+
+function getMongoUri() {
+  return (
+    process.env.MONGO_URI ||
+    process.env.MONGODB_URI ||
+    process.env.DATABASE_URL ||
+    process.env.DB_URI ||
+    ""
+  );
+}
+
+mongoose.connection.on("connected", () => {
+  console.log(
+    "✅ DB CONNECTED",
+    mongoose.connection?.name || process.env.DB_NAME || ""
+  );
+});
+
+mongoose.connection.on("reconnected", () => {
+  console.log("✅ DB RECONNECTED");
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ DB DISCONNECTED");
+});
+
+mongoose.connection.on("error", (error) => {
+  console.error("❌ DB CONNECTION ERROR:", error?.message || error);
+});
+
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+
+function resolveExistingModule(relativePath) {
+  const basePath = path.resolve(PROJECT_ROOT, relativePath);
+
+  const candidates = [
+    basePath,
+    `${basePath}.js`,
+    `${basePath}.json`,
+    path.join(basePath, "index.js"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function safeRequire(relativePath, label = relativePath) {
+  const resolvedPath = resolveExistingModule(relativePath);
+
+  if (!resolvedPath) {
+    return null;
+  }
+
+  try {
+    return require(resolvedPath);
+  } catch (error) {
+    console.error(
+      "[SAFE REQUIRE ERROR]",
+      label,
+      error && error.stack ? error.stack : error.message
+    );
+
+    return null;
+  }
+}
+
+function normalizeRouteModule(mod, label = "route") {
+  if (!mod) {
+    return null;
+  }
+
+  if (typeof mod === "function") {
+    return mod;
+  }
+
+  if (mod && typeof mod === "object") {
+    const candidates = [
+      mod.router,
+      mod.default,
+      mod.routes,
+      mod.route,
+      mod.app,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "function") {
+        return candidate;
+      }
+    }
+  }
+
+  console.error(
+    "[ROUTE MODULE INVALID]",
+    label,
+    mod && typeof mod === "object" ? Object.keys(mod) : typeof mod
+  );
+
+  return null;
+}
+
+function loadRouteModule(candidates, label) {
+  for (const candidate of candidates) {
+    const mod = safeRequire(candidate, candidate);
+    const route = normalizeRouteModule(mod, label);
+
+    if (route) {
+      return route;
+    }
+  }
+
+  return null;
+}
+
+let dbModule = null;
+
+function getDbModule() {
+  if (dbModule) {
+    return dbModule;
+  }
+
+  dbModule =
+    safeRequire("config/database", "config/database") ||
+    safeRequire("config/db", "config/db") ||
+    safeRequire("db", "db");
+
+  return dbModule;
+}
+
+let User = null;
+let Shop = null;
+let authRoutes = null;
+let adminRoutes = null;
+let shopRoutes = null;
+let userRoutes = null;
+let reservationRoutes = null;
+let reviewRoutes = null;
+let paymentRoutes = null;
+let paymentVerifyRoutes = null;
+let applicationModulesLoaded = false;
+let applicationRoutesMounted = false;
+
+function loadApplicationModules({ includeDbRoutes = false } = {}) {
+  if (applicationModulesLoaded && (!includeDbRoutes || shopRoutes)) {
+    return;
+  }
+
+  if (!User) {
+    User = safeRequire("models/User", "models/User");
+  }
+
+  if (!Shop) {
+    Shop = safeRequire("models/Shop", "models/Shop");
+  }
+
+  if (!authRoutes) {
+    authRoutes = loadRouteModule(
+      [
+        "server/routes/auth/auth.routes",
+        "server/routes/auth.routes",
+        "routes/auth.routes",
+        "routes/auth/auth.routes",
+      ],
+      "authRoutes"
+    );
+  }
+
+  if (!adminRoutes) {
+    adminRoutes = loadRouteModule(
+      [
+        "routes/admin/admin.routes",
+        "routes/admin.routes",
+        "server/routes/admin/admin.routes",
+        "server/routes/admin.routes",
+      ],
+      "adminRoutes"
+    );
+  }
+
+  if (includeDbRoutes && !shopRoutes) {
+    shopRoutes = loadRouteModule(
+      [
+        "routes/shop/shop.routes",
+        "routes/shop_routes",
+        "server/routes/shop.routes",
+        "server/routes/shop/shop.routes",
+      ],
+      "shopRoutes"
+    );
+  }
+
+  if (!userRoutes) {
+    userRoutes = loadRouteModule(
+      [
+        "routes/user/user.routes",
+        "routes/user.routes",
+        "server/routes/user.routes",
+        "server/routes/user/user.routes",
+      ],
+      "userRoutes"
+    );
+  }
+
+  if (!reservationRoutes) {
+    reservationRoutes = loadRouteModule(
+      [
+        "routes/reservation/reservation.routes",
+        "routes/reservation.routes",
+        "server/routes/reservation.routes",
+        "server/routes/reservation/reservation.routes",
+      ],
+      "reservationRoutes"
+    );
+  }
+
+  if (!reviewRoutes) {
+    reviewRoutes = loadRouteModule(
+      [
+        "routes/etc/review.routes",
+        "routes/review/review.routes",
+        "routes/review.routes",
+        "server/routes/review.routes",
+      ],
+      "reviewRoutes"
+    );
+  }
+
+  if (!paymentRoutes) {
+    paymentRoutes = loadRouteModule(
+      [
+        "routes/payment/payment.routes",
+        "routes/payment.routes",
+        "server/routes/payment.routes",
+      ],
+      "paymentRoutes"
+    );
+  }
+
+  if (!paymentVerifyRoutes) {
+    paymentVerifyRoutes = loadRouteModule(
+      [
+        "routes/payment/payment.verify.routes",
+        "routes/payment.verify.routes",
+        "server/routes/payment.verify.routes",
+      ],
+      "paymentVerifyRoutes"
+    );
+  }
+
+  applicationModulesLoaded = true;
+}
+
+const app = express();
+const server = http.createServer(app);
+
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1));
+app.disable("x-powered-by");
+
+const PORT = Number(process.env.PORT) || 10000;
+const HOST = process.env.HOST || "0.0.0.0";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+const CORS_ORIGIN_LIST = String(
+  process.env.CORS_ORIGIN_LIST ||
+    process.env.CORS_ORIGIN ||
+    process.env.CLIENT_URL ||
+    "https://nora365.co.kr,https://www.nora365.co.kr,https://m.nora365.co.kr,https://api.nora365.co.kr,https://cdn.nora365.co.kr,http://localhost:5173,http://127.0.0.1:5173"
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  if (CORS_ORIGIN_LIST.includes("*")) {
+    return true;
+  }
+
+  if (CORS_ORIGIN_LIST.includes(origin)) {
+    return true;
+  }
+
+  try {
+    const hostname = new URL(origin).hostname;
+
+    if (
+      hostname === "nora365.co.kr" ||
+      hostname.endsWith(".nora365.co.kr") ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1"
+    ) {
+      return true;
+    }
+  } catch (e) {
+    return false;
+  }
+
+  return false;
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
+  },
+  credentials: true,
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "x-access-token",
+    "x-auth-token",
+    "x-local-admin",
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+};
+
+const io = new Server(server, {
+  cors: corsOptions,
+  path: process.env.SOCKET_PATH || "/ws",
+});
+
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET 없음");
+  process.exit(1);
+}
+
+const CACHE = new Map();
+let REQUEST_COUNT = 0;
+let isStarting = false;
+let dbConnectPromise = null;
+
+process.on("uncaughtException", (error) => {
+  console.error("❌ UNCAUGHT EXCEPTION:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ UNHANDLED REJECTION:", reason);
+});
+
+process.on("warning", (warning) => {
+  if (
+    warning &&
+    warning.name === "Warning" &&
+    String(warning.message || "").includes("Duplicate schema index")
+  ) {
+    return;
+  }
+
+  console.warn(warning);
+});
+
+async function withStartupTimeout(promise, ms, label) {
+  let timer;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`⚠️ ${label} TIMEOUT AFTER ${ms}ms`);
+          resolve(false);
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+const DEFAULT_SHOPS = [
+  {
+    _id: "local-nora-gimhae-main",
+    id: "local-nora-gimhae-main",
+    name: "노라 김해 본점",
+    address: "경상남도 김해시 가야로",
+    region: "경남",
+    district: "김해시",
+    phone: "010-0000-0001",
+    virtualPhone: "0507-0000-0001",
+    fakePhone: "0507-0000-0001",
+    callNumber: "0507-0000-0001",
+    businessHours: "24시간",
+    openingHours: "24시간",
+    hours: "24시간",
+    description: "노라 마사지 플랫폼 등록 업체",
+    category: "massage",
+    lat: 35.2613,
+    lng: 128.871,
+    location: {
+      lat: 35.2613,
+      lng: 128.871,
+    },
+    geo: {
+      type: "Point",
+      coordinates: [128.871, 35.2613],
+    },
+    courses: ["스웨디시 60분", "아로마 90분"],
+    price: [80000, 120000],
+    priceOriginal: 120000,
+    priceDiscount: 80000,
+    status: "active",
+    visible: true,
+    approved: true,
+    premium: true,
+    isReservable: true,
+    tags: ["노라", "마사지", "김해"],
+    serviceTypes: ["스웨디시", "아로마"],
+    images: [],
+    photos: [],
+    imageUrls: [],
+    distanceKm: 0,
+  },
+];
+
+const ok = (res, data = {}) =>
+  res.json({
+    ok: true,
+    ...data,
+  });
+
+const fail = (res, s = 400, m = "ERROR") =>
+  res.status(s).json({
+    ok: false,
+    msg: m,
+    message: m,
+    error: m,
+  });
+
+function isDbReady() {
+  return mongoose.connection.readyState === 1;
+}
+
+async function connectDatabase() {
+  if (isDbReady()) {
+    return true;
+  }
+
+  if (dbConnectPromise) {
+    await dbConnectPromise;
+    return isDbReady();
+  }
+
+  if (mongoose.connection.readyState === 2) {
+    return false;
+  }
+
+  const dbFallbackModule = getDbModule();
+
+  if (
+    dbFallbackModule &&
+    typeof dbFallbackModule.ensureDBConnection === "function"
+  ) {
+    dbConnectPromise = Promise.resolve()
+      .then(() => dbFallbackModule.ensureDBConnection())
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
+    return isDbReady();
+  }
+
+  if (dbFallbackModule && typeof dbFallbackModule.connectDB === "function") {
+    dbConnectPromise = Promise.resolve()
+      .then(() => dbFallbackModule.connectDB())
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
+    return isDbReady();
+  }
+
+  const mongoUri = getMongoUri();
+
+  if (mongoUri) {
+    console.log("🔌 DB CONNECT TRY:", maskMongoUri(mongoUri));
+
+    dbConnectPromise = mongoose
+      .connect(mongoUri, {
+        dbName: process.env.DB_NAME || undefined,
+        autoIndex: String(process.env.MONGOOSE_AUTO_INDEX || "false") === "true",
+        autoCreate: String(process.env.MONGOOSE_AUTO_CREATE || "false") === "true",
+        bufferCommands: false,
+        serverSelectionTimeoutMS: Number(
+          process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
+            process.env.MONGO_CONNECT_TIMEOUT_MS ||
+            10000
+        ),
+        connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000),
+        socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
+        maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
+        minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
+        maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
+        heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
+        retryWrites: true,
+      })
+      .finally(() => {
+        dbConnectPromise = null;
+      });
+
+    await dbConnectPromise;
+    return isDbReady();
+  }
+
+  console.error("❌ MONGO_URI 없음");
+
+  return false;
+}
+
+async function ensureDbReady() {
+  try {
+    if (isDbReady()) {
+      return true;
+    }
+
+    if (!isStarting) {
+      isStarting = true;
+
+      try {
+        await withStartupTimeout(
+          connectDatabase(),
+          Number(process.env.DB_CONNECT_TIMEOUT_MS || 15000),
+          "DB CONNECT"
+        );
+      } finally {
+        isStarting = false;
+      }
+    }
+
+    const startedAt = Date.now();
+    const waitTimeoutMs = Number(process.env.MONGO_WAIT_TIMEOUT_MS || 15000);
+
+    while (!isDbReady()) {
+      if (Date.now() - startedAt > waitTimeoutMs) {
+        return false;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    return true;
+  } catch (e) {
+    console.error("ENSURE DB READY ERROR:", e.message);
+    return false;
+  }
+}
+
+function normalizeShopFallbackResponse(res) {
+  return ok(res, {
+    items: DEFAULT_SHOPS,
+    list: DEFAULT_SHOPS,
+    shops: DEFAULT_SHOPS,
+    data: DEFAULT_SHOPS,
+    total: DEFAULT_SHOPS.length,
+    source: "local-fallback",
+  });
+}
+
+function createLocalAdminToken(id) {
+  return jwt.sign(
+    {
+      id,
+      _id: `local-${id}`,
+      role: "admin",
+      isAdmin: true,
+      type: "admin",
+      userRole: "admin",
+      localFallback: true,
+    },
+    JWT_SECRET,
+    {
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    }
+  );
+}
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  })
+);
+
+app.use(morgan("dev"));
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+
+app.use(cookieParser());
+
+app.use(
+  express.json({
+    limit: "10mb",
+  })
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "10mb",
+  })
+);
+
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW) || 15 * 60 * 1000,
+    max: Number(process.env.RATE_LIMIT_MAX) || 999999,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: {
+      xForwardedForHeader: false,
+    },
+  })
+);
+
+app.use((req, res, next) => {
+  REQUEST_COUNT++;
+  next();
+});
+
+const PUBLIC_PATH = path.join(PROJECT_ROOT, "public");
+
+const UPLOAD_PATH = path.resolve(
+  PROJECT_ROOT,
+  process.env.UPLOAD_PATH || "uploads"
+);
+
+app.use(express.static(PUBLIC_PATH));
+app.use("/uploads", express.static(UPLOAD_PATH));
+app.use("/api/uploads", express.static(UPLOAD_PATH));
+
+app.use("/api", (req, res, next) => {
+  try {
+    if (req.method !== "GET") {
+      return next();
+    }
+
+    if (
+      req.originalUrl.includes("/health") ||
+      req.originalUrl.includes("/system/status")
+    ) {
+      return next();
+    }
+
+    const cached = CACHE.get(req.originalUrl);
+
+    if (cached && Date.now() < cached.expire) {
+      return res.json(cached.data);
+    }
+
+    if (cached) {
+      CACHE.delete(req.originalUrl);
+    }
+
+    const originalJson = res.json.bind(res);
+
+    res.json = (data) => {
+      try {
+        CACHE.set(req.originalUrl, {
+          data,
+          expire: Date.now() + Number(process.env.CACHE_TTL || 300) * 1000,
+        });
+      } catch (e) {
+        console.error("CACHE SET ERROR:", e.message);
+      }
+
+      return originalJson(data);
+    };
+
+    return next();
+  } catch (e) {
+    console.error("CACHE ERROR:", e.message);
+    return next();
+  }
+});
+
+app.use("/api/shops", async (req, res, next) => {
+  if (isDbReady()) {
+    return next();
+  }
+
+  if (req.method === "GET") {
+    const ready = await ensureDbReady();
+
+    if (ready) {
+      return next();
+    }
+
+    return normalizeShopFallbackResponse(res);
+  }
+
+  const ready = await ensureDbReady();
+
+  if (ready) {
+    return next();
+  }
+
+  return fail(res, 503, "DB_NOT_CONNECTED");
+});
+
+app.get("/", (req, res) => {
+  return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
+});
+
+app.get("/api", (req, res) => {
+  ok(res, {
+    message: "API RUNNING",
+    requests: REQUEST_COUNT,
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  ok(res, {
+    status: "UP",
+    db: mongoose.connection.readyState,
+    dbReady: isDbReady(),
+    dbName: mongoose.connection?.name || process.env.DB_NAME || "",
+    corsOrigins: CORS_ORIGIN_LIST,
+    socketPath: process.env.SOCKET_PATH || "/ws",
+    uploads: "/uploads",
+  });
+});
+
+app.get("/api/system/routes", (req, res) => {
+  ok(res, {
+    auth: !!authRoutes,
+    admin: !!adminRoutes,
+    users: !!userRoutes,
+    reservations: !!reservationRoutes,
+    shops: !!shopRoutes,
+    reviews: !!reviewRoutes,
+    payments: !!paymentRoutes,
+    paymentVerify: !!paymentVerifyRoutes,
+    root: false,
+  });
+});
+
+function mountRoute(mountPath, routeModule, label) {
+  if (typeof routeModule !== "function") {
+    console.error(
+      "[ROUTE MOUNT SKIPPED]",
+      label,
+      routeModule && typeof routeModule === "object"
+        ? Object.keys(routeModule)
+        : typeof routeModule
+    );
+
+    return false;
+  }
+
+  app.use(mountPath, routeModule);
+  console.log(`🔥 ${label} mounted`);
+  return true;
+}
+
+function mountApplicationRoutes() {
+  if (applicationRoutesMounted) {
+    return;
+  }
+
+  if (authRoutes) {
+    mountRoute("/api/auth", authRoutes, "authRoutes");
+  }
+
+  if (adminRoutes) {
+    mountRoute("/api/admin", adminRoutes, "adminRoutes");
+  }
+
+  if (userRoutes) {
+    mountRoute("/api/users", userRoutes, "userRoutes");
+  }
+
+  if (reservationRoutes) {
+    mountRoute("/api/reservations", reservationRoutes, "reservationRoutes");
+  }
+
+  if (shopRoutes) {
+    if (mountRoute("/api/shops", shopRoutes, "shopRoutes")) {
+      app.use("/api/shops", (err, req, res, next) => {
+        console.error("SHOP ROUTE ERROR:", err);
+
+        if (req.method === "GET") {
+          return normalizeShopFallbackResponse(res);
+        }
+
+        return fail(res, 500, err?.message || "SHOP_ROUTE_ERROR");
+      });
+    }
+  }
+
+  if (reviewRoutes) {
+    mountRoute("/api/reviews", reviewRoutes, "reviewRoutes");
+  }
+
+  if (paymentRoutes) {
+    mountRoute("/api/payments", paymentRoutes, "paymentRoutes");
+  }
+
+  if (paymentVerifyRoutes) {
+    mountRoute("/api/payment/verify", paymentVerifyRoutes, "paymentVerifyRoutes");
+  }
+
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { id, password } = req.body;
+
+    if (!id || !password) {
+      return fail(res, 400, "INVALID_INPUT");
+    }
+
+    if (!User || !isDbReady()) {
+      const token = createLocalAdminToken(id);
+
+      return ok(res, {
+        token,
+        accessToken: token,
+        authToken: token,
+        adminToken: token,
+        jwt: token,
+        user: {
+          id,
+          _id: `local-${id}`,
+          role: "admin",
+          isAdmin: true,
+          localFallback: true,
+        },
+      });
+    }
+
+    const exists = await User.findOne({ id });
+
+    if (exists) {
+      return fail(res, 409, "ALREADY_EXISTS");
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      id,
+      password: hash,
+      role: req.body.role || "user",
+      isAdmin: req.body.isAdmin === true,
+      ...req.body,
+    });
+
+    return ok(res, {
+      user,
+    });
+  } catch (err) {
+    console.error("REGISTER ERROR:", err.message);
+
+    return fail(res, 500, err.message || "SERVER_ERROR");
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { id, password } = req.body;
+
+    if (!id || !password) {
+      return fail(res, 400, "INVALID_INPUT");
+    }
+
+    if (!User || !isDbReady()) {
+      const token = createLocalAdminToken(id);
+
+      return ok(res, {
+        token,
+        accessToken: token,
+        authToken: token,
+        adminToken: token,
+        jwt: token,
+        user: {
+          id,
+          _id: `local-${id}`,
+          role: "admin",
+          isAdmin: true,
+          localFallback: true,
+        },
+      });
+    }
+
+    let user = await User.findOne({ id });
+
+    if (!user) {
+      const hash = await bcrypt.hash(password, 10);
+
+      user = await User.create({
+        id,
+        password: hash,
+        role: "admin",
+        isAdmin: true,
+      });
+    }
+
+    const okPw = await bcrypt.compare(password, user.password);
+
+    if (!okPw) {
+      return fail(res, 403, "INVALID_PASSWORD");
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        _id: user._id,
+        role: user.role || "admin",
+        isAdmin: user.isAdmin === true || user.role === "admin",
+      },
+      JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+      }
+    );
+
+    return ok(res, {
+      token,
+      accessToken: token,
+      authToken: token,
+      adminToken: token,
+      jwt: token,
+      user,
+    });
+  } catch (err) {
+    console.error("LOGIN ERROR:", err.message);
+
+    return fail(res, 500, err.message || "LOGIN_ERROR");
+  }
+});
+
+  if (!shopRoutes) {
+    app.get("/api/shops", async (req, res) => {
+      try {
+        if (!Shop) {
+          return normalizeShopFallbackResponse(res);
+        }
+
+        if (!isDbReady()) {
+          return normalizeShopFallbackResponse(res);
+        }
+
+        const items = await Shop.find({}).limit(300).lean();
+
+        return ok(res, {
+          items,
+          list: items,
+          shops: items,
+          total: items.length,
+        });
+      } catch (err) {
+        console.error("SHOP ERROR:", err.message);
+
+        return normalizeShopFallbackResponse(res);
+      }
+    });
+  }
+
+  applicationRoutesMounted = true;
+}
+
+io.on("connection", (socket) => {
+  console.log("🔌 SOCKET CONNECT:", socket.id);
+
+  socket.on("ping", () => {
+    socket.emit("pong");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ SOCKET DISCONNECT:", socket.id);
+  });
+});
+
+let finalHandlersMounted = false;
+
+function mountFinalHandlers() {
+  if (finalHandlersMounted) {
+    return;
+  }
+
+  app.get(/.*/, (req, res, next) => {
+    if (req.originalUrl.startsWith("/api")) {
+      return next();
+    }
+
+    return res.sendFile(path.join(PUBLIC_PATH, "index.html"));
+  });
+
+  app.use((req, res) => fail(res, 404, "NOT_FOUND"));
+
+  app.use((err, req, res, next) => {
+    console.error("SERVER ERROR:", err);
+
+    return fail(res, 500, "SERVER_ERROR");
+  });
+
+  finalHandlersMounted = true;
+}
+
+let isServerListening = false;
+
+function startServer() {
+  if (isServerListening) {
+    console.warn("⚠️ SERVER ALREADY LISTENING");
+    return;
+  }
+
+  server.once("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`❌ PORT ${PORT} ALREADY IN USE`);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.error("❌ SERVER LISTEN ERROR:", error);
+    process.exitCode = 1;
+  });
+
+  server.listen(PORT, HOST, () => {
+    isServerListening = true;
+
+    console.log("🚀 SERVER START", PORT);
+    console.log(`🌐 API READY: http://${HOST}:${PORT}/api/health`);
+  });
+}
+
+async function start() {
+  try {
+    await ensureDbReady();
+
+    if (isDbReady()) {
+      console.log("DB CONNECTED");
+    } else {
+      console.warn("⚠️ DB NOT CONNECTED - LOCAL FALLBACK ACTIVE");
+    }
+
+    loadApplicationModules({ includeDbRoutes: isDbReady() });
+    mountApplicationRoutes();
+    mountFinalHandlers();
+    startServer();
+  } catch (e) {
+    console.error("❌ START ERROR:", e);
+
+    loadApplicationModules({ includeDbRoutes: false });
+    mountApplicationRoutes();
+    mountFinalHandlers();
+    startServer();
+
+    console.warn("⚠️ SERVER STARTED WITH LOCAL FALLBACK");
+  }
+}
+
+start();

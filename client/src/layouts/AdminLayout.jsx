@@ -1,0 +1,163 @@
+"use strict";
+
+import React from "react";
+
+import Loading from "../components/common/Loading";
+import ErrorMessage from "../components/common/ErrorMessage";
+import EmptyState from "../components/common/EmptyState";
+
+import AdminSidebar from "../components/admin/AdminSidebar";
+import AdminHeader from "../components/admin/AdminHeader";
+
+/**
+ * =====================================================
+ * 🔥 ADMIN LAYOUT
+ * ✔ 관리자 공통 레이아웃
+ * ✔ Sidebar + Header 포함
+ * ✔ 블랙 / 골드 테마
+ * ✔ 반응형 지원
+ * ✔ children 안전 처리
+ * ✔ loading / error / empty 대응
+ * ✔ 기존 구조 충돌 없음
+ * ✔ 단독 사용 가능
+ * ✔ 관리자 페이지 공통 레이아웃
+ * =====================================================
+ */
+
+export default function AdminLayout({
+  title = "NOMA ADMIN",
+  loading = false,
+  error = "",
+  empty = false,
+  emptyMessage = "데이터가 없습니다.",
+  children,
+}) {
+  /* =====================================================
+  🔥 loading 상태
+  ===================================================== */
+  if (loading) {
+    return (
+      <div style={styles.stateWrapper}>
+        <Loading message="관리자 페이지 로딩 중..." />
+      </div>
+    );
+  }
+
+  /* =====================================================
+  🔥 error 상태
+  ===================================================== */
+  if (error) {
+    return (
+      <div style={styles.stateWrapper}>
+        <ErrorMessage
+          message={error}
+        />
+      </div>
+    );
+  }
+
+  /* =====================================================
+  🔥 empty 상태
+  ===================================================== */
+  if (empty) {
+    return (
+      <div style={styles.stateWrapper}>
+        <EmptyState
+          message={emptyMessage}
+        />
+      </div>
+    );
+  }
+
+  /* =====================================================
+  🔥 children 안전 처리
+  ===================================================== */
+  if (
+    children === undefined ||
+    children === null
+  ) {
+    return (
+      <div style={styles.stateWrapper}>
+        <EmptyState message="페이지 내용을 불러올 수 없습니다." />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="admin-layout"
+      style={styles.wrapper}
+    >
+      {/* =========================
+      SIDEBAR
+      ========================= */}
+      <div style={styles.sidebar}>
+        <AdminSidebar />
+      </div>
+
+      {/* =========================
+      CONTENT
+      ========================= */}
+      <div style={styles.contentWrapper}>
+        {/* HEADER */}
+        <AdminHeader
+          title={title}
+        />
+
+        {/* BODY */}
+        <main style={styles.main}>
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  wrapper: {
+    width: "100%",
+    minHeight: "100vh",
+    display: "flex",
+    background: "#000",
+    color: "#fff",
+    overflow: "hidden",
+  },
+
+  sidebar: {
+    width: 240,
+    minWidth: 240,
+    background: "#000",
+    borderRight: "1px solid #222",
+    boxSizing: "border-box",
+    overflowY: "auto",
+  },
+
+  contentWrapper: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    background: "#111",
+  },
+
+  main: {
+    flex: 1,
+    padding: 24,
+    boxSizing: "border-box",
+    overflowX: "auto",
+    overflowY: "auto",
+    background: "#111",
+  },
+
+  stateWrapper: {
+    width: "100%",
+    minHeight: "100vh",
+    background: "#000",
+    color: "#fff",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+    boxSizing: "border-box",
+  },
+};

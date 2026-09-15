@@ -63,6 +63,30 @@ controller.block =
   controller.updateBlock ||
   controller.blockUser;
 
+controller.updateServiceType =
+  controller.updateServiceType ||
+  controller.setServiceType;
+
+controller.updateJobGrade =
+  controller.updateJobGrade ||
+  controller.setJobGrade;
+
+controller.updateJobPostingEnabled =
+  controller.updateJobPostingEnabled ||
+  controller.setJobPostingEnabled;
+
+controller.getShopLinks =
+  controller.getShopLinks ||
+  controller.listShopLinks;
+
+controller.linkShopToUser =
+  controller.linkShopToUser ||
+  controller.setShopOwner;
+
+controller.unlinkShopFromUser =
+  controller.unlinkShopFromUser ||
+  controller.removeShopOwner;
+
 /* =========================
 FALLBACK
 ========================= */
@@ -385,6 +409,39 @@ router.get(
   )
 );
 
+router.get(
+  "/admin/shop-links",
+  auth,
+  admin,
+  rateLimit,
+  safe(
+    controller.getShopLinks,
+    "getShopLinks"
+  )
+);
+
+router.post(
+  "/admin/shop-links/user/:userId",
+  auth,
+  admin,
+  rateLimit,
+  safe(
+    controller.linkShopToUser,
+    "linkShopToUser"
+  )
+);
+
+router.delete(
+  "/admin/shop-links/user/:userId",
+  auth,
+  admin,
+  rateLimit,
+  safe(
+    controller.unlinkShopFromUser,
+    "unlinkShopFromUser"
+  )
+);
+
 router.patch(
   "/:id/role",
   auth,
@@ -394,6 +451,42 @@ router.patch(
   safe(
     controller.updateRole,
     "updateRole"
+  )
+);
+
+router.patch(
+  "/:id/service-type",
+  auth,
+  admin,
+  rateLimit,
+  validateId,
+  safe(
+    controller.updateServiceType,
+    "updateServiceType"
+  )
+);
+
+router.patch(
+  "/:id/job-grade",
+  auth,
+  admin,
+  rateLimit,
+  validateId,
+  safe(
+    controller.updateJobGrade,
+    "updateJobGrade"
+  )
+);
+
+router.patch(
+  "/:id/job-posting-enabled",
+  auth,
+  admin,
+  rateLimit,
+  validateId,
+  safe(
+    controller.updateJobPostingEnabled,
+    "updateJobPostingEnabled"
   )
 );
 

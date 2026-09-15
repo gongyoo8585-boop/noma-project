@@ -11,6 +11,9 @@
  * ✔ admin dashboard 데이터 0 문제 수정
  * ✔ 배열 응답 구조 추가
  * ✔ 프론트 summary/recent 동시 호환
+ * ✔ 카테고리별 매장 수 불일치 수정
+ * ✔ /admin/karaoke path category 인식
+ * ✔ Shop 원본 필드 + 런타임 분류 동시 지원
  * ✔ 기존 흐름 유지
  * =====================================================
  */
@@ -62,10 +65,221 @@ function fail(
     });
 }
 
+function normalizeDashboardCategory(value) {
+  const text = String(value || "")
+    .toLowerCase()
+    .trim();
+
+  if (
+    text.includes("/admin/karaoke") ||
+    text.includes("category=karaoke") ||
+    text.includes("shopcategory=karaoke") ||
+    text.includes("servicetype=karaoke") ||
+    text.includes("businesstype=karaoke") ||
+    text.includes("admincategory=karaoke") ||
+    text === "karaoke" ||
+    text === "노래방" ||
+    text === "가라오케" ||
+    text === "coin-karaoke" ||
+    text === "coin_karaoke" ||
+    text === "nora-karaoke" ||
+    text === "nora_karaoke"
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    text.includes("/admin/massage") ||
+    text.includes("category=massage") ||
+    text.includes("shopcategory=massage") ||
+    text.includes("servicetype=massage") ||
+    text.includes("businesstype=massage") ||
+    text.includes("admincategory=massage") ||
+    text === "massage" ||
+    text === "마사지" ||
+    text === "shop" ||
+    text === "nora-massage" ||
+    text === "nora_massage"
+  ) {
+    return "massage";
+  }
+
+  return "";
+}
+
+function getDashboardCategory(req) {
+  const queryCategory =
+    normalizeDashboardCategory(req?.query?.category) ||
+    normalizeDashboardCategory(req?.query?.shopCategory) ||
+    normalizeDashboardCategory(req?.query?.serviceType) ||
+    normalizeDashboardCategory(req?.query?.businessType) ||
+    normalizeDashboardCategory(req?.query?.adminCategory);
+
+  if (queryCategory) {
+    return queryCategory;
+  }
+
+  const originalUrlCategory =
+    normalizeDashboardCategory(req?.originalUrl) ||
+    normalizeDashboardCategory(req?.url) ||
+    normalizeDashboardCategory(req?.path);
+
+  if (originalUrlCategory) {
+    return originalUrlCategory;
+  }
+
+  const referer =
+    req?.headers?.referer ||
+    req?.headers?.referrer ||
+    "";
+
+  const refererCategory =
+    normalizeDashboardCategory(referer);
+
+  if (refererCategory) {
+    return refererCategory;
+  }
+
+  return "massage";
+}
+
+function createShopCategoryAliases(category) {
+  const normalized =
+    normalizeDashboardCategory(category);
+
+  if (normalized === "karaoke") {
+    return [
+      "karaoke",
+      "노래방",
+      "가라오케",
+      "coin-karaoke",
+      "coin_karaoke",
+      "nora-karaoke",
+      "nora_karaoke",
+    ];
+  }
+
+  if (normalized === "massage") {
+    return [
+      "massage",
+      "마사지",
+      "shop",
+      "nora-massage",
+      "nora_massage",
+    ];
+  }
+
+  return [];
+}
+
+function createShopCategoryFilter(category) {
+  const aliases =
+    createShopCategoryAliases(category);
+
+  if (!aliases.length) {
+    return {};
+  }
+
+  return {
+    $and: [
+      {
+        $or: [
+          { category: { $in: aliases } },
+          { shopCategory: { $in: aliases } },
+          { serviceType: { $in: aliases } },
+          { businessType: { $in: aliases } },
+          { adminCategory: { $in: aliases } },
+          { type: { $in: aliases } },
+          { categoryGroup: { $in: aliases } },
+          { shopType: { $in: aliases } },
+          { mainCategory: { $in: aliases } },
+          { service: { $in: aliases } },
+        ],
+      },
+      {
+        isDeleted: { $ne: true },
+      },
+    ],
+  };
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim();
+}
+
+function getRuntimeShopCategory(shop = {}) {
+  const joined = [
+    shop.category,
+    shop.shopCategory,
+    shop.serviceType,
+    shop.businessType,
+    shop.adminCategory,
+    shop.type,
+    shop.categoryGroup,
+    shop.shopType,
+    shop.mainCategory,
+    shop.service,
+    shop.name,
+    shop.title,
+    shop.description,
+    shop.address,
+  ]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(" ");
+
+  const direct =
+    normalizeDashboardCategory(shop.category) ||
+    normalizeDashboardCategory(shop.shopCategory) ||
+    normalizeDashboardCategory(shop.serviceType) ||
+    normalizeDashboardCategory(shop.businessType) ||
+    normalizeDashboardCategory(shop.adminCategory) ||
+    normalizeDashboardCategory(shop.type) ||
+    normalizeDashboardCategory(shop.categoryGroup) ||
+    normalizeDashboardCategory(shop.shopType) ||
+    normalizeDashboardCategory(shop.mainCategory) ||
+    normalizeDashboardCategory(shop.service);
+
+  if (direct) {
+    return direct;
+  }
+
+  if (
+    joined.includes("karaoke") ||
+    joined.includes("노래방") ||
+    joined.includes("가라오케") ||
+    joined.includes("코인")
+  ) {
+    return "karaoke";
+  }
+
+  if (
+    joined.includes("massage") ||
+    joined.includes("마사지") ||
+    joined.includes("테라피") ||
+    joined.includes("아로마") ||
+    joined.includes("스웨디시")
+  ) {
+    return "massage";
+  }
+
+  return "massage";
+}
+
+function isDeletedShop(shop = {}) {
+  return (
+    shop.isDeleted === true ||
+    shop.deleted === true ||
+    shop.removed === true
+  );
+}
+
 /* =========================
 COUNT SAFE
 ========================= */
-async function safeCount(model) {
+async function safeCount(model, filter = {}) {
   try {
     if (!model) return 0;
 
@@ -76,7 +290,7 @@ async function safeCount(model) {
       return 0;
     }
 
-    return await model.countDocuments();
+    return await model.countDocuments(filter);
 
   } catch (e) {
     console.error(
@@ -137,7 +351,8 @@ RECENT LIST
 ========================= */
 async function getRecent(
   model,
-  limit = 5
+  limit = 5,
+  filter = {}
 ) {
   try {
     if (!model) return [];
@@ -150,7 +365,7 @@ async function getRecent(
     }
 
     const query = model
-      .find()
+      .find(filter)
       .sort({
         createdAt: -1,
       })
@@ -176,6 +391,70 @@ async function getRecent(
   }
 }
 
+async function getRuntimeCategoryShops(
+  category,
+  limit = 5
+) {
+  try {
+    if (
+      !Shop ||
+      typeof Shop.find !== "function"
+    ) {
+      return {
+        total: 0,
+        recent: [],
+      };
+    }
+
+    const docsQuery = Shop
+      .find({
+        isDeleted: { $ne: true },
+      })
+      .sort({
+        createdAt: -1,
+      });
+
+    const docs =
+      docsQuery &&
+      typeof docsQuery.lean === "function"
+        ? await docsQuery.lean()
+        : await docsQuery;
+
+    const normalizedCategory =
+      normalizeDashboardCategory(category) ||
+      "massage";
+
+    const filtered =
+      Array.isArray(docs)
+        ? docs.filter((shop) => {
+            if (isDeletedShop(shop)) {
+              return false;
+            }
+
+            return (
+              getRuntimeShopCategory(shop) ===
+              normalizedCategory
+            );
+          })
+        : [];
+
+    return {
+      total: filtered.length,
+      recent: filtered.slice(0, limit),
+    };
+  } catch (e) {
+    console.error(
+      "RUNTIME SHOP CATEGORY ERROR:",
+      e.message
+    );
+
+    return {
+      total: 0,
+      recent: [],
+    };
+  }
+}
+
 /* =====================================================
 🔥 DASHBOARD MAIN
 ===================================================== */
@@ -184,8 +463,16 @@ async function getDashboard(
   res
 ) {
   try {
+    const dashboardCategory =
+      getDashboardCategory(req);
+
+    const shopFilter =
+      createShopCategoryFilter(
+        dashboardCategory
+      );
+
     const cacheKey =
-      "admin:dashboard";
+      `admin:dashboard:${dashboardCategory}`;
 
     /* =========================
     🔥 캐시 조회
@@ -213,20 +500,31 @@ async function getDashboard(
       }
     }
 
+    const runtimeShops =
+      await getRuntimeCategoryShops(
+        dashboardCategory,
+        5
+      );
+
     /* =========================
     🔥 COUNT
     ========================= */
     const [
-      totalShops,
+      rawTotalShops,
       totalUsers,
       totalReservations,
       totalPayments,
     ] = await Promise.all([
-      safeCount(Shop),
+      safeCount(Shop, shopFilter),
       safeCount(User),
       safeCount(Reservation),
       safeCount(Payment),
     ]);
+
+    const totalShops =
+      runtimeShops.total > 0
+        ? runtimeShops.total
+        : rawTotalShops;
 
     /* =========================
     🔥 SUM
@@ -241,14 +539,19 @@ async function getDashboard(
     🔥 RECENT
     ========================= */
     const [
-      recentShops,
+      rawRecentShops,
       recentUsers,
       recentReservations,
     ] = await Promise.all([
-      getRecent(Shop),
+      getRecent(Shop, 5, shopFilter),
       getRecent(User),
       getRecent(Reservation),
     ]);
+
+    const recentShops =
+      runtimeShops.recent.length > 0
+        ? runtimeShops.recent
+        : rawRecentShops;
 
     /* =========================
     🔥 RESPONSE
@@ -339,6 +642,15 @@ async function getDashboard(
       },
 
       meta: {
+        category:
+          dashboardCategory,
+
+        rawTotalShops:
+          toNumber(rawTotalShops),
+
+        runtimeTotalShops:
+          toNumber(runtimeShops.total),
+
         generatedAt:
           new Date(),
       },

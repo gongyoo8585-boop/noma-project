@@ -14,8 +14,7 @@ const InquirySchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["pending", "done"],
-      default: "pending",
-      index: true
+      default: "pending"
     },
 
     memo: { type: String, default: "" },
@@ -24,11 +23,11 @@ const InquirySchema = new mongoose.Schema(
     ip: { type: String, default: "" },
     userAgent: { type: String, default: "" },
 
-    isDeleted: { type: Boolean, default: false, index: true },
+    isDeleted: { type: Boolean, default: false },
 
-    isRead: { type: Boolean, default: false, index: true },
+    isRead: { type: Boolean, default: false },
     priority: { type: Number, default: 0 },
-    category: { type: String, default: "", index: true },
+    category: { type: String, default: "" },
 
     tags: [{ type: String }],
 
@@ -36,12 +35,19 @@ const InquirySchema = new mongoose.Schema(
     lastCheckedAt: { type: Date, default: null },
     handleCount: { type: Number, default: 0 },
 
-    isImportant: { type: Boolean, default: false, index: true },
+    isImportant: { type: Boolean, default: false },
     score: { type: Number, default: 0 },
     isNotified: { type: Boolean, default: false }
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    autoIndex: false,
+    autoCreate: false
+  }
 );
+
+InquirySchema.set("autoIndex", false);
+InquirySchema.set("autoCreate", false);
 
 /* =========================
    🔥 INDEX (성능 최적화)

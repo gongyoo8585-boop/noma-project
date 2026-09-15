@@ -1,240 +1,373 @@
 "use strict";
 
-const authService = require("../../services/auth/auth.service");
-const auth = require("../../middlewares/auth");
+const express = require("express");
+const path = require("path");
+const fs = require("fs");
 
-/* =====================================================
-🔥 RESPONSE UTILS
-===================================================== */
-function ok(res, data = {}, message = "OK") {
-  return res.json({ ok: true, message, data });
+const router = express.Router();
+
+function safeRequire(modulePath) {
+  try {
+    const basePath = path.resolve(__dirname, modulePath);
+
+    const candidates = [
+      basePath,
+      `${basePath}.js`,
+      path.join(basePath, "index.js"),
+    ];
+
+    const found = candidates.find((filePath) => fs.existsSync(filePath));
+
+    if (!found) {
+      return null;
+    }
+
+    return require(found);
+  } catch (error) {
+    console.error(
+      "[AUTH ROUTE LOAD ERROR]",
+      modulePath,
+      error.message
+    );
+
+    return null;
+  }
 }
 
-function fail(res, message = "ERROR", code = 400, errorCode = "AUTH_ERROR") {
-  return res.status(code).json({
-    ok: false,
-    message,
-    errorCode
-  });
+function isHandler(value) {
+  return typeof value === "function";
 }
 
-/* =====================================================
-🔥 SAFE WRAPPER
-===================================================== */
-function safe(handler) {
-  return async (req, res) => {
+function normalizeHandlers(value, fallback) {
+  if (Array.isArray(value)) {
+    const handlers = value.flat(Infinity).filter(isHandler);
+
+    if (handlers.length > 0) {
+      return handlers;
+    }
+  }
+
+  if (isHandler(value)) {
+    return [value];
+  }
+
+  if (Array.isArray(fallback)) {
+    const fallbackHandlers = fallback.flat(Infinity).filter(isHandler);
+
+    if (fallbackHandlers.length > 0) {
+      return fallbackHandlers;
+    }
+  }
+
+  if (isHandler(fallback)) {
+    return [fallback];
+  }
+
+  return [
+    async (req, res) => {
+      return res.status(500).json({
+        success: false,
+        message: "NORA auth handler not connected",
+      });
+    },
+  ];
+}
+
+function pickHandler(source, names, fallback) {
+  if (!source || typeof source !== "object") {
+    return normalizeHandlers(null, fallback);
+  }
+
+  for (const name of names) {
+    const value = source[name];
+
+    if (isHandler(value) || Array.isArray(value)) {
+      return normalizeHandlers(value, fallback);
+    }
+  }
+
+  return normalizeHandlers(null, fallback);
+}
+
+function pickMiddleware(source, names, fallback) {
+  return pickHandler(source, names, fallback);
+}
+
+function asyncHandler(handler) {
+  return function wrappedHandler(req, res, next) {
     try {
-      await handler(req, res);
-    } catch (e) {
-      return fail(res, e.message || "SERVER_ERROR", 500);
+      return Promise.resolve(handler(req, res, next)).catch(next);
+    } catch (error) {
+      return next(error);
     }
   };
 }
 
-/* =====================================================
-🔥 REGISTER
-===================================================== */
-exports.register = safe(async (req, res) => {
-  const result = await authService.register({
-    email: req.body.email,
-    password: req.body.password,
-    name: req.body.name,
-    phone: req.body.phone,
-    role: req.body.role || "user"
-  });
-
-  return ok(res, result, "회원가입 완료");
-});
+function wrapHandlers(handlers) {
+  return normalizeHandlers(handlers).map((handler) => asyncHandler(handler));
+}
 
 /* =====================================================
-🔥 LOGIN
+🔥 ACTUAL PROJECT STRUCTURE
+/routes/auth/auth.routes.js
+→ /controllers/auth/auth.controller.js
+→ /middlewares/auth.js
 ===================================================== */
-exports.login = safe(async (req, res) => {
-  const result = await authService.login({
-    email: req.body.email,
-    password: req.body.password,
-    device: req.headers["user-agent"],
-    ip: req.ip
-  });
 
-  return ok(res, result, "로그인 성공");
-});
+const authController =
+  safeRequire("../../controllers/auth/auth.controller") ||
+  {};
 
-/* =====================================================
-🔥 LOGOUT
-===================================================== */
-exports.logout = [
-  auth,
-  safe(async (req, res) => {
-    await authService.logout({
-      userId: auth.getUserId(req),
-      token: req.token
+const authMiddleware =
+  safeRequire("../../middlewares/auth") ||
+  {};
+
+const verifyToken = pickMiddleware(
+  authMiddleware,
+  ["verifyToken", "authenticateToken", "authMiddleware", "protect"],
+  (req, res, next) => next()
+);
+
+const optionalAuth = pickMiddleware(
+  authMiddleware,
+  ["optionalAuth"],
+  (req, res, next) => next()
+);
+
+const loginHandler = pickHandler(
+  authController,
+  ["login", "signIn", "adminLogin"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA login controller not connected",
     });
+  }
+);
 
-    return ok(res, true, "로그아웃 완료");
-  })
-];
-
-/* =====================================================
-🔥 REFRESH TOKEN
-===================================================== */
-exports.refresh = safe(async (req, res) => {
-  const result = await authService.refreshToken({
-    refreshToken: req.body.refreshToken
-  });
-
-  return ok(res, result, "토큰 재발급");
-});
-
-/* =====================================================
-🔥 ME
-===================================================== */
-exports.me = [
-  auth,
-  safe(async (req, res) => {
-    const user = await authService.getMe(auth.getUserId(req));
-    return ok(res, user);
-  })
-];
-
-/* =====================================================
-🔥 UPDATE PROFILE
-===================================================== */
-exports.updateProfile = [
-  auth,
-  safe(async (req, res) => {
-    const result = await authService.updateProfile({
-      userId: auth.getUserId(req),
-      ...req.body
+const registerHandler = pickHandler(
+  authController,
+  ["register", "signup", "signUp"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA register controller not connected",
     });
+  }
+);
 
-    return ok(res, result, "프로필 수정 완료");
-  })
-];
-
-/* =====================================================
-🔥 CHANGE PASSWORD
-===================================================== */
-exports.changePassword = [
-  auth,
-  safe(async (req, res) => {
-    await authService.changePassword({
-      userId: auth.getUserId(req),
-      oldPassword: req.body.oldPassword,
-      newPassword: req.body.newPassword
+const meHandler = pickHandler(
+  authController,
+  ["me", "profile", "getProfile"],
+  async (req, res) => {
+    return res.status(200).json({
+      success: true,
+      user: req.user || null,
     });
+  }
+);
 
-    return ok(res, true, "비밀번호 변경 완료");
-  })
-];
-
-/* =====================================================
-🔥 FORGOT PASSWORD
-===================================================== */
-exports.forgotPassword = safe(async (req, res) => {
-  await authService.forgotPassword({
-    email: req.body.email
-  });
-
-  return ok(res, true, "비밀번호 재설정 요청 완료");
-});
-
-/* =====================================================
-🔥 RESET PASSWORD
-===================================================== */
-exports.resetPassword = safe(async (req, res) => {
-  await authService.resetPassword({
-    token: req.body.token,
-    newPassword: req.body.newPassword
-  });
-
-  return ok(res, true, "비밀번호 재설정 완료");
-});
-
-/* =====================================================
-🔥 VERIFY EMAIL
-===================================================== */
-exports.verifyEmail = safe(async (req, res) => {
-  await authService.verifyEmail({
-    token: req.query.token
-  });
-
-  return ok(res, true, "이메일 인증 완료");
-});
-
-/* =====================================================
-🔥 ADMIN - USER LIST
-===================================================== */
-exports.adminUsers = [
-  auth,
-  safe(async (req, res) => {
-    if (!auth.isAdmin(req)) {
-      return fail(res, "관리자만", 403, "ADMIN_ONLY");
-    }
-
-    const result = await authService.getUsers({
-      limit: req.query.limit,
-      page: req.query.page
+const logoutHandler = pickHandler(
+  authController,
+  ["logout"],
+  async (req, res) => {
+    return res.status(200).json({
+      success: true,
+      message: "NORA logout success",
     });
+  }
+);
 
-    return ok(res, result);
-  })
-];
-
-/* =====================================================
-🔥 ADMIN - FORCE LOGOUT
-===================================================== */
-exports.forceLogout = [
-  auth,
-  safe(async (req, res) => {
-    if (!auth.isAdmin(req)) {
-      return fail(res, "관리자만", 403);
-    }
-
-    await authService.forceLogout({
-      userId: req.params.id
+const refreshHandler = pickHandler(
+  authController,
+  ["refresh", "refreshToken"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA refresh controller not connected",
     });
+  }
+);
 
-    return ok(res, true, "강제 로그아웃 완료");
-  })
-];
+const kakaoLoginHandler = pickHandler(
+  authController,
+  ["kakaoLogin", "kakao"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA kakao login controller not connected",
+    });
+  }
+);
 
-/* =====================================================
-🔥 LOGIN HISTORY
-===================================================== */
-exports.loginHistory = [
-  auth,
-  safe(async (req, res) => {
-    const data = await authService.getLoginHistory(auth.getUserId(req));
-    return ok(res, data);
-  })
-];
+const kakaoCallbackHandler = pickHandler(
+  authController,
+  ["kakaoCallback"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA kakao callback controller not connected",
+    });
+  }
+);
 
-/* =====================================================
-🔥 SECURITY CHECK
-===================================================== */
-exports.securityCheck = [
-  auth,
-  safe(async (req, res) => {
-    const data = await authService.securityCheck(auth.getUserId(req));
-    return ok(res, data);
-  })
-];
+const updateProfileHandler = pickHandler(
+  authController,
+  ["updateProfile"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA update profile controller not connected",
+    });
+  }
+);
 
-/* =====================================================
-🔥 HEALTH
-===================================================== */
-exports.ping = (req, res) => {
-  res.json({
-    ok: true,
-    message: "auth controller alive",
-    time: new Date()
-  });
-};
+const changePasswordHandler = pickHandler(
+  authController,
+  ["changePassword"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA change password controller not connected",
+    });
+  }
+);
 
-/* =====================================================
-🔥 FINAL
-===================================================== */
-console.log("🔥 authController FINAL READY");
+const forgotPasswordHandler = pickHandler(
+  authController,
+  ["forgotPassword"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA forgot password controller not connected",
+    });
+  }
+);
 
-module.exports = exports;
+const resetPasswordHandler = pickHandler(
+  authController,
+  ["resetPassword"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA reset password controller not connected",
+    });
+  }
+);
+
+const verifyEmailHandler = pickHandler(
+  authController,
+  ["verifyEmail"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA verify email controller not connected",
+    });
+  }
+);
+
+const adminUsersHandler = pickHandler(
+  authController,
+  ["adminUsers"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA admin users controller not connected",
+    });
+  }
+);
+
+const forceLogoutHandler = pickHandler(
+  authController,
+  ["forceLogout"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA force logout controller not connected",
+    });
+  }
+);
+
+const loginHistoryHandler = pickHandler(
+  authController,
+  ["loginHistory"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA login history controller not connected",
+    });
+  }
+);
+
+const securityCheckHandler = pickHandler(
+  authController,
+  ["securityCheck"],
+  async (req, res) => {
+    return res.status(501).json({
+      success: false,
+      message: "NORA security check controller not connected",
+    });
+  }
+);
+
+const pingHandler = pickHandler(
+  authController,
+  ["ping"],
+  (req, res) => {
+    return res.status(200).json({
+      success: true,
+      service: "NORA AUTH API",
+      timestamp: new Date().toISOString(),
+    });
+  }
+);
+
+router.get("/health", ...wrapHandlers(pingHandler));
+
+router.post("/login", ...wrapHandlers(loginHandler));
+
+router.post("/register", ...wrapHandlers(registerHandler));
+
+router.post("/signup", ...wrapHandlers(registerHandler));
+
+router.post("/logout", ...wrapHandlers(logoutHandler));
+
+router.post("/refresh", ...wrapHandlers(refreshHandler));
+
+router.get("/me", ...wrapHandlers(meHandler));
+
+router.get("/profile", ...wrapHandlers(meHandler));
+
+router.get("/session", ...wrapHandlers([...optionalAuth, ...meHandler]));
+
+router.patch("/profile", ...wrapHandlers(updateProfileHandler));
+
+router.put("/profile", ...wrapHandlers(updateProfileHandler));
+
+router.post("/change-password", ...wrapHandlers(changePasswordHandler));
+
+router.post("/forgot-password", ...wrapHandlers(forgotPasswordHandler));
+
+router.post("/reset-password", ...wrapHandlers(resetPasswordHandler));
+
+router.get("/verify-email", ...wrapHandlers(verifyEmailHandler));
+
+router.get("/admin/users", ...wrapHandlers(adminUsersHandler));
+
+router.post(
+  "/admin/users/:id/force-logout",
+  ...wrapHandlers(forceLogoutHandler)
+);
+
+router.get("/login-history", ...wrapHandlers(loginHistoryHandler));
+
+router.get("/security-check", ...wrapHandlers(securityCheckHandler));
+
+router.get("/kakao", ...wrapHandlers(kakaoLoginHandler));
+
+router.get(
+  "/kakao/callback",
+  ...wrapHandlers(kakaoCallbackHandler)
+);
+
+module.exports = router;

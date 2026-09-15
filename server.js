@@ -194,6 +194,7 @@ let Shop = null;
 let authRoutes = null;
 let adminRoutes = null;
 let shopRoutes = null;
+let jobRoutes = null;
 let userRoutes = null;
 let reservationRoutes = null;
 let reviewRoutes = null;
@@ -202,8 +203,8 @@ let paymentVerifyRoutes = null;
 let applicationModulesLoaded = false;
 let applicationRoutesMounted = false;
 
-function loadApplicationModules({ includeDbRoutes = false } = {}) {
-  if (applicationModulesLoaded && (!includeDbRoutes || shopRoutes)) {
+function loadApplicationModules({ includeDbRoutes = true } = {}) {
+  if (applicationModulesLoaded && shopRoutes) {
     return;
   }
 
@@ -239,7 +240,7 @@ function loadApplicationModules({ includeDbRoutes = false } = {}) {
     );
   }
 
-  if (includeDbRoutes && !shopRoutes) {
+  if (!shopRoutes) {
     shopRoutes = loadRouteModule(
       [
         "routes/shop/shop.routes",
@@ -248,6 +249,18 @@ function loadApplicationModules({ includeDbRoutes = false } = {}) {
         "server/routes/shop/shop.routes",
       ],
       "shopRoutes"
+    );
+  }
+
+  if (!jobRoutes) {
+    jobRoutes = loadRouteModule(
+      [
+        "routes/job/job.routes",
+        "routes/job.routes",
+        "server/routes/job.routes",
+        "server/routes/job/job.routes",
+      ],
+      "jobRoutes"
     );
   }
 
@@ -394,6 +407,33 @@ if (!JWT_SECRET) {
 }
 
 const CACHE = new Map();
+
+function clearUserListCache() {
+  for (const key of CACHE.keys()) {
+    if (
+      key === "/api/users/admin" ||
+      key.startsWith("/api/users/admin?") ||
+      key === "/api/users/admin/stats" ||
+      key.startsWith("/api/users/admin/stats?")
+    ) {
+      CACHE.delete(key);
+    }
+  }
+}
+
+function clearShopListCache() {
+  for (const key of CACHE.keys()) {
+    if (
+      key === "/api/shops" ||
+      key === "/api/shops/" ||
+      key.startsWith("/api/shops?") ||
+      key.startsWith("/api/shops/?")
+    ) {
+      CACHE.delete(key);
+    }
+  }
+}
+
 let REQUEST_COUNT = 0;
 let isStarting = false;
 let dbConnectPromise = null;
@@ -672,6 +712,54 @@ app.use(
   })
 );
 
+const authLoginRateLimiter = rateLimit({
+  windowMs:
+    Number(process.env.RATE_LIMIT_STRICT_WINDOW) ||
+    60 * 1000,
+  max:
+    Number(process.env.RATE_LIMIT_STRICT_MAX) ||
+    50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: {
+    xForwardedForHeader: false,
+  },
+});
+
+const authSignupRateLimiter = rateLimit({
+  windowMs:
+    Number(process.env.RATE_LIMIT_STRICT_WINDOW) ||
+    60 * 1000,
+  max:
+    Number(process.env.RATE_LIMIT_STRICT_MAX) ||
+    50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: {
+    xForwardedForHeader: false,
+  },
+});
+
+app.use(
+  "/api/auth/login",
+  authLoginRateLimiter
+);
+
+app.use(
+  "/api/auth/send-email-code",
+  authSignupRateLimiter
+);
+
+app.use(
+  "/api/auth/verify-email-code",
+  authSignupRateLimiter
+);
+
+app.use(
+  "/api/auth/register",
+  authSignupRateLimiter
+);
+
 app.use(
   "/api",
   rateLimit({
@@ -681,6 +769,38 @@ app.use(
     legacyHeaders: false,
     validate: {
       xForwardedForHeader: false,
+    },
+    skip: (req) => {
+      const requestPath = String(req.path || req.originalUrl || "")
+        .split("?")[0]
+        .replace(/^\/api/i, "");
+
+      if (
+        requestPath === "/auth/login" ||
+        requestPath === "/auth/login/" ||
+        requestPath === "/auth/send-email-code" ||
+        requestPath === "/auth/send-email-code/" ||
+        requestPath === "/auth/verify-email-code" ||
+        requestPath === "/auth/verify-email-code/" ||
+        requestPath === "/auth/register" ||
+        requestPath === "/auth/register/"
+      ) {
+        return true;
+      }
+
+      if (req.method !== "GET") {
+        return false;
+      }
+
+      return (
+        requestPath === "/shops" ||
+        requestPath === "/shops/" ||
+        requestPath === "/shops/stats" ||
+        requestPath === "/shops/stats/" ||
+        requestPath === "/uploads" ||
+        requestPath === "/uploads/" ||
+        requestPath.startsWith("/uploads/")
+      );
     },
   })
 );
@@ -701,37 +821,109 @@ app.use(express.static(PUBLIC_PATH));
 app.use("/uploads", express.static(UPLOAD_PATH));
 app.use("/api/uploads", express.static(UPLOAD_PATH));
 
+app.use("/api/users", async (req, res, next) => {
+  if (isDbReady()) {
+    return next();
+  }
+
+  const ready = await withStartupTimeout(
+    ensureDbReady(),
+    Number(process.env.USER_API_DB_WAIT_TIMEOUT_MS || 3500),
+    "USER API DB CONNECT"
+  );
+
+  if (ready && isDbReady()) {
+    return next();
+  }
+
+  return fail(res, 503, "DB_NOT_CONNECTED");
+});
+
+app.use("/api/auth/register", (req, res, next) => {
+  if (req.method !== "POST") {
+    return next();
+  }
+
+  const originalJson = res.json.bind(res);
+
+  res.json = (data) => {
+    try {
+      if (
+        res.statusCode >= 200 &&
+        res.statusCode < 300 &&
+        data &&
+        data.ok !== false
+      ) {
+        clearUserListCache();
+      }
+    } catch (e) {
+      console.error("USER CACHE CLEAR ERROR:", e.message);
+    }
+
+    return originalJson(data);
+  };
+
+  return next();
+});
+
 app.use("/api", (req, res, next) => {
   try {
     if (req.method !== "GET") {
       return next();
     }
 
+    const requestUrl = String(req.originalUrl || "");
+    const requestPath = requestUrl.split("?")[0];
+    const hasAuthContext = Boolean(
+      req.headers?.authorization ||
+      req.headers?.["x-access-token"] ||
+      req.headers?.["x-auth-token"] ||
+      req.headers?.["x-local-admin"] ||
+      req.headers?.cookie
+    );
+    const isPrivateApiPath =
+      requestPath === "/api/auth" ||
+      requestPath.startsWith("/api/auth/") ||
+      requestPath === "/api/admin" ||
+      requestPath.startsWith("/api/admin/") ||
+      requestPath === "/api/users" ||
+      requestPath.startsWith("/api/users/") ||
+      requestPath === "/api/jobs/write-context" ||
+      requestPath.includes("/admin/") ||
+      requestPath.endsWith("/admin");
+
     if (
-      req.originalUrl.includes("/health") ||
-      req.originalUrl.includes("/system/status")
+      requestUrl.includes("/health") ||
+      requestUrl.includes("/system/status") ||
+      hasAuthContext ||
+      isPrivateApiPath
     ) {
       return next();
     }
 
-    const cached = CACHE.get(req.originalUrl);
+    const cached = CACHE.get(requestUrl);
 
     if (cached && Date.now() < cached.expire) {
-      return res.json(cached.data);
+      return res
+        .status(Number(cached.statusCode) || 200)
+        .json(cached.data);
     }
 
     if (cached) {
-      CACHE.delete(req.originalUrl);
+      CACHE.delete(requestUrl);
     }
 
     const originalJson = res.json.bind(res);
 
     res.json = (data) => {
       try {
-        CACHE.set(req.originalUrl, {
-          data,
-          expire: Date.now() + Number(process.env.CACHE_TTL || 300) * 1000,
-        });
+        if (res.statusCode === 200 && data && data.ok !== false) {
+          CACHE.set(requestUrl, {
+            statusCode: res.statusCode,
+            data,
+            expire: Date.now() + Number(process.env.CACHE_TTL || 300) * 1000,
+          });
+        }
       } catch (e) {
         console.error("CACHE SET ERROR:", e.message);
       }
@@ -744,6 +936,33 @@ app.use("/api", (req, res, next) => {
     console.error("CACHE ERROR:", e.message);
     return next();
   }
+});
+
+app.use("/api/shops", (req, res, next) => {
+  if (req.method === "GET") {
+    return next();
+  }
+
+  const originalJson = res.json.bind(res);
+
+  res.json = (data) => {
+    try {
+      if (
+        res.statusCode >= 200 &&
+        res.statusCode < 300 &&
+        data &&
+        data.ok !== false
+      ) {
+        clearShopListCache();
+      }
+    } catch (e) {
+      console.error("SHOP CACHE CLEAR ERROR:", e.message);
+    }
+
+    return originalJson(data);
+  };
+
+  return next();
 });
 
 app.use("/api/shops", async (req, res, next) => {
@@ -800,6 +1019,7 @@ app.get("/api/system/routes", (req, res) => {
     users: !!userRoutes,
     reservations: !!reservationRoutes,
     shops: !!shopRoutes,
+    jobs: !!jobRoutes,
     reviews: !!reviewRoutes,
     payments: !!paymentRoutes,
     paymentVerify: !!paymentVerifyRoutes,
@@ -860,6 +1080,10 @@ function mountApplicationRoutes() {
     }
   }
 
+  if (jobRoutes) {
+    mountRoute("/api/jobs", jobRoutes, "jobRoutes");
+  }
+
   if (reviewRoutes) {
     mountRoute("/api/reviews", reviewRoutes, "reviewRoutes");
   }
@@ -870,6 +1094,51 @@ function mountApplicationRoutes() {
 
   if (paymentVerifyRoutes) {
     mountRoute("/api/payment/verify", paymentVerifyRoutes, "paymentVerifyRoutes");
+  }
+
+
+  const authController =
+    safeRequire("controllers/auth.controller", "controllers/auth.controller") ||
+    safeRequire("server/controllers/auth.controller", "server/controllers/auth.controller");
+
+  if (
+    authController &&
+    typeof authController.sendVerificationCode === "function"
+  ) {
+    app.post(
+      "/api/auth/send-code",
+      authController.sendVerificationCode
+    );
+  }
+
+  if (
+    authController &&
+    typeof authController.verifyVerificationCode === "function"
+  ) {
+    app.post(
+      "/api/auth/verify-code",
+      authController.verifyVerificationCode
+    );
+  }
+
+  if (
+    authController &&
+    typeof authController.sendEmailVerificationCode === "function"
+  ) {
+    app.post(
+      "/api/auth/send-email-code",
+      authController.sendEmailVerificationCode
+    );
+  }
+
+  if (
+    authController &&
+    typeof authController.verifyEmailVerificationCode === "function"
+  ) {
+    app.post(
+      "/api/auth/verify-email-code",
+      authController.verifyEmailVerificationCode
+    );
   }
 
 app.post("/api/auth/register", async (req, res) => {
@@ -914,6 +1183,8 @@ app.post("/api/auth/register", async (req, res) => {
       isAdmin: req.body.isAdmin === true,
       ...req.body,
     });
+
+    clearUserListCache();
 
     return ok(res, {
       user,
@@ -1110,7 +1381,7 @@ async function start() {
       console.warn("⚠️ DB NOT CONNECTED - LOCAL FALLBACK ACTIVE");
     }
 
-    loadApplicationModules({ includeDbRoutes: isDbReady() });
+    loadApplicationModules({ includeDbRoutes: true });
     mountApplicationRoutes();
     mountFinalHandlers();
     startServer();
@@ -1118,7 +1389,7 @@ async function start() {
     console.error("❌ START ERROR:", e);
 
     if (!applicationModulesLoaded) {
-      loadApplicationModules({ includeDbRoutes: false });
+      loadApplicationModules({ includeDbRoutes: true });
     }
 
     if (!applicationRoutesMounted) {

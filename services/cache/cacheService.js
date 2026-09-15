@@ -4,26 +4,33 @@
 🔥 CACHE SERVICE (FINAL ULTRA COMPLETE MASTER)
 👉 Memory cache + Redis-ready abstraction
 👉 TTL / prefix / stats / invalidate / pattern delete
-👉 통째 교체 가능한 완성형
+👉 실제 구조 기준: /services/cache/cacheService.js
 ===================================================== */
 
 const ENV = (() => {
   try {
-    return require("../config/env");
+    return require("../../config/env");
   } catch (_) {
-    return {
-      ENABLE_CACHE: true,
-      CACHE_TTL: 3000,
-      NODE_ENV: "development"
-    };
+    try {
+      return require("../config/env");
+    } catch (__) {
+      return {
+        ENABLE_CACHE: true,
+        CACHE_TTL: 300,
+        NODE_ENV: process.env.NODE_ENV || "development",
+      };
+    }
   }
 })();
 
 /* =====================================================
 🔥 CONFIG
 ===================================================== */
-const DEFAULT_TTL = Number(ENV.CACHE_TTL || 3000);
-const ENABLE_CACHE = ENV.ENABLE_CACHE !== false;
+const DEFAULT_TTL = Number(process.env.CACHE_TTL || ENV.CACHE_TTL || 300);
+const ENABLE_CACHE =
+  String(process.env.CACHE_ENABLED || "").toLowerCase() === "false"
+    ? false
+    : ENV.ENABLE_CACHE !== false;
 const MAX_KEYS = Number(process.env.CACHE_MAX_KEYS || 5000);
 const CLEANUP_INTERVAL = Number(process.env.CACHE_CLEANUP_INTERVAL || 30000);
 
@@ -31,6 +38,7 @@ const CLEANUP_INTERVAL = Number(process.env.CACHE_CLEANUP_INTERVAL || 30000);
 🔥 INTERNAL STORE
 ===================================================== */
 const STORE = new Map();
+
 const STATS = {
   sets: 0,
   gets: 0,
@@ -39,7 +47,7 @@ const STATS = {
   deletes: 0,
   clears: 0,
   expirations: 0,
-  patternDeletes: 0
+  patternDeletes: 0,
 };
 
 /* =====================================================
@@ -50,7 +58,15 @@ function now() {
 }
 
 function safeStr(v, d = "") {
-  return typeof v === "string" ? v.trim() : d;
+  if (typeof v === "string") {
+    return v.trim();
+  }
+
+  if (v === null || typeof v === "undefined") {
+    return d;
+  }
+
+  return String(v).trim();
 }
 
 function safeNum(v, d = 0) {
@@ -59,7 +75,25 @@ function safeNum(v, d = 0) {
 }
 
 function clone(v) {
-  return JSON.parse(JSON.stringify(v));
+  if (typeof v === "undefined") {
+    return undefined;
+  }
+
+  if (v === null) {
+    return null;
+  }
+
+  try {
+    if (typeof structuredClone === "function") {
+      return structuredClone(v);
+    }
+  } catch (_) {}
+
+  try {
+    return JSON.parse(JSON.stringify(v));
+  } catch (_) {
+    return v;
+  }
 }
 
 function normalizeKey(key = "") {
@@ -68,18 +102,27 @@ function normalizeKey(key = "") {
 
 function normalizeTTL(ttl = DEFAULT_TTL) {
   const n = safeNum(ttl, DEFAULT_TTL);
-  return n > 0 ? n : DEFAULT_TTL;
+  const safe = n > 0 ? n : DEFAULT_TTL;
+
+  return safe <= 86400 ? safe * 1000 : safe;
 }
 
 function buildKey(prefix = "", key = "") {
   const p = safeStr(prefix);
   const k = normalizeKey(key);
+
   return p ? `${p}:${k}` : k;
 }
 
 function isExpired(item) {
-  if (!item) return true;
-  if (!item.expireAt) return false;
+  if (!item) {
+    return true;
+  }
+
+  if (!item.expireAt) {
+    return false;
+  }
+
   return now() > item.expireAt;
 }
 
@@ -88,9 +131,10 @@ function ensureCacheEnabled() {
 }
 
 function safePatternToRegex(pattern = "*") {
-  const escaped = String(pattern)
+  const escaped = String(pattern || "*")
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*");
+
   return new RegExp(`^${escaped}$`);
 }
 
@@ -98,12 +142,16 @@ function safePatternToRegex(pattern = "*") {
 🔥 CORE MEMORY CACHE
 ===================================================== */
 function set(key, value, ttl = DEFAULT_TTL, meta = {}) {
-  if (!ensureCacheEnabled()) return value;
+  if (!ensureCacheEnabled()) {
+    return value;
+  }
 
   const k = normalizeKey(key);
   const t = normalizeTTL(ttl);
 
-  if (!k) return value;
+  if (!k) {
+    return value;
+  }
 
   if (STORE.size >= MAX_KEYS) {
     cleanupOldest(Math.ceil(MAX_KEYS * 0.1));
@@ -115,10 +163,11 @@ function set(key, value, ttl = DEFAULT_TTL, meta = {}) {
     updatedAt: now(),
     expireAt: now() + t,
     ttl: t,
-    meta: meta && typeof meta === "object" ? clone(meta) : {}
+    meta: meta && typeof meta === "object" ? clone(meta) : {},
   });
 
   STATS.sets += 1;
+
   return value;
 }
 
@@ -146,6 +195,7 @@ function get(key, fallback = null) {
   }
 
   STATS.hits += 1;
+
   return clone(item.value);
 }
 
@@ -153,7 +203,10 @@ function has(key) {
   const k = normalizeKey(key);
   const item = STORE.get(k);
 
-  if (!item) return false;
+  if (!item) {
+    return false;
+  }
+
   if (isExpired(item)) {
     STORE.delete(k);
     STATS.expirations += 1;
@@ -166,33 +219,48 @@ function has(key) {
 function del(key) {
   const k = normalizeKey(key);
   const existed = STORE.delete(k);
-  if (existed) STATS.deletes += 1;
+
+  if (existed) {
+    STATS.deletes += 1;
+  }
+
   return existed;
 }
 
 function clear() {
   const size = STORE.size;
+
   STORE.clear();
   STATS.clears += 1;
+
   return size;
 }
 
 function ttl(key) {
   const k = normalizeKey(key);
   const item = STORE.get(k);
-  if (!item) return -1;
+
+  if (!item) {
+    return -1;
+  }
+
   if (isExpired(item)) {
     STORE.delete(k);
     STATS.expirations += 1;
     return -1;
   }
+
   return Math.max(0, item.expireAt - now());
 }
 
 function touch(key, ttlValue = DEFAULT_TTL) {
   const k = normalizeKey(key);
   const item = STORE.get(k);
-  if (!item) return false;
+
+  if (!item) {
+    return false;
+  }
+
   if (isExpired(item)) {
     STORE.delete(k);
     STATS.expirations += 1;
@@ -200,10 +268,13 @@ function touch(key, ttlValue = DEFAULT_TTL) {
   }
 
   const t = normalizeTTL(ttlValue);
+
   item.expireAt = now() + t;
   item.updatedAt = now();
   item.ttl = t;
+
   STORE.set(k, item);
+
   return true;
 }
 
@@ -231,10 +302,19 @@ function hasWithPrefix(prefix, key) {
 ===================================================== */
 async function remember(key, ttlValue, resolver, meta = {}) {
   const cached = get(key, undefined);
-  if (cached !== undefined) return cached;
+
+  if (typeof cached !== "undefined") {
+    return cached;
+  }
+
+  if (typeof resolver !== "function") {
+    return undefined;
+  }
 
   const value = await Promise.resolve(resolver());
+
   set(key, value, ttlValue, meta);
+
   return value;
 }
 
@@ -251,19 +331,28 @@ function mget(keys = []) {
 
 function mset(entries = [], ttlValue = DEFAULT_TTL) {
   let count = 0;
+
   for (const entry of Array.isArray(entries) ? entries : []) {
-    if (!entry || typeof entry !== "object") continue;
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
     set(entry.key, entry.value, entry.ttl || ttlValue, entry.meta || {});
     count += 1;
   }
+
   return count;
 }
 
 function mdel(keys = []) {
   let count = 0;
+
   for (const key of Array.isArray(keys) ? keys : []) {
-    if (del(key)) count += 1;
+    if (del(key)) {
+      count += 1;
+    }
   }
+
   return count;
 }
 
@@ -324,14 +413,18 @@ function getJSON(key, fallback = null) {
 function incr(key, by = 1, ttlValue = DEFAULT_TTL) {
   const current = safeNum(get(key, 0), 0);
   const next = current + safeNum(by, 1);
+
   set(key, next, ttlValue);
+
   return next;
 }
 
 function decr(key, by = 1, ttlValue = DEFAULT_TTL) {
   const current = safeNum(get(key, 0), 0);
   const next = current - safeNum(by, 1);
+
   set(key, next, ttlValue);
+
   return next;
 }
 
@@ -344,11 +437,15 @@ function tagKey(tag = "", key = "") {
 
 function setTagged(tag, key, value, ttlValue = DEFAULT_TTL, meta = {}) {
   const fullKey = normalizeKey(key);
+
   set(fullKey, value, ttlValue, meta);
 
   const listKey = `__tag_index__:${safeStr(tag)}`;
   const existing = get(listKey, []);
-  const next = Array.from(new Set([...(Array.isArray(existing) ? existing : []), fullKey]));
+  const next = Array.from(
+    new Set([...(Array.isArray(existing) ? existing : []), fullKey])
+  );
+
   set(listKey, next, ttlValue * 10);
 
   return value;
@@ -360,10 +457,13 @@ function invalidateTag(tag = "") {
   let count = 0;
 
   for (const key of Array.isArray(related) ? related : []) {
-    if (del(key)) count += 1;
+    if (del(key)) {
+      count += 1;
+    }
   }
 
   del(listKey);
+
   return count;
 }
 
@@ -379,7 +479,7 @@ function getStats() {
     size: total,
     hitRate,
     enabled: !!ENABLE_CACHE,
-    maxKeys: MAX_KEYS
+    maxKeys: MAX_KEYS,
   };
 }
 
@@ -388,7 +488,7 @@ function getHealth() {
     ok: true,
     cacheEnabled: !!ENABLE_CACHE,
     size: STORE.size,
-    stats: getStats()
+    stats: getStats(),
   };
 }
 
@@ -418,8 +518,11 @@ function cleanupOldest(limit = 100) {
     .slice(0, Math.max(1, safeNum(limit, 100)));
 
   let count = 0;
+
   for (const [key] of entries) {
-    if (STORE.delete(key)) count += 1;
+    if (STORE.delete(key)) {
+      count += 1;
+    }
   }
 
   if (count > 0) {
@@ -474,9 +577,7 @@ function resetAll() {
 🔥 AUTO CLEAN
 ===================================================== */
 if (!global.__CACHE_SERVICE_INTERVAL__) {
-  global.__CACHE_SERVICE_INTERVAL__ = true;
-
-  setInterval(() => {
+  global.__CACHE_SERVICE_INTERVAL__ = setInterval(() => {
     try {
       cleanupExpired();
 
@@ -485,69 +586,66 @@ if (!global.__CACHE_SERVICE_INTERVAL__) {
       }
     } catch (_) {}
   }, CLEANUP_INTERVAL);
+
+  if (
+    global.__CACHE_SERVICE_INTERVAL__ &&
+    typeof global.__CACHE_SERVICE_INTERVAL__.unref === "function"
+  ) {
+    global.__CACHE_SERVICE_INTERVAL__.unref();
+  }
 }
 
 /* =====================================================
 🔥 EXPORT
 ===================================================== */
 module.exports = {
-  // core
   set,
   get,
   has,
   del,
+  delete: del,
   clear,
   ttl,
   touch,
 
-  // prefix
   buildKey,
   setWithPrefix,
   getWithPrefix,
   delWithPrefix,
   hasWithPrefix,
 
-  // bulk
   mget,
   mset,
   mdel,
 
-  // async
   remember,
   rememberWithPrefix,
 
-  // pattern
   keys,
   delByPattern,
 
-  // json
   setJSON,
   getJSON,
 
-  // counters
   incr,
   decr,
 
-  // tags
   setTagged,
   invalidateTag,
   tagKey,
 
-  // helpers
   shopKey,
   reservationKey,
   paymentKey,
   rankingKey,
   userKey,
 
-  // stats
   getStats,
   getHealth,
 
-  // cleanup
   cleanupExpired,
   cleanupOldest,
-  resetAll
+  resetAll,
 };
 
 console.log("🔥 CACHE SERVICE FINAL MASTER READY");

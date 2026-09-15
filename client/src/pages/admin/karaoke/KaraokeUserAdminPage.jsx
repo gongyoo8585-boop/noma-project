@@ -47,6 +47,9 @@ export default function KaraokeUserAdminPage() {
   }, []);
 
   return (
-    <UserAdminPage />
+    <UserAdminPage
+      roleFilter="user"
+      serviceFilter="karaoke"
+    />
   );
 }

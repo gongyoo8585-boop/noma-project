@@ -45,7 +45,7 @@ module.exports = {
         API_BASE_URL: "https://api.nora365.co.kr/api",
 
         MONGO_URI:
-          "mongodb+srv://noma:noma1234abcd@cluster0.rrqqqvu.mongodb.net/mazzang?retryWrites=true&w=majority&appName=Cluster0",
+          "mongodb://noma:noma1234abcd@ac-oaofr35-shard-00-00.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-01.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-02.rrqqqvu.mongodb.net:27017/mazzang?ssl=true&replicaSet=atlas-dd1sk9-shard-0&authSource=admin&retryWrites=true&w=majority",
 
         DB_NAME: "mazzang",
 
@@ -69,21 +69,21 @@ module.exports = {
 
         MONGOOSE_AUTO_CREATE: "false",
 
-        MONGO_SERVER_SELECTION_TIMEOUT_MS: "10000",
+        MONGO_SERVER_SELECTION_TIMEOUT_MS: "5000",
 
-        MONGO_CONNECT_TIMEOUT_MS: "10000",
+        MONGO_CONNECT_TIMEOUT_MS: "5000",
 
-        MONGO_SOCKET_TIMEOUT_MS: "45000",
+        MONGO_SOCKET_TIMEOUT_MS: "10000",
 
-        MONGO_WAIT_TIMEOUT_MS: "15000",
+        MONGO_WAIT_TIMEOUT_MS: "3000",
 
-        MONGO_RETRY_MIN_DELAY_MS: "1000",
+        MONGO_RETRY_MIN_DELAY_MS: "300",
 
-        MONGO_RETRY_MAX_DELAY_MS: "10000",
+        MONGO_RETRY_MAX_DELAY_MS: "1500",
 
-        MONGO_HEARTBEAT_MS: "10000",
+        MONGO_HEARTBEAT_MS: "5000",
 
-        MONGO_MAX_IDLE_TIME_MS: "30000",
+        MONGO_MAX_IDLE_TIME_MS: "15000",
 
         MONGO_MAX_POOL_SIZE: "10",
 
@@ -128,7 +128,7 @@ module.exports = {
         API_BASE_URL: "http://localhost:10000/api",
 
         MONGO_URI:
-          "mongodb+srv://noma:noma1234abcd@cluster0.rrqqqvu.mongodb.net/mazzang?retryWrites=true&w=majority&appName=Cluster0",
+          "mongodb://noma:noma1234abcd@ac-oaofr35-shard-00-00.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-01.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-02.rrqqqvu.mongodb.net:27017/mazzang?ssl=true&replicaSet=atlas-dd1sk9-shard-0&authSource=admin&retryWrites=true&w=majority",
 
         DB_NAME: "mazzang",
 
@@ -152,21 +152,21 @@ module.exports = {
 
         MONGOOSE_AUTO_CREATE: "false",
 
-        MONGO_SERVER_SELECTION_TIMEOUT_MS: "10000",
+        MONGO_SERVER_SELECTION_TIMEOUT_MS: "5000",
 
-        MONGO_CONNECT_TIMEOUT_MS: "10000",
+        MONGO_CONNECT_TIMEOUT_MS: "5000",
 
-        MONGO_SOCKET_TIMEOUT_MS: "45000",
+        MONGO_SOCKET_TIMEOUT_MS: "10000",
 
-        MONGO_WAIT_TIMEOUT_MS: "15000",
+        MONGO_WAIT_TIMEOUT_MS: "3000",
 
-        MONGO_RETRY_MIN_DELAY_MS: "1000",
+        MONGO_RETRY_MIN_DELAY_MS: "300",
 
-        MONGO_RETRY_MAX_DELAY_MS: "10000",
+        MONGO_RETRY_MAX_DELAY_MS: "1500",
 
-        MONGO_HEARTBEAT_MS: "10000",
+        MONGO_HEARTBEAT_MS: "5000",
 
-        MONGO_MAX_IDLE_TIME_MS: "30000",
+        MONGO_MAX_IDLE_TIME_MS: "15000",
 
         MONGO_MAX_POOL_SIZE: "10",
 
@@ -195,7 +195,7 @@ module.exports = {
         TZ: "Asia/Seoul",
 
         MONGO_URI:
-          "mongodb+srv://noma:noma1234abcd@cluster0.rrqqqvu.mongodb.net/mazzang?retryWrites=true&w=majority&appName=Cluster0",
+          "mongodb://noma:noma1234abcd@ac-oaofr35-shard-00-00.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-01.rrqqqvu.mongodb.net:27017,ac-oaofr35-shard-00-02.rrqqqvu.mongodb.net:27017/mazzang?ssl=true&replicaSet=atlas-dd1sk9-shard-0&authSource=admin&retryWrites=true&w=majority",
 
         DB_NAME: "mazzang",
 

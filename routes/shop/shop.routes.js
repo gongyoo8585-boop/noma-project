@@ -49,6 +49,10 @@ const distanceUtil =
   safeRequire("../utils/distance") ||
   {};
 
+const multer = safeRequire("multer");
+const pathModule = safeRequire("path");
+const fsModule = safeRequire("fs");
+
 /* 🔥 최소 추가 */
 const calcDistanceKm =
   distanceUtil.calcDistanceKm ||
@@ -453,174 +457,26 @@ function normalizePrice(value) {
   return Number.isNaN(num) ? 0 : num;
 }
 
-
-function normalizeImageValue(value) {
-  if (value === undefined || value === null) {
-    return "";
-  }
-
-  if (typeof value === "object") {
-    return safeStr(
-      value.url ||
-        value.src ||
-        value.path ||
-        value.image ||
-        value.imageUrl ||
-        value.thumbnail ||
-        value.location ||
-        ""
-    );
-  }
-
-  return safeStr(value);
-}
-
-function pushShopImage(target, value) {
-  if (!target) {
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => pushShopImage(target, item));
-    return;
-  }
-
-  const image = normalizeImageValue(value);
-
-  if (image && !target.includes(image)) {
-    target.push(image);
-  }
-}
-
-function normalizeShopImages(source = {}) {
-  const images = [];
-
-  pushShopImage(images, source.images);
-  pushShopImage(images, source.photos);
-  pushShopImage(images, source.imageUrls);
-  pushShopImage(images, source.gallery);
-  pushShopImage(images, source.pictures);
-
-  pushShopImage(images, source.representativeImage);
-  pushShopImage(images, source.mainImage);
-  pushShopImage(images, source.thumbnail);
-  pushShopImage(images, source.coverImage);
-  pushShopImage(images, source.image);
-  pushShopImage(images, source.imageUrl);
-  pushShopImage(images, source.photo);
-  pushShopImage(images, source.picture);
-  pushShopImage(images, source.thumbnailUrl);
-
-  const representativeImage =
-    normalizeImageValue(source.representativeImage) ||
-    normalizeImageValue(source.mainImage) ||
-    normalizeImageValue(source.thumbnail) ||
-    normalizeImageValue(source.coverImage) ||
-    normalizeImageValue(source.image) ||
-    normalizeImageValue(source.imageUrl) ||
-    normalizeImageValue(source.photo) ||
-    normalizeImageValue(source.picture) ||
-    images[0] ||
-    "";
-
-  if (representativeImage && !images.includes(representativeImage)) {
-    images.unshift(representativeImage);
-  }
-
-  return {
-    images,
-    representativeImage,
-  };
-}
-
-
-function mergeShopImagesForMutation(current = {}, payload = {}) {
-  const currentImages = normalizeShopImages(current).images;
-  const payloadImages = normalizeShopImages(payload).images;
-  const representativeCandidate =
-    normalizeImageValue(payload.representativeImage) ||
-    normalizeImageValue(payload.mainImage) ||
-    normalizeImageValue(payload.thumbnail) ||
-    normalizeImageValue(payload.coverImage) ||
-    normalizeImageValue(current.representativeImage) ||
-    normalizeImageValue(current.mainImage) ||
-    normalizeImageValue(current.thumbnail) ||
-    normalizeImageValue(current.coverImage) ||
-    payloadImages[0] ||
-    currentImages[0] ||
-    "";
-
-  const mergedImages = [];
-
-  pushShopImage(mergedImages, representativeCandidate);
-  pushShopImage(mergedImages, payloadImages);
-  pushShopImage(mergedImages, currentImages);
-
-  const representativeImage =
-    mergedImages.find((image) => image === representativeCandidate) ||
-    mergedImages[0] ||
-    "";
-
-  return {
-    ...payload,
-    images: mergedImages,
-    photos: mergedImages,
-    imageUrls: mergedImages,
-    gallery: mergedImages,
-    pictures: mergedImages,
-    representativeImage,
-    mainImage: representativeImage,
-    thumbnail: representativeImage,
-    coverImage: representativeImage,
-    image: representativeImage,
-    imageUrl: representativeImage,
-    photo: representativeImage,
-    picture: representativeImage,
-  };
-}
-
-function withShopImages(source = {}) {
-  const imageBundle = normalizeShopImages(source);
-
-  return {
-    ...source,
-    images: imageBundle.images,
-    photos: imageBundle.images,
-    imageUrls: imageBundle.images,
-    gallery: imageBundle.images,
-    pictures: imageBundle.images,
-    representativeImage: imageBundle.representativeImage,
-    mainImage: imageBundle.representativeImage,
-    thumbnail: imageBundle.representativeImage,
-    coverImage: imageBundle.representativeImage,
-    image: imageBundle.representativeImage,
-    imageUrl: imageBundle.representativeImage,
-    photo: imageBundle.representativeImage,
-    picture: imageBundle.representativeImage,
-  };
-}
-
-function normalizeShopResponseItem(item = {}) {
-  const obj = item && item.toObject ? item.toObject() : item;
-  return withShopImages(obj || {});
-}
-
-function normalizeShopResponseItems(items = []) {
-  return Array.isArray(items)
-    ? items.map((item) => normalizeShopResponseItem(item))
-    : [];
-}
-
 function normalizePayload(body = {}) {
-  const imageBundle = normalizeShopImages(body);
-
   const lat = safeNumber(
-    body.lat ?? body.location?.lat,
+    body.lat ??
+      body.latitude ??
+      body.location?.lat ??
+      body.location?.latitude ??
+      (Array.isArray(body.location?.coordinates)
+        ? body.location.coordinates[1]
+        : undefined),
     0
   );
 
   const lng = safeNumber(
-    body.lng ?? body.location?.lng,
+    body.lng ??
+      body.longitude ??
+      body.location?.lng ??
+      body.location?.longitude ??
+      (Array.isArray(body.location?.coordinates)
+        ? body.location.coordinates[0]
+        : undefined),
     0
   );
 
@@ -676,26 +532,24 @@ function normalizePayload(body = {}) {
     isReservable: body.isReservable !== false,
     status: body.status === "inactive" ? "inactive" : "active",
     isDeleted: body.isDeleted === true ? true : false,
-    images: imageBundle.images,
-    photos: imageBundle.images,
-    imageUrls: imageBundle.images,
-    gallery: imageBundle.images,
-    pictures: imageBundle.images,
-    representativeImage: imageBundle.representativeImage,
-    mainImage: imageBundle.representativeImage,
-    thumbnail: imageBundle.representativeImage,
-    coverImage: imageBundle.representativeImage,
-    image: imageBundle.representativeImage,
-    imageUrl: imageBundle.representativeImage,
-    photo: imageBundle.representativeImage,
-    picture: imageBundle.representativeImage,
   };
 }
 
 /* ========================= 유틸 ========================= */
 
 function isValidCoord(lat, lng) {
-  return !isNaN(lat) && !isNaN(lng);
+  const safeLat = Number(lat);
+  const safeLng = Number(lng);
+
+  return (
+    Number.isFinite(safeLat) &&
+    Number.isFinite(safeLng) &&
+    safeLat >= -90 &&
+    safeLat <= 90 &&
+    safeLng >= -180 &&
+    safeLng <= 180 &&
+    !(safeLat === 0 && safeLng === 0)
+  );
 }
 
 function escapeRegex(str = "") {
@@ -743,28 +597,12 @@ function getShopCategory(shop = {}) {
 }
 
 function enrichWithDistance(items, lat, lng) {
-  if (!isValidCoord(lat, lng)) {
-    return items.map((s) => {
-      const obj = normalizeShopResponseItem(s);
-
-      const premium =
-        obj.premium === true ||
-        obj.isPremium === true ||
-        obj.premiumActive === true;
-
-      return {
-        ...obj,
-        premium,
-        isPremium: premium,
-        premiumActive: premium,
-        categoryGroup: getShopCategory(obj),
-        distanceKm: obj.distanceKm || 999,
-      };
-    });
-  }
+  const originLat = Number(lat);
+  const originLng = Number(lng);
+  const hasValidOrigin = isValidCoord(originLat, originLng);
 
   return items.map((s) => {
-    const obj = normalizeShopResponseItem(s);
+    const obj = s.toObject ? s.toObject() : s;
 
     const premium =
       obj.premium === true ||
@@ -775,20 +613,39 @@ function enrichWithDistance(items, lat, lng) {
       obj.lat ??
       obj.latitude ??
       obj.location?.lat ??
-      obj.coords?.lat;
+      obj.location?.latitude ??
+      obj.coords?.lat ??
+      (Array.isArray(obj.location?.coordinates)
+        ? obj.location.coordinates[1]
+        : undefined);
 
     const targetLng =
       obj.lng ??
       obj.longitude ??
       obj.location?.lng ??
-      obj.coords?.lng;
+      obj.location?.longitude ??
+      obj.coords?.lng ??
+      (Array.isArray(obj.location?.coordinates)
+        ? obj.location.coordinates[0]
+        : undefined);
 
-    const distanceKm = calcDistanceKm(
-      lat,
-      lng,
-      targetLat,
-      targetLng
-    );
+    let distanceKm = null;
+
+    if (hasValidOrigin && isValidCoord(targetLat, targetLng)) {
+      const calculatedDistance = calcDistanceKm(
+        originLat,
+        originLng,
+        Number(targetLat),
+        Number(targetLng)
+      );
+
+      if (
+        Number.isFinite(Number(calculatedDistance)) &&
+        Number(calculatedDistance) >= 0
+      ) {
+        distanceKm = Number(calculatedDistance);
+      }
+    }
 
     return {
       ...obj,
@@ -796,7 +653,7 @@ function enrichWithDistance(items, lat, lng) {
       isPremium: premium,
       premiumActive: premium,
       categoryGroup: getShopCategory(obj),
-      distanceKm: distanceKm || 999,
+      distanceKm,
     };
   });
 }
@@ -814,7 +671,17 @@ function applySort(items, sort) {
           return premiumB - premiumA;
         }
 
-        return (a.distanceKm || 999) - (b.distanceKm || 999);
+        const distanceA =
+          Number.isFinite(Number(a.distanceKm))
+            ? Number(a.distanceKm)
+            : 999;
+
+        const distanceB =
+          Number.isFinite(Number(b.distanceKm))
+            ? Number(b.distanceKm)
+            : 999;
+
+        return distanceA - distanceB;
       });
     case "rating":
       return copy.sort((a, b) => (b.ratingAvg || 0) - (a.ratingAvg || 0));
@@ -901,6 +768,493 @@ async function findPublicShopItems(req, query = {}, page = 1, limit = 20) {
 
 router.use(applyShopCategoryRequest);
 
+
+/* =====================================================
+   🔥 이미지 업로드 (기존 기능 유지 / route 추가)
+===================================================== */
+
+function getUploadRootDir() {
+  try {
+    if (!pathModule) {
+      return "";
+    }
+
+    return (
+      process.env.SHOP_UPLOAD_DIR ||
+      process.env.UPLOAD_DIR ||
+      process.env.UPLOAD_PATH ||
+      pathModule.join(process.cwd(), "uploads", "shops")
+    );
+  } catch (e) {
+    console.error("SHOP UPLOAD ROOT ERROR:", e.message);
+    return "";
+  }
+}
+
+function ensureUploadRootDir() {
+  try {
+    if (!fsModule) {
+      return "";
+    }
+
+    const rootDir = getUploadRootDir();
+
+    if (!rootDir) {
+      return "";
+    }
+
+    if (!fsModule.existsSync(rootDir)) {
+      fsModule.mkdirSync(rootDir, {
+        recursive: true,
+      });
+    }
+
+    return rootDir;
+  } catch (e) {
+    console.error("SHOP UPLOAD DIR ERROR:", e.message);
+    return "";
+  }
+}
+
+function normalizeUploadFilename(value = "") {
+  const text = String(value || "")
+    .trim()
+    .replace(/[^\w.\-가-힣]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return text || "shop-image";
+}
+
+function getUploadFileExtension(file = {}) {
+  const originalName = String(file.originalname || "");
+  const mimeType = String(file.mimetype || "").toLowerCase();
+
+  if (pathModule && originalName) {
+    const ext = pathModule.extname(originalName);
+
+    if (ext) {
+      return ext.toLowerCase();
+    }
+  }
+
+  if (mimeType.includes("png")) return ".png";
+  if (mimeType.includes("webp")) return ".webp";
+  if (mimeType.includes("gif")) return ".gif";
+  if (mimeType.includes("avif")) return ".avif";
+  if (mimeType.includes("jpeg")) return ".jpg";
+  if (mimeType.includes("jpg")) return ".jpg";
+
+  return ".jpg";
+}
+
+function isAllowedUploadImage(file = {}) {
+  const mimeType = String(file.mimetype || "").toLowerCase();
+
+  return (
+    mimeType.startsWith("image/") &&
+    !mimeType.includes("svg+xml")
+  );
+}
+
+const shopUploadStorage =
+  multer && pathModule
+    ? multer.diskStorage({
+        destination: (req, file, cb) => {
+          const rootDir = ensureUploadRootDir();
+
+          if (!rootDir) {
+            return cb(new Error("UPLOAD_DIR_NOT_AVAILABLE"));
+          }
+
+          return cb(null, rootDir);
+        },
+        filename: (req, file, cb) => {
+          const ext = getUploadFileExtension(file);
+          const originalBase = pathModule.basename(
+            String(file.originalname || "shop-image"),
+            ext
+          );
+          const baseName = normalizeUploadFilename(originalBase);
+          const filename = `${Date.now()}-${Math.round(Math.random() * 1e9)}-${baseName}${ext}`;
+
+          return cb(null, filename);
+        },
+      })
+    : null;
+
+const shopImageUpload =
+  multer && shopUploadStorage
+    ? multer({
+        storage: shopUploadStorage,
+        limits: {
+          fileSize: Number(process.env.SHOP_UPLOAD_MAX_FILE_SIZE || 8 * 1024 * 1024),
+          files: Number(process.env.SHOP_UPLOAD_MAX_FILES || 12),
+        },
+        fileFilter: (req, file, cb) => {
+          if (!isAllowedUploadImage(file)) {
+            return cb(new Error("IMAGE_FILE_ONLY"));
+          }
+
+          return cb(null, true);
+        },
+      })
+    : null;
+
+function getRequestOrigin(req) {
+  try {
+    const protocol =
+      req.headers["x-forwarded-proto"] ||
+      req.protocol ||
+      "http";
+
+    const host =
+      req.headers["x-forwarded-host"] ||
+      req.headers.host ||
+      "";
+
+    if (!host) {
+      return "";
+    }
+
+    return `${String(protocol).split(",")[0]}://${String(host).split(",")[0]}`;
+  } catch (e) {
+    return "";
+  }
+}
+
+function getUploadedImageUrl(req, file = {}) {
+  const filename = String(file.filename || "").trim();
+
+  if (!filename) {
+    return "";
+  }
+
+  const origin = getRequestOrigin(req);
+  const baseUrl = String(req.baseUrl || "/api/shops").replace(/\/+$/, "");
+  const imagePath = `${baseUrl}/uploads/${encodeURIComponent(filename)}`;
+
+  return origin ? `${origin}${imagePath}` : imagePath;
+}
+
+function sendUploadModuleUnavailable(res) {
+  return res.status(500).json({
+    ok: false,
+    success: false,
+    msg: "UPLOAD_MODULE_NOT_AVAILABLE",
+    message: "UPLOAD_MODULE_NOT_AVAILABLE",
+    error: "UPLOAD_MODULE_NOT_AVAILABLE",
+  });
+}
+
+function sendUploadedImages(req, res) {
+  const files = [
+    ...(Array.isArray(req.files) ? req.files : []),
+    ...(req.file ? [req.file] : []),
+  ].filter(Boolean);
+
+  const imageUrls = files
+    .map((file) => getUploadedImageUrl(req, file))
+    .filter(Boolean);
+
+  if (!imageUrls.length) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      msg: "UPLOAD_IMAGE_URL_NOT_FOUND",
+      message: "UPLOAD_IMAGE_URL_NOT_FOUND",
+      error: "UPLOAD_IMAGE_URL_NOT_FOUND",
+      images: [],
+      imageUrls: [],
+    });
+  }
+
+  const uploadFiles = imageUrls.map((url, index) => ({
+    url,
+    image: url,
+    imageUrl: url,
+    fileUrl: url,
+    publicUrl: url,
+    path: url,
+    location: url,
+    filename: url,
+    originalname: url,
+    storedFilename: files[index]?.filename || "",
+    originalFileName: files[index]?.originalname || "",
+    mimetype: files[index]?.mimetype || "",
+    size: files[index]?.size || 0,
+  }));
+
+  return res.json({
+    ok: true,
+    success: true,
+    url: imageUrls[0],
+    image: imageUrls[0],
+    imageUrl: imageUrls[0],
+    fileUrl: imageUrls[0],
+    publicUrl: imageUrls[0],
+    path: imageUrls[0],
+    location: imageUrls[0],
+    filename: imageUrls[0],
+    originalname: imageUrls[0],
+    images: imageUrls,
+    imageUrls,
+    files: uploadFiles,
+    data: {
+      url: imageUrls[0],
+      image: imageUrls[0],
+      imageUrl: imageUrls[0],
+      fileUrl: imageUrls[0],
+      publicUrl: imageUrls[0],
+      path: imageUrls[0],
+      location: imageUrls[0],
+      filename: imageUrls[0],
+      originalname: imageUrls[0],
+      images: imageUrls,
+      imageUrls,
+      files: uploadFiles,
+    },
+  });
+}
+
+function handleShopImageUploadError(err, req, res, next) {
+  if (!err) {
+    return next();
+  }
+
+  console.error("SHOP IMAGE UPLOAD ERROR:", err.message || err);
+
+  return res.status(400).json({
+    ok: false,
+    success: false,
+    msg: err.message || "SHOP_IMAGE_UPLOAD_FAILED",
+    message: err.message || "SHOP_IMAGE_UPLOAD_FAILED",
+    error: err.message || "SHOP_IMAGE_UPLOAD_FAILED",
+    images: [],
+    imageUrls: [],
+  });
+}
+
+function getMultipartBoundary(req) {
+  const contentType = String(req.headers["content-type"] || "");
+  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+
+  return match ? (match[1] || match[2] || "").trim() : "";
+}
+
+function parseMultipartHeaderValue(value = "", key = "") {
+  const pattern = new RegExp(`${key}="([^"]*)"`, "i");
+  const match = String(value || "").match(pattern);
+
+  return match ? match[1] : "";
+}
+
+function makeFallbackUploadFilename(file = {}) {
+  const ext = getUploadFileExtension(file);
+  const originalBase = pathModule.basename(
+    String(file.originalname || "shop-image"),
+    ext
+  );
+  const baseName = normalizeUploadFilename(originalBase);
+
+  return `${Date.now()}-${Math.round(Math.random() * 1e9)}-${baseName}${ext}`;
+}
+
+function parseMultipartFallbackBuffer(req, buffer) {
+  if (!pathModule || !fsModule) {
+    throw new Error("UPLOAD_MODULE_NOT_AVAILABLE");
+  }
+
+  const boundary = getMultipartBoundary(req);
+
+  if (!boundary) {
+    throw new Error("MULTIPART_BOUNDARY_NOT_FOUND");
+  }
+
+  const bodyText = buffer.toString("binary");
+  const boundaryText = `--${boundary}`;
+  const parts = bodyText.split(boundaryText);
+  const files = [];
+  const fields = {};
+
+  parts.forEach((part) => {
+    if (!part || part === "--" || part === "--\r\n") {
+      return;
+    }
+
+    const headerEndIndex = part.indexOf("\r\n\r\n");
+
+    if (headerEndIndex < 0) {
+      return;
+    }
+
+    const rawHeader = part.slice(0, headerEndIndex);
+    let rawBody = part.slice(headerEndIndex + 4);
+
+    rawBody = rawBody.replace(/\r\n--$/, "").replace(/\r\n$/, "");
+
+    const headerLines = rawHeader.split("\r\n");
+    const dispositionLine =
+      headerLines.find((line) => line.toLowerCase().startsWith("content-disposition")) || "";
+    const contentTypeLine =
+      headerLines.find((line) => line.toLowerCase().startsWith("content-type")) || "";
+
+    const fieldName = parseMultipartHeaderValue(dispositionLine, "name");
+    const originalname = parseMultipartHeaderValue(dispositionLine, "filename");
+
+    if (!fieldName) {
+      return;
+    }
+
+    if (!originalname) {
+      fields[fieldName] = Buffer.from(rawBody, "binary").toString("utf8");
+      return;
+    }
+
+    const mimetype =
+      contentTypeLine.split(":").slice(1).join(":").trim() ||
+      "application/octet-stream";
+
+    const fileBuffer = Buffer.from(rawBody, "binary");
+
+    const file = {
+      fieldname: fieldName,
+      originalname,
+      mimetype,
+      size: fileBuffer.length,
+      buffer: fileBuffer,
+    };
+
+    if (!isAllowedUploadImage(file)) {
+      throw new Error("IMAGE_FILE_ONLY");
+    }
+
+    const rootDir = ensureUploadRootDir();
+
+    if (!rootDir) {
+      throw new Error("UPLOAD_DIR_NOT_AVAILABLE");
+    }
+
+    const filename = makeFallbackUploadFilename(file);
+    const filePath = pathModule.join(rootDir, filename);
+
+    fsModule.writeFileSync(filePath, fileBuffer);
+
+    files.push({
+      ...file,
+      filename,
+      destination: rootDir,
+      path: filePath,
+    });
+  });
+
+  req.body = {
+    ...(req.body || {}),
+    ...fields,
+  };
+
+  return files;
+}
+
+function runFallbackShopImageUpload(req, res, next) {
+  try {
+    const contentType = String(req.headers["content-type"] || "").toLowerCase();
+
+    if (!contentType.includes("multipart/form-data")) {
+      return handleShopImageUploadError(
+        new Error("MULTIPART_FORM_DATA_REQUIRED"),
+        req,
+        res,
+        next
+      );
+    }
+
+    const chunks = [];
+
+    req.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
+    req.on("error", (err) => {
+      return handleShopImageUploadError(err, req, res, next);
+    });
+
+    req.on("end", () => {
+      try {
+        const buffer = Buffer.concat(chunks);
+        const files = parseMultipartFallbackBuffer(req, buffer);
+
+        req.files = files;
+        req.file = files[0] || null;
+
+        return next();
+      } catch (err) {
+        return handleShopImageUploadError(err, req, res, next);
+      }
+    });
+
+    return undefined;
+  } catch (err) {
+    return handleShopImageUploadError(err, req, res, next);
+  }
+}
+
+function runShopImageUpload(req, res, next) {
+  if (!shopImageUpload) {
+    return runFallbackShopImageUpload(req, res, next);
+  }
+
+  return shopImageUpload.any()(req, res, (err) => {
+    if (err) {
+      return handleShopImageUploadError(err, req, res, next);
+    }
+
+    return next();
+  });
+}
+
+function serveUploadedShopImage(req, res) {
+  try {
+    if (!fsModule || !pathModule) {
+      return fail(res, 404, "UPLOAD_FILE_NOT_FOUND");
+    }
+
+    const rootDir = getUploadRootDir();
+    const filename = pathModule.basename(String(req.params.filename || ""));
+    const filePath = pathModule.join(rootDir, filename);
+
+    if (!rootDir || !filename || !fsModule.existsSync(filePath)) {
+      return fail(res, 404, "UPLOAD_FILE_NOT_FOUND");
+    }
+
+    return res.sendFile(filePath);
+  } catch (e) {
+    return fail(res, 404, "UPLOAD_FILE_NOT_FOUND");
+  }
+}
+
+function registerShopImageUploadRoute(routePath) {
+  router.post(
+    routePath,
+    auth,
+    admin,
+    runShopImageUpload,
+    sendUploadedImages
+  );
+}
+
+router.get("/uploads/:filename", serveUploadedShopImage);
+
+[
+  "/upload",
+  "/image",
+  "/images",
+  "/admin/upload",
+  "/admin/image",
+  "/admin/images",
+].forEach(registerShopImageUploadRoute);
+
+
 /* =====================================================
    🔥 기존 코드 (절대 삭제 없음)
 ===================================================== */
@@ -944,9 +1298,9 @@ async function buildShopAdminStatsPayload(req) {
     totalShops: total,
     shopCount: total,
     count: total,
-    items: normalizeShopResponseItems(recentItems),
-    list: normalizeShopResponseItems(recentItems),
-    data: normalizeShopResponseItems(recentItems),
+    items: recentItems,
+    list: recentItems,
+    data: recentItems,
   };
 }
 
@@ -963,7 +1317,10 @@ async function sendShopAdminStats(req, res) {
     );
 
     try {
-      const items =
+      const requestedCategory =
+        getSafeRequestShopCategory(req);
+
+      const allItems =
         await Shop.find({
           isDeleted: {
             $ne: true,
@@ -975,14 +1332,34 @@ async function sendShopAdminStats(req, res) {
             premiumActive: -1,
             createdAt: -1,
           })
-          .limit(10)
           .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
           .lean();
 
+      const filteredItems =
+        (Array.isArray(allItems)
+          ? allItems
+          : []
+        ).filter((item) => {
+          if (!item || item.isDeleted === true) {
+            return false;
+          }
+
+          if (
+            requestedCategory &&
+            getShopCategory(item) !==
+              requestedCategory
+          ) {
+            return false;
+          }
+
+          return true;
+        });
+
+      const recentItems =
+        filteredItems.slice(0, 10);
+
       const total =
-        Array.isArray(items)
-          ? items.length
-          : 0;
+        filteredItems.length;
 
       return ok(res, {
         total,
@@ -990,9 +1367,9 @@ async function sendShopAdminStats(req, res) {
         totalShops: total,
         shopCount: total,
         count: total,
-        items: normalizeShopResponseItems(items),
-        list: normalizeShopResponseItems(items),
-        data: normalizeShopResponseItems(items),
+        items: recentItems,
+        list: recentItems,
+        data: recentItems,
       });
     } catch (fallbackErr) {
       console.error(
@@ -1097,8 +1474,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium/on", auth, admin, async (req, 
     }
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
       premium: true,
       isPremium: true,
       premiumActive: true,
@@ -1134,8 +1511,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium/off", auth, admin, async (req,
     }
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
       premium: false,
       isPremium: false,
       premiumActive: false,
@@ -1183,8 +1560,8 @@ router.patch("/admin/:id([0-9a-fA-F]{24})/premium", auth, admin, async (req, res
     );
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
       premium: nextPremium,
       isPremium: nextPremium,
       premiumActive: nextPremium,
@@ -1206,7 +1583,7 @@ router.get("/top/list", async (req, res) => {
       .sort({ premium: -1, isPremium: -1, premiumActive: -1, likeCount: -1 })
       .limit(10);
 
-    res.json({ ok: true, items: normalizeShopResponseItems(items) });
+    res.json({ ok: true, items });
   } catch (e) {
     console.error("SHOP TOP ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1224,7 +1601,7 @@ router.get("/recent/list", async (req, res) => {
       .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
       .limit(10);
 
-    res.json({ ok: true, items: normalizeShopResponseItems(items) });
+    res.json({ ok: true, items });
   } catch (e) {
     console.error("SHOP RECENT ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1242,7 +1619,15 @@ router.get("/nearby/list", async (req, res) => {
       buildPublicShopQuery(req)
     ).lean();
     items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
-    items = items.filter((i) => (i.distanceKm || 999) <= safeNumber(max, 5));
+    items = items.filter((i) => {
+      const distanceKm = Number(i?.distanceKm);
+
+      return (
+        Number.isFinite(distanceKm) &&
+        distanceKm >= 0 &&
+        distanceKm <= safeNumber(max, 5)
+      );
+    });
 
     items = applySort(items, "distance");
 
@@ -1326,7 +1711,7 @@ router.get("/ranking/list", async (req, res) => {
     }));
     items.sort((a, b) => b.score - a.score);
 
-    res.json({ ok: true, items: normalizeShopResponseItems(items.slice(0, 20)) });
+    res.json({ ok: true, items: items.slice(0, 20) });
   } catch (e) {
     console.error("SHOP RANKING ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1343,7 +1728,7 @@ router.get("/random/list", async (req, res) => {
       { $sample: { size: 10 } },
     ]);
 
-    res.json({ ok: true, items: normalizeShopResponseItems(items) });
+    res.json({ ok: true, items });
   } catch (e) {
     console.error("SHOP RANDOM ERROR:", e);
     res.status(500).json({ ok: false, items: [] });
@@ -1404,28 +1789,156 @@ router.get("/", async (req, res) => {
     let items = [];
 
     if (adminListMode) {
-      const primaryItems = await Shop.find(query)
-        .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
-        .lean();
+      let primaryItems = [];
 
-      const fallbackItems =
-        Array.isArray(primaryItems) &&
-        primaryItems.length > 0
-          ? []
-          : await Shop.find(
-              buildAdminShopQuery(req)
-            )
+      try {
+        primaryItems = await Shop.find(query)
+          .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
+          .lean();
+      } catch (primaryError) {
+        console.error(
+          "SHOP ADMIN LIST PRIMARY ERROR:",
+          primaryError.message || primaryError
+        );
+
+        primaryItems = [];
+      }
+
+      let fallbackItems = [];
+
+      if (
+        !Array.isArray(primaryItems) ||
+        primaryItems.length === 0
+      ) {
+        try {
+          const requestedCategory =
+            getSafeRequestShopCategory(req);
+
+          const fallbackCandidates =
+            await Shop.find({
+              isDeleted: {
+                $ne: true,
+              },
+            })
               .sort({ premium: -1, isPremium: -1, premiumActive: -1, createdAt: -1 })
-              .limit(limit)
               .maxTimeMS(SHOP_QUERY_MAX_TIME_MS)
               .lean();
 
+          const safeKeyword =
+            String(keyword || "")
+              .trim()
+              .toLowerCase();
+
+          const filteredFallbackItems =
+            (Array.isArray(fallbackCandidates)
+              ? fallbackCandidates
+              : []
+            ).filter((item) => {
+              if (!item || item.isDeleted === true) {
+                return false;
+              }
+
+              if (
+                requestedCategory &&
+                getShopCategory(item) !==
+                  requestedCategory
+              ) {
+                return false;
+              }
+
+              if (
+                safeKeyword &&
+                ![
+                  item.name,
+                  item.region,
+                  item.address,
+                ]
+                  .map((value) =>
+                    String(value || "")
+                      .toLowerCase()
+                  )
+                  .some((value) =>
+                    value.includes(
+                      safeKeyword
+                    )
+                  )
+              ) {
+                return false;
+              }
+
+              if (
+                region &&
+                String(item.region || "") !==
+                  String(region)
+              ) {
+                return false;
+              }
+
+              if (
+                service &&
+                !(
+                  Array.isArray(
+                    item.serviceTypes
+                  ) &&
+                  item.serviceTypes.some(
+                    (value) =>
+                      String(value) ===
+                      String(service)
+                  )
+                )
+              ) {
+                return false;
+              }
+
+              if (
+                tag &&
+                !(
+                  Array.isArray(item.tags) &&
+                  item.tags.some(
+                    (value) =>
+                      String(value) ===
+                      String(tag)
+                  )
+                )
+              ) {
+                return false;
+              }
+
+              return true;
+            });
+
+          const startIndex =
+            (page - 1) * limit;
+
+          fallbackItems =
+            filteredFallbackItems.slice(
+              startIndex,
+              startIndex + limit
+            );
+        } catch (fallbackError) {
+          console.error(
+            "SHOP ADMIN LIST FALLBACK ERROR:",
+            fallbackError.message ||
+              fallbackError
+          );
+
+          fallbackItems = [];
+        }
+      }
+
       const mergedMap = new Map();
 
-      [...primaryItems, ...fallbackItems].forEach((item) => {
+      [
+        ...(Array.isArray(primaryItems)
+          ? primaryItems
+          : []),
+        ...(Array.isArray(fallbackItems)
+          ? fallbackItems
+          : []),
+      ].forEach((item) => {
         if (!item || item.isDeleted === true) {
           return;
         }
@@ -1444,7 +1957,6 @@ router.get("/", async (req, res) => {
 
     items = enrichWithDistance(items, safeNumber(lat), safeNumber(lng));
     items = applySort(items, sort);
-    items = normalizeShopResponseItems(items);
 
     if (
       premiumNearby === "true" ||
@@ -1505,8 +2017,8 @@ router.post("/", auth, admin, async (req, res) => {
     const item = await Shop.create(payload);
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
     });
   } catch (e) {
     console.error("SHOP CREATE ERROR:", e);
@@ -1550,7 +2062,7 @@ router.get("/:id([0-9a-fA-F]{24})", async (req, res) => {
     res.json({
       ok: true,
       shop: {
-        ...normalizeShopResponseItem(shopObject),
+        ...shopObject,
         premium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
         isPremium: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
         premiumActive: shopObject.premium === true || shopObject.isPremium === true || shopObject.premiumActive === true,
@@ -1575,24 +2087,12 @@ router.put("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
       req
     );
 
-    const currentItem = await Shop.findOne(
-      buildShopBaseQuery(req, {
-        _id: req.params.id,
-      })
-    ).lean();
-
-    if (!currentItem) {
-      return fail(res, 404, "매장 없음");
-    }
-
-    const updatePayload = mergeShopImagesForMutation(currentItem, payload);
-
     const item = await Shop.findOneAndUpdate(
       buildShopBaseQuery(req, {
         _id: req.params.id,
       }),
       {
-        ...updatePayload,
+        ...payload,
         updatedAt: new Date(),
       },
       {
@@ -1605,8 +2105,8 @@ router.put("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
     });
   } catch (e) {
     console.error("SHOP UPDATE ERROR:", e);
@@ -1626,24 +2126,12 @@ router.patch("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
       req
     );
 
-    const currentItem = await Shop.findOne(
-      buildShopBaseQuery(req, {
-        _id: req.params.id,
-      })
-    ).lean();
-
-    if (!currentItem) {
-      return fail(res, 404, "매장 없음");
-    }
-
-    const updatePayload = mergeShopImagesForMutation(currentItem, payload);
-
     const item = await Shop.findOneAndUpdate(
       buildShopBaseQuery(req, {
         _id: req.params.id,
       }),
       {
-        ...updatePayload,
+        ...payload,
         updatedAt: new Date(),
       },
       {
@@ -1656,8 +2144,8 @@ router.patch("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
     });
   } catch (e) {
     console.error("SHOP PATCH UPDATE ERROR:", e);
@@ -1690,8 +2178,8 @@ router.delete("/:id([0-9a-fA-F]{24})", auth, admin, async (req, res) => {
     }
 
     return ok(res, {
-      shop: normalizeShopResponseItem(item),
-      item: normalizeShopResponseItem(item),
+      shop: item,
+      item,
     });
   } catch (e) {
     console.error("SHOP DELETE ERROR:", e);
@@ -1714,7 +2202,7 @@ router.get("/search/phone", auth, admin, safeAsync(async (req, res) => {
       })
     ).limit(50);
 
-    return ok(res, { items: normalizeShopResponseItems(items) });
+    return ok(res, { items });
   } catch (e) {
     console.error("SHOP SEARCH PHONE ERROR:", e);
     return ok(res, { items: [] });

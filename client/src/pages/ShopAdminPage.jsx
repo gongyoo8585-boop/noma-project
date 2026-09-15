@@ -67,12 +67,21 @@ const EMPTY_FORM = {
   priceInput: "",
   status: "active",
   isPremium: false,
+  directPaymentEnabled: false,
   images: [],
   representativeImage: "",
 };
 
 const LOCAL_SHOP_KEY = "noma_admin_shops";
 const LOCAL_PUBLIC_SHOP_KEY = "noma_local_shops";
+const SHOP_ADMIN_CATEGORY = "massage";
+const SHOP_ADMIN_CATEGORY_PARAMS = {
+  category: SHOP_ADMIN_CATEGORY,
+  shopCategory: SHOP_ADMIN_CATEGORY,
+  serviceType: SHOP_ADMIN_CATEGORY,
+  businessType: SHOP_ADMIN_CATEGORY,
+  adminCategory: SHOP_ADMIN_CATEGORY,
+};
 
 function ShopAdminPage() {
   const [list, setList] = useState([]);
@@ -95,6 +104,95 @@ function ShopAdminPage() {
       .toLowerCase()
       .replace(/\s/g, "")
       .trim();
+
+  const normalizeShopCategory = (value) => {
+    const text = String(value || "")
+      .toLowerCase()
+      .trim();
+
+    if (
+      text === "karaoke" ||
+      text === "노래방" ||
+      text === "nora-karaoke" ||
+      text === "nora_karaoke"
+    ) {
+      return "karaoke";
+    }
+
+    if (
+      text === "massage" ||
+      text === "마사지" ||
+      text === "shop" ||
+      text === "nora-massage" ||
+      text === "nora_massage"
+    ) {
+      return "massage";
+    }
+
+    return "";
+  };
+
+  const getShopCategory = (shop = {}) => {
+    return (
+      normalizeShopCategory(shop?.category) ||
+      normalizeShopCategory(shop?.shopCategory) ||
+      normalizeShopCategory(shop?.serviceType) ||
+      normalizeShopCategory(shop?.businessType) ||
+      normalizeShopCategory(shop?.adminCategory) ||
+      normalizeShopCategory(shop?.type) ||
+      ""
+    );
+  };
+
+  const isMassageShop = (shop = {}) => {
+    const category = getShopCategory(shop);
+
+    return !category || category === "massage";
+  };
+
+  const normalizeDirectPaymentEnabled = (value) => {
+    return (
+      value === true ||
+      value === "true" ||
+      value === 1 ||
+      value === "1" ||
+      String(value || "").toLowerCase().trim() === "enabled" ||
+      String(value || "").toLowerCase().trim() === "active" ||
+      String(value || "").toLowerCase().trim() === "on"
+    );
+  };
+
+  const hasDirectPaymentField = (value) => {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    return (
+      Object.prototype.hasOwnProperty.call(value, "directPaymentEnabled") ||
+      Object.prototype.hasOwnProperty.call(value, "directPayment") ||
+      Object.prototype.hasOwnProperty.call(value, "paymentEnabled") ||
+      Object.prototype.hasOwnProperty.call(value, "quickPayment") ||
+      Object.prototype.hasOwnProperty.call(value, "instantPayment")
+    );
+  };
+
+  const getDirectPaymentValue = (value) => {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    return normalizeDirectPaymentEnabled(
+      value.directPaymentEnabled !== undefined
+        ? value.directPaymentEnabled
+        : value.directPayment !== undefined
+        ? value.directPayment
+        : value.paymentEnabled !== undefined
+        ? value.paymentEnabled
+        : value.quickPayment !== undefined
+        ? value.quickPayment
+        : value.instantPayment
+    );
+  };
 
   const getTodayKey = () => {
     return new Date().toISOString().slice(0, 10);
@@ -240,8 +338,13 @@ function ShopAdminPage() {
       images[0] ||
       "";
 
+    const existingCategory = getShopCategory(shop);
+
     return {
       ...shop,
+      ...(existingCategory
+        ? {}
+        : SHOP_ADMIN_CATEGORY_PARAMS),
       _id: shop?._id || id,
       id: shop?.id || id,
       name: shop?.name || "",
@@ -255,6 +358,13 @@ function ShopAdminPage() {
       status: shop?.status || "active",
       isPremium: shop?.isPremium === true || shop?.premium === true,
       premium: shop?.isPremium === true || shop?.premium === true,
+      directPaymentEnabled: getDirectPaymentValue(shop),
+      directPayment: getDirectPaymentValue(shop),
+      paymentEnabled: getDirectPaymentValue(shop),
+      quickPayment: getDirectPaymentValue(shop),
+      instantPayment: getDirectPaymentValue(shop),
+      __directPaymentUpdated:
+        shop?.__directPaymentUpdated === true || hasDirectPaymentField(shop),
       visible: shop?.visible === false ? false : true,
       approved: shop?.approved === false ? false : true,
       images,
@@ -320,6 +430,29 @@ function ShopAdminPage() {
         coverImage: representativeImage,
         isPremium: normalized.isPremium === true || current.isPremium === true,
         premium: normalized.premium === true || current.premium === true,
+        directPaymentEnabled:
+          normalized.__directPaymentUpdated === true
+            ? normalizeDirectPaymentEnabled(normalized.directPaymentEnabled)
+            : normalizeDirectPaymentEnabled(current.directPaymentEnabled),
+        directPayment:
+          normalized.__directPaymentUpdated === true
+            ? normalizeDirectPaymentEnabled(normalized.directPaymentEnabled)
+            : normalizeDirectPaymentEnabled(current.directPaymentEnabled),
+        paymentEnabled:
+          normalized.__directPaymentUpdated === true
+            ? normalizeDirectPaymentEnabled(normalized.directPaymentEnabled)
+            : normalizeDirectPaymentEnabled(current.directPaymentEnabled),
+        quickPayment:
+          normalized.__directPaymentUpdated === true
+            ? normalizeDirectPaymentEnabled(normalized.directPaymentEnabled)
+            : normalizeDirectPaymentEnabled(current.directPaymentEnabled),
+        instantPayment:
+          normalized.__directPaymentUpdated === true
+            ? normalizeDirectPaymentEnabled(normalized.directPaymentEnabled)
+            : normalizeDirectPaymentEnabled(current.directPaymentEnabled),
+        __directPaymentUpdated:
+          normalized.__directPaymentUpdated === true ||
+          current.__directPaymentUpdated === true,
       });
     });
 
@@ -328,21 +461,50 @@ function ShopAdminPage() {
 
   const readLocalShops = () => {
     try {
-      const adminSaved = JSON.parse(localStorage.getItem(LOCAL_SHOP_KEY) || "[]");
-      const publicSaved = JSON.parse(localStorage.getItem(LOCAL_PUBLIC_SHOP_KEY) || "[]");
-      const adminSession = JSON.parse(sessionStorage.getItem(LOCAL_SHOP_KEY) || "[]");
-      const publicSession = JSON.parse(sessionStorage.getItem(LOCAL_PUBLIC_SHOP_KEY) || "[]");
-
-      return mergeShopLists(
-        mergeShopLists(
-          Array.isArray(adminSaved) ? adminSaved : [],
-          Array.isArray(publicSaved) ? publicSaved : []
-        ),
-        mergeShopLists(
-          Array.isArray(publicSession) ? publicSession : [],
-          Array.isArray(adminSession) ? adminSession : []
-        )
+      const storageKeys = Array.from(
+        new Set([
+          LOCAL_SHOP_KEY,
+          LOCAL_PUBLIC_SHOP_KEY,
+          "nora_admin_shops",
+          "nora_local_shops",
+          "noma_admin_shops_massage",
+          "noma_local_shops_massage",
+          "nora_admin_shops_massage",
+          "nora_local_shops_massage",
+          "noma_admin_shop_backup",
+          "nora_admin_shop_backup",
+          "noma_admin_shop_backup_massage",
+          "nora_admin_shop_backup_massage",
+        ])
       );
+
+      let mergedItems = [];
+
+      storageKeys.forEach((key) => {
+        const localSaved = JSON.parse(
+          localStorage.getItem(key) || "[]"
+        );
+
+        const sessionSaved = JSON.parse(
+          sessionStorage.getItem(key) || "[]"
+        );
+
+        mergedItems = mergeShopLists(
+          mergedItems,
+          Array.isArray(localSaved)
+            ? localSaved.filter(isMassageShop)
+            : []
+        );
+
+        mergedItems = mergeShopLists(
+          mergedItems,
+          Array.isArray(sessionSaved)
+            ? sessionSaved.filter(isMassageShop)
+            : []
+        );
+      });
+
+      return mergedItems;
     } catch (e) {
       return [];
     }
@@ -350,12 +512,22 @@ function ShopAdminPage() {
 
   const saveLocalShops = (items = []) => {
     try {
-      const nextItems = mergeShopLists([], Array.isArray(items) ? items : []);
+      const nextItems = mergeShopLists(
+        [],
+        Array.isArray(items)
+          ? items.filter(isMassageShop)
+          : []
+      );
 
-      localStorage.setItem(LOCAL_SHOP_KEY, JSON.stringify(nextItems));
-      localStorage.setItem(LOCAL_PUBLIC_SHOP_KEY, JSON.stringify(nextItems));
-      sessionStorage.setItem(LOCAL_SHOP_KEY, JSON.stringify(nextItems));
-      sessionStorage.setItem(LOCAL_PUBLIC_SHOP_KEY, JSON.stringify(nextItems));
+      localStorage.setItem("noma_admin_shops_massage", JSON.stringify(nextItems));
+      localStorage.setItem("noma_local_shops_massage", JSON.stringify(nextItems));
+      localStorage.setItem("nora_admin_shops_massage", JSON.stringify(nextItems));
+      localStorage.setItem("nora_local_shops_massage", JSON.stringify(nextItems));
+
+      sessionStorage.setItem("noma_admin_shops_massage", JSON.stringify(nextItems));
+      sessionStorage.setItem("noma_local_shops_massage", JSON.stringify(nextItems));
+      sessionStorage.setItem("nora_admin_shops_massage", JSON.stringify(nextItems));
+      sessionStorage.setItem("nora_local_shops_massage", JSON.stringify(nextItems));
 
       window.dispatchEvent(
         new CustomEvent("shops-updated", {
@@ -442,6 +614,7 @@ function ShopAdminPage() {
       "";
 
     return {
+      ...SHOP_ADMIN_CATEGORY_PARAMS,
       name: form.name,
       address: form.address,
       courses: nextCourses,
@@ -449,6 +622,12 @@ function ShopAdminPage() {
       status: form.status,
       isPremium: form.isPremium === true,
       premium: form.isPremium === true,
+      directPaymentEnabled: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      directPayment: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      paymentEnabled: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      quickPayment: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      instantPayment: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      __directPaymentUpdated: true,
       visible: form.status !== "inactive",
       approved: form.status !== "inactive",
       images: form.images,
@@ -475,6 +654,10 @@ function ShopAdminPage() {
         : normalizeText(district);
 
     return list.filter((shop) => {
+      if (!isMassageShop(shop)) {
+        return false;
+      }
+
       const name = normalizeText(shop?.name);
       const address = normalizeText(shop?.address);
       const searchTarget = `${name}${address}`;
@@ -511,7 +694,7 @@ function ShopAdminPage() {
 
       const localItems = readLocalShops();
 
-      const res = await shopApi.getList();
+      const res = await shopApi.getList(SHOP_ADMIN_CATEGORY_PARAMS);
 
       const items =
         res?.items ||
@@ -520,9 +703,48 @@ function ShopAdminPage() {
         res?.list ||
         [];
 
+      const massageItems =
+        Array.isArray(items)
+          ? items.filter(isMassageShop)
+          : [];
+
       const mergedItems = mergeShopLists(
-        Array.isArray(items) ? items : [],
+        massageItems,
         localItems
+      );
+
+      console.log(
+        "SHOP_ADMIN_API_ITEMS:",
+        massageItems.map((shop) => ({
+              _id: shop?._id,
+              id: shop?.id,
+              name: shop?.name,
+              category: shop?.category,
+            }))
+      );
+
+      console.log(
+        "SHOP_ADMIN_LOCAL_ITEMS:",
+        Array.isArray(localItems)
+          ? localItems.map((shop) => ({
+              _id: shop?._id,
+              id: shop?.id,
+              name: shop?.name,
+              category: shop?.category,
+            }))
+          : []
+      );
+
+      console.log(
+        "SHOP_ADMIN_MERGED_ITEMS:",
+        Array.isArray(mergedItems)
+          ? mergedItems.map((shop) => ({
+              _id: shop?._id,
+              id: shop?.id,
+              name: shop?.name,
+              category: shop?.category,
+            }))
+          : []
       );
 
       setList(mergedItems);
@@ -629,7 +851,7 @@ function ShopAdminPage() {
 
       const localItems = readLocalShops();
 
-      const res = await shopApi.getList();
+      const res = await shopApi.getList(SHOP_ADMIN_CATEGORY_PARAMS);
 
       const items =
         res?.items ||
@@ -638,8 +860,13 @@ function ShopAdminPage() {
         res?.list ||
         [];
 
+      const massageItems =
+        Array.isArray(items)
+          ? items.filter(isMassageShop)
+          : [];
+
       const mergedItems = mergeShopLists(
-        Array.isArray(items) ? items : [],
+        massageItems,
         localItems
       );
 
@@ -675,7 +902,7 @@ function ShopAdminPage() {
         ...(geocoded || {}),
       };
 
-      const created = await shopApi.create(payload);
+      const created = await shopApi.create({ ...SHOP_ADMIN_CATEGORY_PARAMS, ...payload });
       const createdShop =
         created?.data ||
         created?.shop ||
@@ -749,6 +976,7 @@ function ShopAdminPage() {
       priceInput: "",
       status: shop?.status || "active",
       isPremium: shop?.isPremium === true || shop?.premium === true,
+      directPaymentEnabled: getDirectPaymentValue(shop),
       images: getShopImages(shop),
       representativeImage:
         getImageValue(shop?.representativeImage) ||
@@ -796,7 +1024,7 @@ function ShopAdminPage() {
 
       if (shopApi.update) {
         try {
-          await shopApi.update(editingId, payload);
+          await shopApi.update(editingId, payload, SHOP_ADMIN_CATEGORY_PARAMS);
         } catch (e) {
           if (!isDbNotConnectedError(e)) {
             console.warn("SHOP UPDATE API ERROR:", e.message);
@@ -850,7 +1078,7 @@ function ShopAdminPage() {
     try {
       if (shopApi.remove) {
         try {
-          await shopApi.remove(shopId);
+          await shopApi.remove(shopId, SHOP_ADMIN_CATEGORY_PARAMS);
         } catch (e) {
           if (!isDbNotConnectedError(e)) {
             console.warn("SHOP DELETE API ERROR:", e.message);
@@ -894,7 +1122,7 @@ function ShopAdminPage() {
 
       if (shopApi.update) {
         try {
-          await shopApi.update(shopId, payload);
+          await shopApi.update(shopId, payload, SHOP_ADMIN_CATEGORY_PARAMS);
         } catch (e) {
           if (!isDbNotConnectedError(e)) {
             console.warn("SHOP STATUS API ERROR:", e.message);
@@ -942,7 +1170,7 @@ function ShopAdminPage() {
 
       if (shopApi.update) {
         try {
-          await shopApi.update(shopId, payload);
+          await shopApi.update(shopId, payload, SHOP_ADMIN_CATEGORY_PARAMS);
         } catch (e) {
           if (!isDbNotConnectedError(e)) {
             console.warn("SHOP PREMIUM API ERROR:", e.message);
@@ -1291,6 +1519,23 @@ function ShopAdminPage() {
             <option value="inactive">inactive</option>
           </select>
 
+          <select
+            name="directPaymentEnabled"
+            value={form.directPaymentEnabled ? "true" : "false"}
+            onChange={(e) => {
+              const value = e.target.value === "true";
+
+              setForm((prev) => ({
+                ...prev,
+                directPaymentEnabled: value,
+              }));
+            }}
+            style={styles.input}
+          >
+            <option value="false">바로결제 비활성화</option>
+            <option value="true">바로결제 활성화</option>
+          </select>
+
           {editingId ? (
             <div style={styles.formButtonRow}>
               <button
@@ -1389,6 +1634,8 @@ function ShopAdminPage() {
               const isPremiumActive =
                 shop?.isPremium === true || shop?.premium === true;
 
+              const directPaymentActive = getDirectPaymentValue(shop);
+
               return (
                 <div key={shopId || shop?.name}>
                   <div style={styles.card}>
@@ -1457,6 +1704,11 @@ function ShopAdminPage() {
                     <div style={styles.section}>
                       <strong>영업시간:</strong>{" "}
                       {shop?.businessHours || "-"}
+                    </div>
+
+                    <div style={styles.section}>
+                      <strong>바로결제:</strong>{" "}
+                      {directPaymentActive ? "활성화" : "비활성화"}
                     </div>
 
                     <div style={styles.section}>

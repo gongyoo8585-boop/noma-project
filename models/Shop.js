@@ -69,152 +69,11 @@ function normalizeShopStatus(value) {
   return "active";
 }
 
-function normalizeImageValue(value) {
-  if (value === undefined || value === null) {
-    return "";
-  }
-
-  if (typeof value === "object") {
-    return normalizeImageValue(
-      value.url ||
-        value.src ||
-        value.path ||
-        value.location ||
-        value.image ||
-        value.imageUrl ||
-        value.thumbnail ||
-        value.thumbnailUrl ||
-        value.mainImage ||
-        value.representativeImage ||
-        value.coverImage ||
-        value.photo ||
-        value.picture ||
-        ""
-    );
-  }
-
-  const text = String(value || "").trim();
-
-  if (
-    !text ||
-    text === "undefined" ||
-    text === "null" ||
-    text === "[object Object]" ||
-    text.includes("[object Object]")
-  ) {
-    return "";
-  }
-
-  return text;
-}
-
-function hasShopImagePayload(source = {}) {
-  if (!source || typeof source !== "object") {
-    return false;
-  }
-
-  return [
-    "images",
-    "photos",
-    "imageUrls",
-    "gallery",
-    "pictures",
-    "representativeImage",
-    "mainImage",
-    "thumbnail",
-    "coverImage",
-    "image",
-    "imageUrl",
-    "photo",
-    "picture",
-  ].some((key) => source[key] !== undefined);
-}
-
-function collectShopImages(source = {}) {
-  const images = [];
-
-  const pushImage = (value) => {
-    if (Array.isArray(value)) {
-      value.forEach(pushImage);
-      return;
-    }
-
-    const normalized = normalizeImageValue(value);
-
-    if (normalized && !images.includes(normalized)) {
-      images.push(normalized);
-    }
-  };
-
-  pushImage(source.images);
-  pushImage(source.photos);
-  pushImage(source.imageUrls);
-  pushImage(source.gallery);
-  pushImage(source.pictures);
-  pushImage(source.representativeImage);
-  pushImage(source.mainImage);
-  pushImage(source.thumbnail);
-  pushImage(source.coverImage);
-  pushImage(source.image);
-  pushImage(source.imageUrl);
-  pushImage(source.photo);
-  pushImage(source.picture);
-
-  return images;
-}
-
-function normalizeShopImagesPayload(target = {}) {
-  if (!target || typeof target !== "object") {
-    return target;
-  }
-
-  const images = collectShopImages(target);
-  const representativeCandidate =
-    normalizeImageValue(target.representativeImage) ||
-    normalizeImageValue(target.mainImage) ||
-    normalizeImageValue(target.thumbnail) ||
-    normalizeImageValue(target.coverImage) ||
-    normalizeImageValue(target.image) ||
-    normalizeImageValue(target.imageUrl) ||
-    normalizeImageValue(target.photo) ||
-    normalizeImageValue(target.picture) ||
-    images[0] ||
-    "";
-
-  const representativeImage =
-    images.find((image) => image === representativeCandidate) ||
-    representativeCandidate ||
-    images[0] ||
-    "";
-
-  const finalImages = images.length
-    ? images
-    : representativeImage
-      ? [representativeImage]
-      : [];
-
-  target.images = finalImages;
-  target.photos = finalImages;
-  target.imageUrls = finalImages;
-  target.gallery = finalImages;
-  target.pictures = finalImages;
-
-  target.representativeImage = representativeImage;
-  target.mainImage = representativeImage;
-  target.thumbnail = representativeImage;
-  target.coverImage = representativeImage;
-
-  target.image = representativeImage;
-  target.imageUrl = representativeImage;
-  target.photo = representativeImage;
-  target.picture = representativeImage;
-
-  return target;
-}
-
 /* =====================================================
-🔥 SCHEMA (100% 유지)
+🔥 SCHEMA (기존 구조 유지 + 관리자 코스/가격 필드 보존)
 ===================================================== */
+const Mixed = mongoose.Schema.Types.Mixed;
+
 const ShopSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
@@ -224,7 +83,11 @@ const ShopSchema = new mongoose.Schema(
     district: { type: String, default: "" },
     address: { type: String, default: "" },
     roadAddress: { type: String, default: "" },
+    fullAddress: { type: String, default: "" },
+    locationText: { type: String, default: "" },
     phone: { type: String, default: "" },
+    tel: { type: String, default: "" },
+    virtualPhone: { type: String, default: "" },
 
     category: { type: String, default: "massage" },
     shopCategory: { type: String, default: "massage" },
@@ -241,21 +104,33 @@ const ShopSchema = new mongoose.Schema(
     imageUrls: [{ type: String }],
     gallery: [{ type: String }],
     pictures: [{ type: String }],
-    representativeImage: { type: String, default: "" },
-    mainImage: { type: String, default: "" },
-    coverImage: { type: String, default: "" },
     image: { type: String, default: "" },
     imageUrl: { type: String, default: "" },
     photo: { type: String, default: "" },
     picture: { type: String, default: "" },
+    representativeImage: { type: String, default: "" },
+    mainImage: { type: String, default: "" },
+    coverImage: { type: String, default: "" },
 
     tags: [{ type: String }],
     serviceTypes: [{ type: String }],
 
     description: { type: String, default: "" },
+    intro: { type: String, default: "" },
+    shopIntro: { type: String, default: "" },
     openInfo: { type: String, default: "" },
+    businessHours: { type: String, default: "" },
+    openingHours: { type: String, default: "" },
+    hours: { type: String, default: "" },
 
     premium: { type: Boolean, default: false },
+    premiumType: { type: String, default: "normal" },
+    premiumLevel: { type: String, default: "normal" },
+    membershipType: { type: String, default: "normal" },
+    listingType: { type: String, default: "normal" },
+    shopGrade: { type: String, default: "normal" },
+    imageGrade: { type: String, default: "normal" },
+    photoGrade: { type: String, default: "normal" },
     isPremium: { type: Boolean, default: false },
     premiumActive: { type: Boolean, default: false },
     bestBadge: { type: Boolean, default: false },
@@ -266,6 +141,19 @@ const ShopSchema = new mongoose.Schema(
     priceDiscount: { type: Number, default: 0 },
     discountRate: { type: Number, default: 0 },
 
+    courses: [{ type: Mixed }],
+    price: [{ type: Mixed }],
+    prices: [{ type: Mixed }],
+    originalPrice: [{ type: Mixed }],
+    originalPrices: [{ type: Mixed }],
+    coursePricing: { type: Mixed, default: undefined },
+    pricing: { type: Mixed, default: undefined },
+    priceTable: { type: Mixed, default: undefined },
+    courseSections: { type: Mixed, default: undefined },
+    menuPrices: { type: Mixed, default: undefined },
+    menus: { type: Mixed, default: undefined },
+    courseMenus: { type: Mixed, default: undefined },
+
     reviewCount: { type: Number, default: 0 },
     ratingAvg: { type: Number, default: 0 },
 
@@ -275,6 +163,7 @@ const ShopSchema = new mongoose.Schema(
     distanceKm: { type: Number, default: 0 },
 
     isReservable: { type: Boolean, default: true },
+    directPaymentEnabled: { type: Boolean, default: false },
     status: { type: String, default: "active" },
     reservationCount: { type: Number, default: 0 },
     score: { type: Number, default: 0 },
@@ -387,7 +276,9 @@ ShopSchema.pre("save", function (next) {
   this.isPremium = this.premium === true;
   this.premiumActive = this.premium === true;
 
-  normalizeShopImagesPayload(this);
+  if (!this.premiumType) {
+    this.premiumType = this.premium ? "premium" : "normal";
+  }
 
   if (this.priceOriginal > 0) {
     this.discountRate = Math.max(
@@ -451,10 +342,6 @@ function normalizeUpdatePayload(update = {}) {
     target.isDeleted = false;
   }
 
-  if (hasShopImagePayload(target)) {
-    normalizeShopImagesPayload(target);
-  }
-
   if (
     target.premium !== undefined ||
     target.isPremium !== undefined ||
@@ -471,6 +358,10 @@ function normalizeUpdatePayload(update = {}) {
     target.premium = premium;
     target.isPremium = premium;
     target.premiumActive = premium;
+
+    if (!target.premiumType) {
+      target.premiumType = premium ? "premium" : "normal";
+    }
   }
 
   if (hasOperator && Object.keys(target).length > 0) {

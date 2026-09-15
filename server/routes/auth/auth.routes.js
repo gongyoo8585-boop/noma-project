@@ -4,6 +4,7 @@
  * =====================================================
  * 🔥 AUTH ROUTES (COMPLETE - PRODUCTION READY)
  * 기존 라우팅 유지 + require 경로 안정화 + middleware 함수 검증
+ * 관리자 전용 회원가입 라우트 최소 추가
  * =====================================================
  */
 
@@ -125,6 +126,12 @@ const authMiddleware = firstAvailable([
 
 /* 회원가입 */
 router.post("/register", controllerAction("register"));
+
+/* 관리자 전용 회원가입 */
+router.post(
+  "/admin/register",
+  protectedControllerAction("adminRegister")
+);
 
 /* 로그인 */
 router.post("/login", controllerAction("login"));

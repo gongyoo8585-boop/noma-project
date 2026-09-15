@@ -23,7 +23,7 @@ import Loading from "../../components/common/Loading";
 /**
  * =====================================================
  * 🔥 USER ADMIN PAGE
- * ✔ 기존 코드 100% 유지
+ * ✔ 기존 코드 흐름 유지
  * ✔ AdminLayout 유지
  * ✔ UserList 유지
  * ✔ EmptyState 유지
@@ -35,10 +35,14 @@ import Loading from "../../components/common/Loading";
  * ✔ render crash 최소 방어
  * ✔ loading 고정 최소 방어
  * ✔ 기존 흐름 유지
+ * ✔ roleFilter 기반 유저 / 업체 / 관리자 분류
  * =====================================================
  */
 
-function UserAdminPage() {
+function UserAdminPage({
+  roleFilter = "",
+  serviceFilter = "",
+}) {
   const mountedRef =
     useRef(false);
 
@@ -67,6 +71,20 @@ function UserAdminPage() {
       "function" ||
     typeof AdminLayout ===
       "object";
+
+  const pageTitle =
+    roleFilter === "shop"
+      ? "업체 페이지"
+      : roleFilter === "admin"
+        ? "관리자 페이지"
+        : "유저 관리";
+
+  const pageDescription =
+    roleFilter === "shop"
+      ? "업체 회원 목록, 권한, 차단 상태를 관리합니다."
+      : roleFilter === "admin"
+        ? "관리자 회원 목록, 권한, 차단 상태를 관리합니다."
+        : "회원 목록, 권한, 차단 상태를 관리합니다.";
 
   /* 🔥 최소 추가 */
   useEffect(() => {
@@ -113,7 +131,7 @@ function UserAdminPage() {
     };
   }, []);
 
-  /* 🔥 기존 유지 */
+  /* 🔥 기존 유지 + roleFilter 전달 */
   const userListElement =
     useMemo(() => {
       if (
@@ -123,7 +141,12 @@ function UserAdminPage() {
       }
 
       try {
-        return <UserList />;
+        return (
+          <UserList
+            roleFilter={roleFilter}
+            serviceFilter={serviceFilter}
+          />
+        );
       } catch (e) {
         console.error(
           "USER LIST RENDER ERROR:",
@@ -134,7 +157,11 @@ function UserAdminPage() {
           <ErrorMessage message="유저 목록 렌더링 중 오류가 발생했습니다." />
         );
       }
-    }, [hasUserList]);
+    }, [
+      hasUserList,
+      roleFilter,
+      serviceFilter,
+    ]);
 
   /* 🔥 최소 추가 */
   useEffect(() => {
@@ -176,15 +203,15 @@ function UserAdminPage() {
   }
 
   return (
-    <AdminLayout title="유저 관리">
+    <AdminLayout title={pageTitle}>
       <div style={styles.page}>
         <div style={styles.header}>
-          <h1 style={styles.title}>
-            유저 관리
-          </h1>
+          <h2 style={styles.title}>
+            {pageTitle}
+          </h2>
 
           <p style={styles.desc}>
-            회원 목록, 권한, 차단 상태를 관리합니다.
+            {pageDescription}
           </p>
         </div>
 

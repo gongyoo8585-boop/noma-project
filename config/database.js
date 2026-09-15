@@ -88,31 +88,43 @@ function now() {
   return Date.now();
 }
 
+function safeNumberOption(value, fallback, min, max) {
+  const numberValue = Number(value);
+
+  if (Number.isNaN(numberValue) || numberValue <= 0) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(numberValue, min), max);
+}
+
 function getMongoUri() {
   return String(
-    ENV.MONGO_URI ||
-      process.env.MONGO_URI ||
+    process.env.MONGO_URI ||
       process.env.MONGODB_URI ||
       process.env.MONGO_URI_DEV ||
       process.env.DATABASE_URL ||
       process.env.MONGO_URL ||
+      ENV.MONGO_URI ||
       ""
   ).trim();
 }
 
 function getMongoOptions() {
   const options = {
-    maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 10),
-    minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 0),
-    serverSelectionTimeoutMS: Number(
+    maxPoolSize: safeNumberOption(process.env.MONGO_MAX_POOL_SIZE, 5, 1, 20),
+    minPoolSize: safeNumberOption(process.env.MONGO_MIN_POOL_SIZE, 0, 0, 5),
+    serverSelectionTimeoutMS: safeNumberOption(
       process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS ||
-        process.env.MONGO_CONNECT_TIMEOUT_MS ||
-        10000
+        process.env.MONGO_CONNECT_TIMEOUT_MS,
+      30000,
+      15000,
+      60000
     ),
-    socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 45000),
-    connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000),
-    heartbeatFrequencyMS: Number(process.env.MONGO_HEARTBEAT_MS || 10000),
-    maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 30000),
+    socketTimeoutMS: safeNumberOption(process.env.MONGO_SOCKET_TIMEOUT_MS, 60000, 30000, 120000),
+    connectTimeoutMS: safeNumberOption(process.env.MONGO_CONNECT_TIMEOUT_MS, 30000, 15000, 60000),
+    heartbeatFrequencyMS: safeNumberOption(process.env.MONGO_HEARTBEAT_MS, 10000, 5000, 30000),
+    maxIdleTimeMS: safeNumberOption(process.env.MONGO_MAX_IDLE_TIME_MS, 60000, 30000, 120000),
     retryWrites: true,
     retryReads: true,
     family: 4,
@@ -198,8 +210,8 @@ function scheduleRetry() {
   if (DB_STATE.connectPromise) return;
   if (isActuallyConnected() || isActuallyConnecting() || DB_STATE.connecting) return;
 
-  const retryMaxDelay = Number(process.env.MONGO_RETRY_MAX_DELAY_MS || 10000);
-  const retryMinDelay = Number(process.env.MONGO_RETRY_MIN_DELAY_MS || 1000);
+  const retryMaxDelay = safeNumberOption(process.env.MONGO_RETRY_MAX_DELAY_MS, 30000, 5000, 60000);
+  const retryMinDelay = safeNumberOption(process.env.MONGO_RETRY_MIN_DELAY_MS, 5000, 1000, 30000);
   const delay = Math.min(
     retryMaxDelay,
     Math.max(retryMinDelay, DB_STATE.retryCount * retryMinDelay || retryMinDelay)
@@ -275,6 +287,8 @@ async function connectDB() {
     try {
       console.log("🟡 Mongo URI Loaded:", maskMongoUri(uri));
 
+      mongoose.set("bufferCommands", false);
+
       await mongoose.connect(uri, getMongoOptions());
 
       if (mongoose.connection.readyState !== 1) {
@@ -313,7 +327,7 @@ async function connectDB() {
 }
 
 async function waitForConnection(
-  timeout = Number(process.env.MONGO_WAIT_TIMEOUT_MS || 15000)
+  timeout = safeNumberOption(process.env.MONGO_WAIT_TIMEOUT_MS, 30000, 15000, 60000)
 ) {
   const started = Date.now();
 

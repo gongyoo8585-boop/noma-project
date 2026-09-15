@@ -23,6 +23,7 @@
  */
 
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 /* =========================
 SAFE REQUIRE
@@ -395,20 +396,27 @@ module.exports = async function authMiddleware(req, res, next) {
           isAdmin: true,
         };
       } else {
-        if (safeUserId.length >= 24) {
+        const isObjectId = mongoose.Types.ObjectId.isValid(safeUserId);
+
+        if (isObjectId) {
           user = await User.findById(safeUserId);
         }
 
         if (!user) {
+          const userQuery = [
+            {
+              id: safeUserId,
+            },
+          ];
+
+          if (isObjectId) {
+            userQuery.push({
+              _id: safeUserId,
+            });
+          }
+
           user = await User.findOne({
-            $or: [
-              {
-                id: safeUserId,
-              },
-              {
-                _id: safeUserId,
-              },
-            ],
+            $or: userQuery,
           });
         }
       }

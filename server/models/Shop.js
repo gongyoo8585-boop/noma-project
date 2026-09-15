@@ -58,6 +58,27 @@ function normalizeImageArray(value) {
   return [];
 }
 
+const KARAOKE_SHOP_IMAGE_LIMIT = 4;
+const DEFAULT_SHOP_IMAGE_LIMIT = 12;
+
+function getShopImageLimit(doc) {
+  if (!doc) {
+    return DEFAULT_SHOP_IMAGE_LIMIT;
+  }
+
+  const category =
+    normalizeShopCategory(doc.category) ||
+    normalizeShopCategory(doc.shopCategory) ||
+    normalizeShopCategory(doc.serviceType) ||
+    normalizeShopCategory(doc.businessType) ||
+    normalizeShopCategory(doc.adminCategory) ||
+    "massage";
+
+  return category === "karaoke"
+    ? KARAOKE_SHOP_IMAGE_LIMIT
+    : DEFAULT_SHOP_IMAGE_LIMIT;
+}
+
 function normalizeCourseArray(value) {
   if (Array.isArray(value)) {
     return value
@@ -238,26 +259,48 @@ function normalizeShopImages(doc) {
   const imageUrls = normalizeImageArray(doc.imageUrls);
   const singleImage = normalizeImageArray(doc.image);
 
-  const merged = [];
-
-  [...images, ...photos, ...imageUrls, ...singleImage].forEach((image) => {
-    if (image && !merged.includes(image)) {
-      merged.push(image);
-    }
-  });
-
-  const representativeImage =
+  // One shop must have one canonical image array.  Merging legacy aliases here
+  // made old photos from images/photos/imageUrls accumulate on every save.
+  const canonicalSource =
+    images.length
+      ? images
+      : photos.length
+      ? photos
+      : imageUrls.length
+      ? imageUrls
+      : singleImage;
+  const representativeCandidate =
     doc.representativeImage ||
     doc.mainImage ||
     doc.thumbnail ||
     doc.coverImage ||
     doc.image ||
-    merged[0] ||
+    canonicalSource[0] ||
     "";
 
-  doc.images = merged;
-  doc.photos = merged;
-  doc.imageUrls = merged;
+  const uniqueCanonicalImages = Array.from(new Set(canonicalSource));
+  const imageLimit = getShopImageLimit(doc);
+  const representativeIndex = uniqueCanonicalImages.findIndex(
+    (image) => image === representativeCandidate
+  );
+  const groupStart =
+    representativeIndex >= 0
+      ? Math.floor(representativeIndex / imageLimit) * imageLimit
+      : 0;
+  const canonicalImages = uniqueCanonicalImages.slice(
+    groupStart,
+    groupStart + imageLimit
+  );
+
+  const representativeImage =
+    canonicalImages.find((image) => image === representativeCandidate) ||
+    canonicalImages[0] ||
+    representativeCandidate ||
+    "";
+
+  doc.images = canonicalImages;
+  doc.photos = canonicalImages;
+  doc.imageUrls = canonicalImages;
   doc.image = representativeImage;
 
   doc.representativeImage = representativeImage;
@@ -555,7 +598,6 @@ const ShopSchema = new mongoose.Schema(
 
       coordinates: {
         type: [Number],
-        index: "2dsphere",
         default: undefined,
       },
     },
@@ -591,6 +633,12 @@ const ShopSchema = new mongoose.Schema(
       index: true,
     },
 
+    directPaymentEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     maxPeople: {
       type: Number,
       default: 1,
@@ -606,7 +654,6 @@ const ShopSchema = new mongoose.Schema(
     virtualPhone: {
       type: String,
       default: "",
-      index: true,
     },
 
     fakePhone: {
@@ -895,9 +942,14 @@ const ShopSchema = new mongoose.Schema(
 /* =========================
 INDEX
 ========================= */
-ShopSchema.index({
-  geo: "2dsphere",
-});
+ShopSchema.index(
+  {
+    geo: "2dsphere",
+  },
+  {
+    sparse: true,
+  }
+);
 
 ShopSchema.index({
   name: "text",
@@ -950,7 +1002,6 @@ ShopSchema.index({
 HOOK
 ========================= */
 ShopSchema.pre("validate", function (next) {
-  normalizeShopCategoryFields(this);
   normalizeShopCategoryFields(this);
   normalizeShopLocation(this);
   normalizeShopImages(this);
@@ -1057,6 +1108,7 @@ ShopSchema.pre("save", function (next) {
   this.markModified("isPremium");
   this.markModified("premiumActive");
   this.markModified("premiumType");
+  this.markModified("directPaymentEnabled");
 
   next();
 });

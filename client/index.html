@@ -2,42 +2,106 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
 
   <!-- SEO -->
-  <meta name="description" content="노마 마사지 예약 플랫폼" />
-  <meta name="keywords" content="마사지, 예약, 스파, 힐링, 노마" />
+  <meta
+    name="description"
+    content="노라 마사지 예약 플랫폼"
+  />
+
+  <meta
+    name="keywords"
+    content="마사지, 예약, 스파, 힐링, 노라"
+  />
+
+  <!-- 링크 공유 미리보기 -->
+  <meta
+    property="og:type"
+    content="website"
+  />
+
+  <meta
+    property="og:site_name"
+    content="노라"
+  />
+
+  <meta
+    property="og:title"
+    content="노라 마사지 플랫폼"
+  />
+
+  <meta
+    property="og:description"
+    content="노라 마사지 예약 플랫폼"
+  />
+
+  <meta
+    property="og:url"
+    content="https://nora365.co.kr/"
+  />
+
+  <meta
+    name="twitter:card"
+    content="summary"
+  />
+
+  <meta
+    name="twitter:title"
+    content="노라 마사지 플랫폼"
+  />
+
+  <meta
+    name="twitter:description"
+    content="노라 마사지 예약 플랫폼"
+  />
 
   <!-- PWA -->
-  <meta name="theme-color" content="#000000" />
+  <meta
+    name="theme-color"
+    content="#000000"
+  />
 
-  <title>노마 마사지 플랫폼</title>
+  <!-- 🔥 Favicon -->
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23000000'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='46' fill='%23D4AF37' font-family='serif'%3EN%3C/text%3E%3C/svg%3E"
+  />
+
+  <title>노라 마사지 플랫폼</title>
+
+  <!-- 🔥 카카오맵 SDK 연결 준비 -->
+  <link
+    rel="preconnect"
+    href="https://dapi.kakao.com"
+  />
 
   <!-- 🔥 카카오맵 SDK -->
   <script
+    async
     src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=290ec1ed8354f004a77502dfef5cbd28&libraries=services,clusterer,drawing&autoload=false"
   ></script>
 
   <!-- 🔥 기본 스타일 (블랙 + 골드 테마) -->
   <style>
-    html, body, #root {
+    html,
+    body,
+    #root {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
       background: #000;
       color: #d4af37;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto;
-    }
-
-    #loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      font-size: 20px;
-      color: #d4af37;
-      background: #000;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto;
     }
 
     /* 스크롤바 */
@@ -59,57 +123,128 @@
   <script>
     window.__KAKAO_SDK_LOADED__ = false;
 
-    window.addEventListener("load", () => {
-      if (window.kakao && window.kakao.maps) {
-        window.__KAKAO_SDK_LOADED__ = true;
+    window.addEventListener(
+      "load",
+      () => {
+        if (
+          window.kakao &&
+          window.kakao.maps
+        ) {
+          window.__KAKAO_SDK_LOADED__ = true;
+        }
       }
-    });
+    );
   </script>
 </head>
 
 <body>
-  <noscript>이 앱을 실행하려면 JavaScript를 활성화하세요.</noscript>
+  <noscript>
+    이 앱을 실행하려면 JavaScript를 활성화하세요.
+  </noscript>
 
   <!-- React Root -->
-  <div id="root">
-    <div id="loading">🚀 노마 로딩 중...</div>
-  </div>
+  <div id="root"></div>
 
-  <!-- 🔥 환경 변수 (Vite 환경 대응 안전값) -->
+  <!-- 🔥 환경 변수 -->
   <script>
+    const IS_LOCAL =
+      window.location.hostname ===
+        "localhost" ||
+      window.location.hostname ===
+        "127.0.0.1";
+
     window.__ENV__ = {
-      API_BASE_URL: "",
-      KAKAO_KEY: "290ec1ed8354f004a77502dfef5cbd28"
+      API_BASE_URL: IS_LOCAL
+        ? "http://localhost:10000/api"
+        : "https://nora365.co.kr/api",
+
+      KAKAO_KEY:
+        "290ec1ed8354f004a77502dfef5cbd28",
     };
   </script>
 
   <!-- 🔥 카카오맵 로드 확인 -->
   <script>
-    window.addEventListener("load", () => {
-      if (!window.kakao || !window.kakao.maps) {
-        console.error("❌ Kakao Map SDK 로드 실패");
-      } else {
-        console.log("✅ Kakao Map SDK 로드 완료");
+    window.addEventListener(
+      "load",
+      () => {
+        if (
+          !window.kakao ||
+          !window.kakao.maps
+        ) {
+          console.error(
+            "❌ Kakao Map SDK 로드 실패"
+          );
+        } else {
+          console.log(
+            "✅ Kakao Map SDK 로드 완료"
+          );
 
-        if (window.kakao.maps.load) {
-          window.kakao.maps.load(() => {
-            console.log("✅ Kakao Map API 초기화 완료");
-          });
+          if (
+            window.kakao.maps.load
+          ) {
+            window.kakao.maps.load(
+              () => {
+                console.log(
+                  "✅ Kakao Map API 초기화 완료"
+                );
+              }
+            );
+          }
         }
       }
-    });
+    );
   </script>
 
   <!-- 🔥 서비스 워커 (PWA 준비) -->
   <script>
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/service-worker.js")
-        .then(() => console.log("✅ SW 등록"))
-        .catch(() => console.warn("❌ SW 실패"));
+    if (
+      "serviceWorker" in navigator
+    ) {
+      if (IS_LOCAL) {
+        navigator.serviceWorker
+          .getRegistrations()
+          .then((registrations) =>
+            Promise.all(
+              registrations.map(
+                (registration) =>
+                  registration.unregister()
+              )
+            )
+          )
+          .then(() =>
+            console.log(
+              "✅ LOCAL SW 해제"
+            )
+          )
+          .catch(() =>
+            console.warn(
+              "❌ LOCAL SW 해제 실패"
+            )
+          );
+      } else {
+        navigator.serviceWorker
+          .register(
+            "/service-worker.js"
+          )
+          .then(() =>
+            console.log(
+              "✅ SW 등록"
+            )
+          )
+          .catch(() =>
+            console.warn(
+              "❌ SW 실패"
+            )
+          );
+      }
     }
   </script>
 
   <!-- 🔥 React 진입 -->
-  <script type="module" src="/src/main.jsx"></script>
+  <script
+    type="module"
+    src="/src/main.jsx"
+  ></script>
 </body>
 </html>

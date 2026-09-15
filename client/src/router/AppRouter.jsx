@@ -10,9 +10,18 @@ import HomePage from "../pages/HomePage";
 import MapPage from "../pages/MapPage";
 import LoginPage from "../pages/LoginPage";
 import SignupPage from "../pages/SignupPage";
+import SignupAgreePage from "../pages/SignupAgreePage";
+import SignupTypePage from "../pages/SignupTypePage";
+import BusinessSignupAgreePage from "../pages/BusinessSignupAgreePage";
+import BusinessSignupPage from "../pages/BusinessSignupPage";
+import TermsDetailPage from "../pages/TermsDetailPage";
 import ShopDetailPage from "../pages/ShopDetailPage";
 import KaraokeMapPage from "../pages/KaraokeMapPage";
 import KaraokeShopDetailPage from "../pages/KaraokeShopDetailPage";
+import JobsPage from "../pages/JobsPage";
+import JobDetailPage from "../pages/JobDetailPage";
+import BusinessJobFormPage from "../pages/BusinessJobFormPage";
+import PartnerInquiryPage from "../pages/PartnerInquiryPage";
 
 import ReviewPage from "../pages/ReviewPage";
 import ReservationCreatePage from "../pages/ReservationCreatePage";
@@ -31,6 +40,9 @@ import PaymentAdminPage from "../pages/admin/PaymentAdminPage";
 import ReviewAdminPage from "../pages/admin/ReviewAdminPage";
 import ReportAdminPage from "../pages/admin/ReportAdminPage";
 import AdminDashboard from "../pages/AdminDashboard";
+import TermsAdminPage from "../pages/admin/TermsAdminPage";
+import AdminJobPage from "../pages/admin/AdminJobPage";
+import AdminJobFormPage from "../pages/admin/AdminJobFormPage";
 
 /* 🔥 추가 */
 import ShopAdminPage from "../pages/admin/ShopAdminPage";
@@ -49,6 +61,27 @@ import KaraokeAnalyticsPage from "../pages/admin/karaoke/KaraokeAnalyticsPage";
 import Loading from "../components/common/Loading";
 import ErrorMessage from "../components/common/ErrorMessage";
 import EmptyState from "../components/common/EmptyState";
+import AdminLayout from "../components/admin/AdminLayout";
+
+const ADMIN_ROUTE_PREFIXES = [
+  "/admin",
+  "/admin/dashboard",
+  "/admin/massage",
+  "/admin/karaoke",
+];
+
+const isAdminRoutePath = (pathname = "") => {
+  if (!pathname || typeof pathname !== "string") {
+    return false;
+  }
+
+  return ADMIN_ROUTE_PREFIXES.some((prefix) => {
+    return (
+      pathname === prefix ||
+      pathname.startsWith(`${prefix}/`)
+    );
+  });
+};
 
 /**
  * =====================================================
@@ -57,6 +90,7 @@ import EmptyState from "../components/common/EmptyState";
  * ✔ 로그인 깜박임 제거
  * ✔ redirect loop 제거
  * ✔ signup 유지
+ * ✔ signup-agree 약관동의 라우트 최소 추가
  * ✔ 기존 구조 유지
  * ✔ 업체 관리 / 신고 관리 라우팅 직접 연결
  * ✔ 최소 수정
@@ -86,8 +120,8 @@ function AppRouter() {
   const getSavedUser = () => {
     try {
       const savedUser =
-        localStorage.getItem("user") ||
-        sessionStorage.getItem("user");
+        localStorage.getItem("adminUser") ||
+        sessionStorage.getItem("adminUser");
 
       if (!savedUser) {
         return null;
@@ -104,14 +138,6 @@ function AppRouter() {
     return (
       localStorage.getItem("adminToken") ||
       sessionStorage.getItem("adminToken") ||
-      localStorage.getItem("token") ||
-      sessionStorage.getItem("token") ||
-      localStorage.getItem("accessToken") ||
-      sessionStorage.getItem("accessToken") ||
-      localStorage.getItem("authToken") ||
-      sessionStorage.getItem("authToken") ||
-      localStorage.getItem("jwt") ||
-      sessionStorage.getItem("jwt") ||
       localStorage.getItem("local-admin-token") ||
       sessionStorage.getItem("local-admin-token") ||
       ""
@@ -190,12 +216,12 @@ function AppRouter() {
         );
 
         localStorage.setItem(
-          "user",
+          "adminUser",
           JSON.stringify(savedUser)
         );
 
         sessionStorage.setItem(
-          "user",
+          "adminUser",
           JSON.stringify(savedUser)
         );
 
@@ -222,7 +248,15 @@ function AppRouter() {
   useEffect(() => {
     const currentPath = window.location.pathname;
 
-    if (currentPath === "/signup" || currentPath === "/register") {
+    if (
+      currentPath === "/signup-type" ||
+      currentPath === "/signup-agree" ||
+      currentPath === "/signup" ||
+      currentPath === "/business/signup-agree" ||
+      currentPath === "/business/signup" ||
+      currentPath === "/register" ||
+      currentPath === "/terms"
+    ) {
       setChecked(true);
       return;
     }
@@ -289,12 +323,12 @@ function AppRouter() {
         );
 
         localStorage.setItem(
-          "user",
+          "adminUser",
           JSON.stringify(normalizedUser)
         );
 
         sessionStorage.setItem(
-          "user",
+          "adminUser",
           JSON.stringify(normalizedUser)
         );
 
@@ -337,9 +371,7 @@ function AppRouter() {
         savedUser.role === "admin" ||
         savedUser.userRole === "admin" ||
         savedUser.type === "admin" ||
-        savedUser.isAdmin === true ||
-        localStorage.getItem("isAdmin") === "true" ||
-        sessionStorage.getItem("isAdmin") === "true"
+        savedUser.isAdmin === true
       )
     );
 
@@ -347,7 +379,7 @@ function AppRouter() {
     if (
       checked &&
       !isAdminLoggedIn &&
-      window.location.pathname.startsWith("/admin")
+      isAdminRoutePath(window.location.pathname)
     ) {
       sessionStorage.removeItem(
         "adminLoggedIn"
@@ -355,10 +387,18 @@ function AppRouter() {
     }
   }, [checked, isAdminLoggedIn]);
 
+  const handleAdminLoginUser = (nextUser) => {
+    setAdminUser(nextUser);
+  };
+
   const AdminLoginPage = (
     <LoginPage
-      setUser={setAdminUser}
+      setUser={handleAdminLoginUser}
     />
+  );
+
+  const UserLoginPage = (
+    <LoginPage />
   );
 
   if (loading || !checked) {
@@ -387,7 +427,17 @@ function AppRouter() {
 
       <Route
         path="/login"
-        element={AdminLoginPage}
+        element={UserLoginPage}
+      />
+
+      <Route
+        path="/signup-type"
+        element={<SignupTypePage />}
+      />
+
+      <Route
+        path="/signup-agree"
+        element={<SignupAgreePage />}
       />
 
       <Route
@@ -396,8 +446,23 @@ function AppRouter() {
       />
 
       <Route
+        path="/terms"
+        element={<TermsDetailPage />}
+      />
+
+      <Route
         path="/register"
         element={<SignupPage />}
+      />
+
+      <Route
+        path="/business/signup-agree"
+        element={<BusinessSignupAgreePage />}
+      />
+
+      <Route
+        path="/business/signup"
+        element={<BusinessSignupPage />}
       />
 
       <Route
@@ -428,6 +493,52 @@ function AppRouter() {
       />
 
       <Route
+        path="/admin/signup"
+        element={
+          isAdminLoggedIn ? (
+            <AdminLayout title="회원가입 페이지">
+              <SignupPage />
+            </AdminLayout>
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/jobs"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobPage serviceType="massage" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/jobs/new"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="massage" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/jobs/:jobId/edit"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="massage" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
         path="/admin/reports"
         element={
           isAdminLoggedIn ? (
@@ -442,7 +553,32 @@ function AppRouter() {
         path="/admin/users"
         element={
           isAdminLoggedIn ? (
-            <UserAdminPage />
+            <UserAdminPage roleFilter="user" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/users/shop"
+        element={
+          isAdminLoggedIn ? (
+            <UserAdminPage
+              roleFilter="shop"
+              serviceFilter="massage"
+            />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/users/admin"
+        element={
+          isAdminLoggedIn ? (
+            <UserAdminPage roleFilter="admin" />
           ) : (
             AdminLoginPage
           )
@@ -494,6 +630,32 @@ function AppRouter() {
       />
 
       <Route
+        path="/admin/terms"
+        element={
+          isAdminLoggedIn ? (
+            <AdminLayout title="약관 관리">
+              <TermsAdminPage />
+            </AdminLayout>
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/terms/*"
+        element={
+          isAdminLoggedIn ? (
+            <AdminLayout title="약관 관리">
+              <TermsAdminPage />
+            </AdminLayout>
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
         path="/admin/massage"
         element={
           isAdminLoggedIn ? (
@@ -520,6 +682,39 @@ function AppRouter() {
         element={
           isAdminLoggedIn ? (
             <ShopAdminPage />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/massage/jobs"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobPage serviceType="massage" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/massage/jobs/new"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="massage" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/massage/jobs/:jobId/edit"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="massage" />
           ) : (
             AdminLoginPage
           )
@@ -626,10 +821,57 @@ function AppRouter() {
       />
 
       <Route
+        path="/admin/karaoke/jobs"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobPage serviceType="karaoke" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/karaoke/jobs/new"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="karaoke" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/karaoke/jobs/:jobId/edit"
+        element={
+          isAdminLoggedIn ? (
+            <AdminJobFormPage serviceType="karaoke" />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
         path="/admin/karaoke/users"
         element={
           isAdminLoggedIn ? (
             <KaraokeUserAdminPage />
+          ) : (
+            AdminLoginPage
+          )
+        }
+      />
+
+      <Route
+        path="/admin/karaoke/users/shop"
+        element={
+          isAdminLoggedIn ? (
+            <UserAdminPage
+              roleFilter="shop"
+              serviceFilter="karaoke"
+            />
           ) : (
             AdminLoginPage
           )
@@ -692,13 +934,43 @@ function AppRouter() {
       />
 
       <Route
+        path="/jobs"
+        element={<JobsPage />}
+      />
+
+      <Route
+        path="/business/jobs/new"
+        element={<BusinessJobFormPage />}
+      />
+
+      <Route
+        path="/jobs/:jobId"
+        element={<JobDetailPage />}
+      />
+
+      <Route
+        path="/partner-inquiry"
+        element={<PartnerInquiryPage />}
+      />
+
+      <Route
         path="/map"
+        element={<MapPage />}
+      />
+
+      <Route
+        path="/massage"
         element={<MapPage />}
       />
 
       <Route
         path="/massage/map"
         element={<MapPage />}
+      />
+
+      <Route
+        path="/karaoke"
+        element={<KaraokeMapPage />}
       />
 
       <Route

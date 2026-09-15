@@ -10,20 +10,24 @@ const isLocalHost =
   );
 
 const API_BASE_URL =
-  (
-    typeof window !== "undefined" &&
-    window.__ENV__ &&
-    window.__ENV__.API_BASE_URL
-  ) ||
-  (
-    typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    (
-      import.meta.env.VITE_API_BASE_URL ||
-      import.meta.env.VITE_API_URL
-    )
-  ) ||
-  "https://api.nora365.co.kr/api";
+  isLocalHost
+    ? "http://localhost:10000/api"
+    : (
+        (
+          typeof window !== "undefined" &&
+          window.__ENV__ &&
+          window.__ENV__.API_BASE_URL
+        ) ||
+        (
+          typeof import.meta !== "undefined" &&
+          import.meta.env &&
+          (
+            import.meta.env.VITE_API_BASE_URL ||
+            import.meta.env.VITE_API_URL
+          )
+        ) ||
+        "https://api.nora365.co.kr/api"
+      );
 
 const API = axios.create({
   baseURL: API_BASE_URL,
@@ -32,7 +36,11 @@ const API = axios.create({
 });
 
 try {
-  if (API.defaults.baseURL?.includes("/api/api")) {
+  if (
+    API.defaults.baseURL?.includes(
+      "/api/api"
+    )
+  ) {
     API.defaults.baseURL =
       API.defaults.baseURL.replace(
         "/api/api",
@@ -46,6 +54,97 @@ try {
   }
 } catch {}
 
+function normalizeToken(token) {
+  return String(token || "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+}
+
+function decodeTokenPayload(token) {
+  try {
+    const safeToken =
+      normalizeToken(token);
+
+    const payload =
+      safeToken.split(".")[1];
+
+    if (!payload) {
+      return null;
+    }
+
+    const normalized =
+      payload
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+    const padded =
+      normalized +
+      "=".repeat(
+        (4 - (normalized.length % 4)) % 4
+      );
+
+    return JSON.parse(
+      decodeURIComponent(
+        atob(padded)
+          .split("")
+          .map(
+            (char) =>
+              `%${char
+                .charCodeAt(0)
+                .toString(16)
+                .padStart(2, "0")}`
+          )
+          .join("")
+      )
+    );
+  } catch {
+    return null;
+  }
+}
+
+function isAdminToken(token) {
+  const payload =
+    decodeTokenPayload(token);
+
+  const role =
+    String(payload?.role || "")
+      .trim()
+      .toLowerCase();
+
+  return (
+    payload?.isAdmin === true ||
+    role === "admin" ||
+    role === "superadmin" ||
+    role === "super_admin"
+  );
+}
+
+function isAdminUser(user = {}) {
+  if (
+    !user ||
+    typeof user !== "object"
+  ) {
+    return false;
+  }
+
+  const role =
+    String(
+      user?.role ||
+      user?.userRole ||
+      user?.type ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  return (
+    user?.isAdmin === true ||
+    role === "admin" ||
+    role === "superadmin" ||
+    role === "super_admin"
+  );
+}
+
 function extractUser(data = {}) {
   return (
     data?.user ||
@@ -55,12 +154,25 @@ function extractUser(data = {}) {
 }
 
 function saveUser(user) {
-  if (!user) return;
+  if (
+    !user ||
+    isAdminUser(user)
+  ) {
+    return;
+  }
 
   try {
+    const value =
+      JSON.stringify(user);
+
     localStorage.setItem(
       "user",
-      JSON.stringify(user)
+      value
+    );
+
+    sessionStorage.setItem(
+      "user",
+      value
     );
   } catch (e) {
     console.warn(
@@ -89,15 +201,34 @@ function extractToken(data = {}) {
 function saveToken(token) {
   if (!token) return;
 
+  const safeToken =
+    normalizeToken(token);
+
+  if (
+    !safeToken ||
+    isAdminToken(safeToken)
+  ) {
+    return;
+  }
+
   try {
-    localStorage.removeItem("token");
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("jwt");
+    [
+      "accessToken",
+      "authToken",
+      "jwt",
+    ].forEach((key) => {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    });
 
     localStorage.setItem(
-      "adminToken",
-      token
+      "token",
+      safeToken
+    );
+
+    sessionStorage.setItem(
+      "token",
+      safeToken
     );
   } catch (e) {
     console.warn(
@@ -107,14 +238,82 @@ function saveToken(token) {
   }
 }
 
+function clearUserAuth() {
+  try {
+    [
+      "token",
+      "accessToken",
+      "authToken",
+      "jwt",
+      "user",
+    ].forEach((key) => {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    });
+  } catch (e) {
+    console.warn(
+      "CLEAR USER AUTH ERROR:",
+      e.message
+    );
+  }
+}
+
+function getStoredUserToken() {
+  try {
+    const candidates = [
+      localStorage.getItem(
+        "token"
+      ),
+      sessionStorage.getItem(
+        "token"
+      ),
+      localStorage.getItem(
+        "accessToken"
+      ),
+      sessionStorage.getItem(
+        "accessToken"
+      ),
+      localStorage.getItem(
+        "authToken"
+      ),
+      sessionStorage.getItem(
+        "authToken"
+      ),
+      localStorage.getItem(
+        "jwt"
+      ),
+      sessionStorage.getItem(
+        "jwt"
+      ),
+    ]
+      .filter(
+        (token) =>
+          token &&
+          token !== "undefined" &&
+          token !== "null"
+      )
+      .map(
+        (token) =>
+          normalizeToken(token)
+      );
+
+    return (
+      candidates.find(
+        (token) =>
+          token &&
+          !isAdminToken(token)
+      ) ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
 API.interceptors.request.use(
   (config) => {
     const token =
-      localStorage.getItem("adminToken") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("accessToken") ||
-      localStorage.getItem("authToken") ||
-      localStorage.getItem("jwt");
+      getStoredUserToken();
 
     config.headers =
       config.headers || {};
@@ -130,36 +329,12 @@ API.interceptors.request.use(
     return config;
   },
 
-  (err) => Promise.reject(err)
+  (err) =>
+    Promise.reject(err)
 );
 
 API.interceptors.response.use(
   (res) => {
-    try {
-      const user =
-        extractUser(
-          res?.data
-        );
-
-      if (user) {
-        saveUser(user);
-      }
-
-      const token =
-        extractToken(
-          res?.data
-        );
-
-      if (token) {
-        saveToken(token);
-      }
-    } catch (e) {
-      console.warn(
-        "AUTO USER SAVE ERROR:",
-        e.message
-      );
-    }
-
     return res?.data ?? res;
   },
 
@@ -183,26 +358,30 @@ API.interceptors.response.use(
       const requestUrl =
         err?.config?.url || "";
 
-      const isAuthRequest =
-        requestUrl.includes("/auth/me") ||
-        requestUrl.includes("/auth/verify") ||
-        requestUrl.includes("/auth/login");
+      const isSessionCheckRequest =
+        requestUrl.includes(
+          "/auth/me"
+        ) ||
+        requestUrl.includes(
+          "/auth/verify"
+        );
 
       const isAdminRequest =
-        requestUrl.includes("/admin") ||
-        requestUrl.includes("/shops") ||
-        requestUrl.includes("/shop");
+        requestUrl.includes(
+          "/admin"
+        ) ||
+        requestUrl.includes(
+          "/shops"
+        ) ||
+        requestUrl.includes(
+          "/shop"
+        );
 
       if (
-        isAuthRequest &&
+        isSessionCheckRequest &&
         !isAdminRequest
       ) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("adminToken");
-        localStorage.removeItem("jwt");
-        localStorage.removeItem("user");
+        clearUserAuth();
 
         const path =
           window.location.pathname;
@@ -211,7 +390,9 @@ API.interceptors.response.use(
           path !== "/login" &&
           path !== "/signup"
         ) {
-          alert("로그인이 필요합니다.");
+          alert(
+            "로그인이 필요합니다."
+          );
 
           window.location.href =
             "/login";
@@ -237,15 +418,21 @@ const authApi = {
       const user =
         extractUser(res);
 
-      if (user) {
-        saveUser(user);
-      }
-
       const token =
         extractToken(res);
 
-      if (token) {
-        saveToken(token);
+      const adminResponse =
+        isAdminUser(user) ||
+        isAdminToken(token);
+
+      if (!adminResponse) {
+        if (user) {
+          saveUser(user);
+        }
+
+        if (token) {
+          saveToken(token);
+        }
       }
     } catch (e) {
       console.warn(
@@ -265,12 +452,7 @@ const authApi = {
   },
 
   logout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("adminToken");
-    localStorage.removeItem("jwt");
-    localStorage.removeItem("user");
+    clearUserAuth();
 
     return API.post(
       "/auth/logout"

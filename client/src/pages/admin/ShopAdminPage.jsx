@@ -68,6 +68,11 @@ const EMPTY_FORM = {
   priceInput: "",
   status: "active",
   premium: "normal",
+  directPaymentEnabled: false,
+  lat: 0,
+  lng: 0,
+  latitude: 0,
+  longitude: 0,
   images: [],
   representativeImage: "",
   intro: "",
@@ -76,9 +81,19 @@ const EMPTY_FORM = {
   coursePricing: cloneCoursePricing(),
 };
 
-const MAX_LOCAL_IMAGE_COUNT = Number.POSITIVE_INFINITY;
-const MAX_LOCAL_IMAGE_LENGTH = Number.POSITIVE_INFINITY;
-const MAX_MIRROR_STORAGE_LENGTH = 250000;
+const MAX_LOCAL_IMAGE_COUNT = 12;
+const MAX_CARD_RENDER_IMAGE_COUNT = MAX_LOCAL_IMAGE_COUNT;
+const KARAOKE_SHOP_IMAGE_COUNT = 4;
+const DASHBOARD_SYNC_CACHE_TTL_MS = 15000;
+const MAX_LOCAL_IMAGE_LENGTH = 2048;
+const MAX_MIRROR_STORAGE_LENGTH = 50000;
+
+const SHOP_IMAGE_FALLBACK_SRC =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180"><rect width="240" height="180" fill="#111"/><rect x="1" y="1" width="238" height="178" fill="none" stroke="#333" stroke-width="2"/><text x="120" y="82" fill="#d4af37" font-size="15" font-family="Arial, sans-serif" text-anchor="middle" font-weight="700">이미지 로드 실패</text><text x="120" y="108" fill="#999" font-size="12" font-family="Arial, sans-serif" text-anchor="middle">사진 URL을 확인해주세요</text></svg>'
+  );
+
 
 const isStorageQuotaError = (error) => {
   const name = String(error?.name || "");
@@ -132,6 +147,7 @@ function ShopAdminPage() {
     items: [],
   });
   const dashboardCacheTimeRef = useRef(0);
+  const dashboardRequestRef = useRef(null);
   const loadRunningRef = useRef(false);
   const statsRunningRef = useRef(false);
   const statsTimerRef = useRef(null);
@@ -212,6 +228,11 @@ function ShopAdminPage() {
       ? "karaoke"
       : "massage";
 
+  const currentShopImageLimit =
+    currentAdminCategory === "karaoke"
+      ? KARAOKE_SHOP_IMAGE_COUNT
+      : MAX_LOCAL_IMAGE_COUNT;
+
 
   const currentAdminCategoryParams = {
     category: currentAdminCategory,
@@ -240,6 +261,10 @@ function ShopAdminPage() {
   const LOCAL_SHOP_KEY = `noma_admin_shops_${currentAdminCategory}`;
   const LOCAL_PUBLIC_SHOP_KEY = `noma_local_shops_${currentAdminCategory}`;
   const LOCAL_SHOP_IMAGE_BANK_KEY = `noma_admin_shop_image_bank_${currentAdminCategory}`;
+  const LOCAL_SHOP_PREMIUM_BANK_KEY = `noma_admin_shop_premium_bank_${currentAdminCategory}`;
+  const NORA_LOCAL_SHOP_PREMIUM_BANK_KEY = `nora_admin_shop_premium_bank_${currentAdminCategory}`;
+  const LEGACY_LOCAL_SHOP_PREMIUM_BANK_KEY = "noma_admin_shop_premium_bank";
+  const LEGACY_NORA_SHOP_PREMIUM_BANK_KEY = "nora_admin_shop_premium_bank";
   const LOCAL_SHOP_BACKUP_KEY = `noma_admin_shop_backup_${currentAdminCategory}`;
   const DELETED_SHOP_KEY = `noma_deleted_shop_ids_${currentAdminCategory}`;
 
@@ -266,6 +291,19 @@ function ShopAdminPage() {
     categorySyncKeyRef.current = syncKey;
 
     try {
+      purgeUnsafeImageStorage();
+
+      if (currentAdminCategory === "karaoke") {
+        [window.localStorage, window.sessionStorage]
+          .filter(Boolean)
+          .forEach((storage) => {
+            [
+              LOCAL_SHOP_IMAGE_BANK_KEY,
+              "nora_admin_shop_image_bank_karaoke",
+            ].forEach((key) => storage.removeItem(key));
+          });
+      }
+
       dashboardCacheRef.current = {
         category: "",
         items: [],
@@ -333,6 +371,30 @@ function ShopAdminPage() {
       return currentAdminCategory;
     }
 
+    const identityText = [
+      shop?.name,
+      shop?.title,
+      shop?.slug,
+      shop?.shopName,
+      shop?.businessName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .trim();
+
+    if (
+      identityText.includes("노래방") ||
+      identityText.includes("가라오케") ||
+      identityText.includes("karaoke")
+    ) {
+      return "karaoke";
+    }
+
+    if (currentAdminCategory === "massage") {
+      return "massage";
+    }
+
     return (
       normalizeShopCategory(shop.category) ||
       normalizeShopCategory(shop.shopCategory) ||
@@ -340,7 +402,7 @@ function ShopAdminPage() {
       normalizeShopCategory(shop.serviceType) ||
       normalizeShopCategory(shop.businessType) ||
       normalizeShopCategory(shop.adminCategory) ||
-      ""
+      currentAdminCategory
     );
   };
 
@@ -363,28 +425,41 @@ function ShopAdminPage() {
   const getAdminVisibleShops = (items) => {
     const safeItems = Array.isArray(items) ? items : [];
 
-    if (currentAdminCategory === "karaoke") {
-      return filterCurrentCategoryShops(safeItems);
-    }
-
-    return safeItems;
+    return filterCurrentCategoryShops(safeItems);
   };
 
   const normalizePremiumType = (value) => {
-    if (value && typeof value === "object") {
-      if (value.premiumType !== undefined) {
-        return normalizePremiumType(value.premiumType);
-      }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const objectValue =
+        value.premiumType !== undefined
+          ? value.premiumType
+          : value.premiumLevel !== undefined
+          ? value.premiumLevel
+          : value.membershipType !== undefined
+          ? value.membershipType
+          : value.membership !== undefined
+          ? value.membership
+          : value.listingType !== undefined
+          ? value.listingType
+          : value.shopGrade !== undefined
+          ? value.shopGrade
+          : value.imageGrade !== undefined
+          ? value.imageGrade
+          : value.photoGrade !== undefined
+          ? value.photoGrade
+          : value.grade !== undefined
+          ? value.grade
+          : value.badge !== undefined
+          ? value.badge
+          : value.premium !== undefined
+          ? value.premium
+          : value.isPremium !== undefined
+          ? value.isPremium
+          : value.premiumActive !== undefined
+          ? value.premiumActive
+          : "";
 
-      if (value.premium === true || value.isPremium === true || value.premiumActive === true) {
-        return "premium";
-      }
-
-      if (value.premium === false || value.isPremium === false || value.premiumActive === false) {
-        return "normal";
-      }
-
-      return "normal";
+      return normalizePremiumType(objectValue);
     }
 
     const text = String(value || "")
@@ -400,12 +475,49 @@ function ShopAdminPage() {
       text === "true" ||
       text === "1" ||
       text === "yes" ||
-      text === "on"
+      text === "on" ||
+      text === "active" ||
+      text === "enabled"
     ) {
       return "premium";
     }
 
-    return "normal";
+    return value === true ? "premium" : "normal";
+  };
+
+  const normalizeDirectPaymentEnabled = (value) => {
+    return (
+      value === true ||
+      value === "true" ||
+      value === 1 ||
+      value === "1" ||
+      String(value || "").toLowerCase().trim() === "enabled" ||
+      String(value || "").toLowerCase().trim() === "active" ||
+      String(value || "").toLowerCase().trim() === "on"
+    );
+  };
+
+  const hasDirectPaymentField = (value) => {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    return Object.prototype.hasOwnProperty.call(value, "directPaymentEnabled");
+  };
+
+  const pickDirectPaymentEnabled = (baseValue, nextValue) => {
+    if (
+      baseValue?.__directPaymentUpdated === true &&
+      nextValue?.__directPaymentUpdated !== true
+    ) {
+      return normalizeDirectPaymentEnabled(baseValue.directPaymentEnabled);
+    }
+
+    if (hasDirectPaymentField(nextValue) || nextValue?.__directPaymentUpdated === true) {
+      return normalizeDirectPaymentEnabled(nextValue.directPaymentEnabled);
+    }
+
+    return normalizeDirectPaymentEnabled(baseValue?.directPaymentEnabled);
   };
 
   const hasPremiumField = (value) => {
@@ -417,7 +529,16 @@ function ShopAdminPage() {
       Object.prototype.hasOwnProperty.call(value, "premium") ||
       Object.prototype.hasOwnProperty.call(value, "isPremium") ||
       Object.prototype.hasOwnProperty.call(value, "premiumActive") ||
-      Object.prototype.hasOwnProperty.call(value, "premiumType")
+      Object.prototype.hasOwnProperty.call(value, "premiumType") ||
+      Object.prototype.hasOwnProperty.call(value, "premiumLevel") ||
+      Object.prototype.hasOwnProperty.call(value, "membershipType") ||
+      Object.prototype.hasOwnProperty.call(value, "membership") ||
+      Object.prototype.hasOwnProperty.call(value, "listingType") ||
+      Object.prototype.hasOwnProperty.call(value, "shopGrade") ||
+      Object.prototype.hasOwnProperty.call(value, "imageGrade") ||
+      Object.prototype.hasOwnProperty.call(value, "photoGrade") ||
+      Object.prototype.hasOwnProperty.call(value, "grade") ||
+      Object.prototype.hasOwnProperty.call(value, "badge")
     );
   };
 
@@ -471,6 +592,122 @@ function ShopAdminPage() {
     return /^[A-Za-z0-9+/]{120,}={0,2}$/.test(text);
   };
 
+  const isDataOrBlobImage = (value) => {
+    const text = String(value || "").trim();
+
+    return (
+      text.startsWith("data:image/") ||
+      text.startsWith("blob:")
+    );
+  };
+
+  const hasImageFileExtension = (value) => {
+    const text = String(value || "").split("?")[0].split("#")[0].toLowerCase().trim();
+
+    return /\.(jpg|jpeg|png|gif|webp|bmp|svg|avif)$/i.test(text);
+  };
+
+  const cleanImageUrlCandidate = (value) => {
+    return String(value || "")
+      .trim()
+      .replace(/^["'`]+|["'`]+$/g, "")
+      .replace(/[),.;]+$/g, "");
+  };
+
+  const isServerImageUrl = (value) => {
+    const text = String(value || "").trim();
+
+    if (!text) {
+      return false;
+    }
+
+    if (
+      text === "undefined" ||
+      text === "null" ||
+      text === "[object Object]" ||
+      text.includes("[object Object]")
+    ) {
+      return false;
+    }
+
+    if (isDataOrBlobImage(text) || isBareBase64Image(text)) {
+      return false;
+    }
+
+    return (
+      text.startsWith("http://") ||
+      text.startsWith("https://") ||
+      text.startsWith("//") ||
+      text.startsWith("/")
+    );
+  };
+
+  const getImageDedupKey = (value) => {
+    const normalized = normalizeImageSrc(value);
+    const text = String(normalized || "").trim();
+
+    if (!text) {
+      return "";
+    }
+
+    try {
+      const url = text.startsWith("http://") || text.startsWith("https://")
+        ? new URL(text)
+        : new URL(text, getApiOrigin());
+
+      const path = url.pathname
+        .replace(/\\/g, "/")
+        .replace(/^\/api\/shops\/uploads\//i, "/uploads/")
+        .replace(/^\/api\/shops\/upload\//i, "/uploads/")
+        .replace(/^\/shops\/uploads\//i, "/uploads/")
+        .replace(/^\/shops\/upload\//i, "/uploads/")
+        .replace(/^\/api\/uploads\//i, "/uploads/")
+        .replace(/^\/api\/upload\//i, "/uploads/")
+        .replace(/^\/uploads\//i, "/uploads/")
+        .replace(/^\/upload\//i, "/uploads/")
+        .replace(/\/+/g, "/")
+        .toLowerCase();
+
+      return `${path}${url.search || ""}`.trim();
+    } catch (e) {
+      return text
+        .replace(/\\/g, "/")
+        .replace(/^https?:\/\/[^/]+/i, "")
+        .replace(/^\/api\/shops\/uploads\//i, "/uploads/")
+        .replace(/^\/api\/shops\/upload\//i, "/uploads/")
+        .replace(/^\/shops\/uploads\//i, "/uploads/")
+        .replace(/^\/shops\/upload\//i, "/uploads/")
+        .replace(/^\/api\/uploads\//i, "/uploads/")
+        .replace(/^\/api\/upload\//i, "/uploads/")
+        .replace(/^\/uploads\//i, "/uploads/")
+        .replace(/^\/upload\//i, "/uploads/")
+        .replace(/\/+/g, "/")
+        .toLowerCase()
+        .trim();
+    }
+  };
+
+  const makeUniqueImageList = (images, limit = MAX_LOCAL_IMAGE_COUNT) => {
+    const result = [];
+    const seen = new Set();
+
+    (Array.isArray(images) ? images : [])
+      .map((image) => normalizeImageSrc(image))
+      .filter((image) => image && isServerImageUrl(image))
+      .forEach((image) => {
+        const key = getImageDedupKey(image);
+
+        if (!key || seen.has(key)) {
+          return;
+        }
+
+        seen.add(key);
+        result.push(image);
+      });
+
+    return result.slice(0, limit);
+  };
+
   const normalizeImageSrc = (value) => {
     const text = String(value || "").trim();
 
@@ -478,32 +715,88 @@ function ShopAdminPage() {
       return "";
     }
 
-    if (text === "undefined" || text === "null" || text === "[object Object]") {
+    if (
+      text === "undefined" ||
+      text === "null" ||
+      text === "[object Object]" ||
+      text.includes("[object Object]")
+    ) {
       return "";
     }
 
-    if (text.includes("[object Object]")) {
+    if (isDataOrBlobImage(text) || isBareBase64Image(text)) {
       return "";
     }
 
-    if (text.startsWith("data:image/")) {
-      return text.includes(";base64,") ? text : "";
+    const normalizeUploadPath = (pathValue) =>
+      String(pathValue || "")
+        .replace(/\\/g, "/")
+        .replace(/^\/api\/shops\/upload\//i, "/api/shops/uploads/")
+        .replace(/^\/shops\/uploads\//i, "/api/shops/uploads/")
+        .replace(/^\/shops\/upload\//i, "/api/shops/uploads/")
+        .replace(/^\/api\/uploads\//i, "/api/uploads/")
+        .replace(/^\/api\/upload\//i, "/api/uploads/")
+        .replace(/^\/upload\//i, "/uploads/")
+        .replace(/\/+/g, "/");
+
+    if (text.startsWith("//")) {
+      const protocol =
+        typeof window !== "undefined" && window.location?.protocol
+          ? window.location.protocol
+          : "https:";
+
+      return normalizeImageSrc(`${protocol}${text}`);
     }
 
-    if (text.startsWith("blob:")) {
-      return text;
-    }
+    if (text.startsWith("http://") || text.startsWith("https://")) {
+      try {
+        const url = new URL(text);
+        const normalizedPath = normalizeUploadPath(url.pathname);
 
-    if (text.startsWith("http://") || text.startsWith("https://") || text.startsWith("/")) {
-      if (isBareBase64Image(text)) {
-        return `data:image/jpeg;base64,${text}`;
+        return `${url.origin}${normalizedPath}${url.search || ""}${url.hash || ""}`;
+      } catch (e) {
+        return text;
       }
-
-      return text;
     }
 
-    if (isBareBase64Image(text)) {
-      return `data:image/jpeg;base64,${text}`;
+    if (
+      text.startsWith("/api/shops/uploads/") ||
+      text.startsWith("/api/shops/upload/") ||
+      text.startsWith("/shops/uploads/") ||
+      text.startsWith("/shops/upload/") ||
+      text.startsWith("/uploads/") ||
+      text.startsWith("/upload/")
+    ) {
+      return `${getApiOrigin()}${normalizeUploadPath(text)}`;
+    }
+
+    if (text.startsWith("/api/")) {
+      return `${getApiOrigin()}${normalizeUploadPath(text)}`;
+    }
+
+    if (text.startsWith("/")) {
+      return normalizeUploadPath(text);
+    }
+
+    if (
+      text.startsWith("api/shops/uploads/") ||
+      text.startsWith("api/shops/upload/") ||
+      text.startsWith("shops/uploads/") ||
+      text.startsWith("shops/upload/") ||
+      text.startsWith("api/uploads/") ||
+      text.startsWith("api/upload/") ||
+      text.startsWith("uploads/") ||
+      text.startsWith("upload/")
+    ) {
+      return `${getApiOrigin()}${normalizeUploadPath(`/${text.replace(/^\/+/, "")}`)}`;
+    }
+
+    if (text.startsWith("shops/")) {
+      return `${getApiBaseUrl()}/${text.replace(/^\/+/, "")}`;
+    }
+
+    if (hasImageFileExtension(text)) {
+      return `${getApiOrigin()}/uploads/${text.replace(/^\/+/, "")}`;
     }
 
     return "";
@@ -989,80 +1282,87 @@ function ShopAdminPage() {
       shop?.files,
     ];
 
-    const firstArrayImages = arraySources
-      .map((source) => makeSafeArray(source))
-      .find((images) => images.length > 0) || [];
+    const scalarSources = [
+      shop?.representativeImage,
+      shop?.mainImage,
+      shop?.thumbnail,
+      shop?.coverImage,
+      shop?.image,
+      shop?.imageUrl,
+      shop?.photo,
+      shop?.picture,
+    ];
 
-    if (firstArrayImages.length) {
-      return firstArrayImages
-        .map((image) => normalizeImageSrc(image))
-        .filter(Boolean);
+    if (currentAdminCategory === "karaoke") {
+      const representativeImage = normalizeImageSrc(
+        shop?.representativeImage ||
+          shop?.mainImage ||
+          shop?.thumbnail ||
+          shop?.coverImage ||
+          shop?.image ||
+          ""
+      );
+      const representativeKey = getImageDedupKey(representativeImage);
+      const normalizedArraySources = arraySources
+        .map((source) => makeUniqueImageList(makeSafeArray(source)))
+        .filter((source) => source.length > 0);
+      const canonicalSource =
+        normalizedArraySources.find((source) =>
+          representativeKey
+            ? source.some((image) => getImageDedupKey(image) === representativeKey)
+            : false
+        ) ||
+        normalizedArraySources[0] ||
+        makeUniqueImageList(
+          scalarSources.flatMap((source) => makeSafeArray(source))
+        );
+      const representativeIndex = representativeKey
+        ? canonicalSource.findIndex(
+            (image) => getImageDedupKey(image) === representativeKey
+          )
+        : -1;
+      const groupStart =
+        representativeIndex >= 0
+          ? Math.floor(representativeIndex / currentShopImageLimit) * currentShopImageLimit
+          : 0;
+
+      return makeUniqueImageList(
+        canonicalSource.slice(groupStart, groupStart + currentShopImageLimit),
+        currentShopImageLimit
+      );
     }
 
-    return [
-      ...makeSafeArray(shop?.representativeImage),
-      ...makeSafeArray(shop?.mainImage),
-      ...makeSafeArray(shop?.thumbnail),
-      ...makeSafeArray(shop?.coverImage),
-      ...makeSafeArray(shop?.image),
-      ...makeSafeArray(shop?.imageUrl),
-      ...makeSafeArray(shop?.photo),
-      ...makeSafeArray(shop?.picture),
-    ]
-      .map((image) => normalizeImageSrc(image))
-      .filter(Boolean);
+    return makeUniqueImageList([
+      ...arraySources.flatMap((source) => makeSafeArray(source)),
+      ...scalarSources.flatMap((source) => makeSafeArray(source)),
+    ]);
   };
 
   const makeImageListWithRepresentative = (images, representativeImage) => {
-    const normalizedImages = (Array.isArray(images) ? images : [])
-      .map((image) => normalizeImageSrc(image))
-      .filter(Boolean);
-
+    const normalizedImages = makeUniqueImageList(images);
     const safeRepresentativeImage = normalizeImageSrc(
       representativeImage || normalizedImages[0] || ""
     );
+    const representativeKey = getImageDedupKey(safeRepresentativeImage);
 
-    if (!safeRepresentativeImage) {
+    if (!safeRepresentativeImage || !representativeKey) {
       return normalizedImages;
     }
 
-    const representativeIndex = normalizedImages.findIndex(
-      (image) => image === safeRepresentativeImage
-    );
+    const representativeItem =
+      normalizedImages.find((image) => getImageDedupKey(image) === representativeKey) ||
+      safeRepresentativeImage;
 
-    if (representativeIndex < 0) {
-      return [
-        safeRepresentativeImage,
-        ...normalizedImages,
-      ];
-    }
-
-    return [
-      normalizedImages[representativeIndex],
-      ...normalizedImages.filter((_, index) => index !== representativeIndex),
-    ];
+    return makeUniqueImageList([
+      representativeItem,
+      ...normalizedImages.filter((image) => getImageDedupKey(image) !== representativeKey),
+    ]);
   };
 
   const getStorageSafeImages = (shop) => {
-    return makeSafeImages(shop)
-      .filter((image) => {
-        const text = String(image || "");
-
-        if (!text) {
-          return false;
-        }
-
-        if (text.startsWith("blob:")) {
-          return false;
-        }
-
-        if (text.length > MAX_LOCAL_IMAGE_LENGTH) {
-          return false;
-        }
-
-        return true;
-      })
-      .slice(0, MAX_LOCAL_IMAGE_COUNT);
+    return makeUniqueImageList(makeSafeImages(shop))
+      .filter((image) => String(image || "").length <= MAX_LOCAL_IMAGE_LENGTH)
+      .slice(0, currentShopImageLimit);
   };
 
   const makeSafeCourses = (shop) => {
@@ -1269,6 +1569,335 @@ function ShopAdminPage() {
     return (Array.isArray(items) ? items : []).filter((item) => !isDeletedShop(item));
   };
 
+  const normalizeAddressValue = (value) => {
+    const text = String(value || "").trim();
+
+    if (!text || text === "주소 없음") {
+      return "";
+    }
+
+    return text;
+  };
+
+  const normalizeCoordinateValue = (value) => {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? number : 0;
+  };
+
+  const getShopCoordinates = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return { lat: 0, lng: 0 };
+    }
+
+    const isUsableCoordinatePair = (lat, lng) => {
+      const safeLat = normalizeCoordinateValue(lat);
+      const safeLng = normalizeCoordinateValue(lng);
+
+      return (
+        Number.isFinite(safeLat) &&
+        Number.isFinite(safeLng) &&
+        safeLat >= -90 &&
+        safeLat <= 90 &&
+        safeLng >= -180 &&
+        safeLng <= 180 &&
+        !(safeLat === 0 && safeLng === 0)
+      );
+    };
+
+    const candidates = [
+      [shop?.lat, shop?.lng],
+      [shop?.latitude, shop?.longitude],
+      [shop?.location?.lat, shop?.location?.lng],
+      [shop?.location?.latitude, shop?.location?.longitude],
+      [shop?.coordinates?.lat, shop?.coordinates?.lng],
+      [shop?.coordinates?.latitude, shop?.coordinates?.longitude],
+      [
+        Array.isArray(shop?.location?.coordinates)
+          ? shop.location.coordinates[1]
+          : undefined,
+        Array.isArray(shop?.location?.coordinates)
+          ? shop.location.coordinates[0]
+          : undefined,
+      ],
+    ];
+
+    for (const [latValue, lngValue] of candidates) {
+      if (!isUsableCoordinatePair(latValue, lngValue)) {
+        continue;
+      }
+
+      return {
+        lat: normalizeCoordinateValue(latValue),
+        lng: normalizeCoordinateValue(lngValue),
+      };
+    }
+
+    return { lat: 0, lng: 0 };
+  };
+
+  const geocodeAddress = (address) => {
+    const safeAddress = normalizeAddressValue(address)
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!safeAddress) {
+      return Promise.resolve({ lat: 0, lng: 0 });
+    }
+
+    const normalizeAddressCandidate = (value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const makeAddressCandidates = () => {
+      const candidates = [
+        safeAddress,
+      ];
+
+      if (/^서울\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^서울\s+/, "서울특별시 "));
+      }
+
+      if (/^부산\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^부산\s+/, "부산광역시 "));
+      }
+
+      if (/^대구\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^대구\s+/, "대구광역시 "));
+      }
+
+      if (/^인천\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^인천\s+/, "인천광역시 "));
+      }
+
+      if (/^광주\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^광주\s+/, "광주광역시 "));
+      }
+
+      if (/^대전\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^대전\s+/, "대전광역시 "));
+      }
+
+      if (/^울산\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^울산\s+/, "울산광역시 "));
+      }
+
+      if (/^세종\s+/.test(safeAddress)) {
+        candidates.push(safeAddress.replace(/^세종\s+/, "세종특별자치시 "));
+      }
+
+      if (/^김해시\s+/.test(safeAddress)) {
+        candidates.push(`경상남도 ${safeAddress}`);
+      }
+
+      if (/^창원시\s+/.test(safeAddress)) {
+        candidates.push(`경상남도 ${safeAddress}`);
+      }
+
+      if (/^양산시\s+/.test(safeAddress)) {
+        candidates.push(`경상남도 ${safeAddress}`);
+      }
+
+      if (/^진주시\s+/.test(safeAddress)) {
+        candidates.push(`경상남도 ${safeAddress}`);
+      }
+
+      const withoutDetail = safeAddress
+        .replace(/\s+\d+(?:-\d+)?(?:번지)?\s*$/i, "")
+        .trim();
+
+      if (withoutDetail && withoutDetail !== safeAddress) {
+        candidates.push(withoutDetail);
+
+        if (/^김해시\s+/.test(withoutDetail)) {
+          candidates.push(`경상남도 ${withoutDetail}`);
+        }
+      }
+
+      return Array.from(
+        new Set(
+          candidates
+            .map((item) => normalizeAddressCandidate(item))
+            .filter(Boolean)
+        )
+      );
+    };
+
+    const addressCandidates = makeAddressCandidates();
+
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      let retryCount = 0;
+      const maxRetryCount = 50;
+
+      const finishResolve = (value) => {
+        if (finished) {
+          return;
+        }
+
+        finished = true;
+        resolve(value);
+      };
+
+      const finishReject = (error) => {
+        if (finished) {
+          return;
+        }
+
+        finished = true;
+        reject(error);
+      };
+
+      const isUsableCoordinate = (lat, lng) => {
+        const safeLat = Number(lat);
+        const safeLng = Number(lng);
+
+        return (
+          Number.isFinite(safeLat) &&
+          Number.isFinite(safeLng) &&
+          safeLat >= -90 &&
+          safeLat <= 90 &&
+          safeLng >= -180 &&
+          safeLng <= 180 &&
+          !(safeLat === 0 && safeLng === 0)
+        );
+      };
+
+      const tryKeywordSearch = (services) => {
+        if (!services?.Places) {
+          finishReject(new Error(`주소 좌표 변환 실패: ${safeAddress}`));
+          return;
+        }
+
+        try {
+          const places = new services.Places();
+          let keywordIndex = 0;
+
+          const searchNextKeyword = () => {
+            if (keywordIndex >= addressCandidates.length) {
+              finishReject(new Error(`주소 좌표 변환 실패: ${safeAddress}`));
+              return;
+            }
+
+            const candidate = addressCandidates[keywordIndex];
+            keywordIndex += 1;
+
+            places.keywordSearch(candidate, (result, status) => {
+              if (
+                status === services.Status.OK &&
+                Array.isArray(result) &&
+                result.length
+              ) {
+                const lat = normalizeCoordinateValue(result[0]?.y);
+                const lng = normalizeCoordinateValue(result[0]?.x);
+
+                if (isUsableCoordinate(lat, lng)) {
+                  finishResolve({ lat, lng });
+                  return;
+                }
+              }
+
+              searchNextKeyword();
+            });
+          };
+
+          searchNextKeyword();
+        } catch (e) {
+          finishReject(e);
+        }
+      };
+
+      const executeGeocode = () => {
+        try {
+          const kakaoMaps = window?.kakao?.maps;
+          const services = kakaoMaps?.services;
+          const Geocoder = services?.Geocoder;
+
+          if (!kakaoMaps || !services || !Geocoder || !services?.Status) {
+            retryCount += 1;
+
+            if (retryCount >= maxRetryCount) {
+              finishReject(
+                new Error("카카오 주소 좌표 변환 서비스를 사용할 수 없습니다.")
+              );
+              return;
+            }
+
+            window.setTimeout(runWhenKakaoReady, 100);
+            return;
+          }
+
+          const geocoder = new Geocoder();
+          let addressIndex = 0;
+
+          const searchNextAddress = () => {
+            if (addressIndex >= addressCandidates.length) {
+              tryKeywordSearch(services);
+              return;
+            }
+
+            const candidate = addressCandidates[addressIndex];
+            addressIndex += 1;
+
+            geocoder.addressSearch(candidate, (result, status) => {
+              if (
+                status === services.Status.OK &&
+                Array.isArray(result) &&
+                result.length
+              ) {
+                const lat = normalizeCoordinateValue(result[0]?.y);
+                const lng = normalizeCoordinateValue(result[0]?.x);
+
+                if (isUsableCoordinate(lat, lng)) {
+                  finishResolve({ lat, lng });
+                  return;
+                }
+              }
+
+              searchNextAddress();
+            });
+          };
+
+          searchNextAddress();
+        } catch (e) {
+          finishReject(e);
+        }
+      };
+
+      const runWhenKakaoReady = () => {
+        try {
+          const kakaoMaps = window?.kakao?.maps;
+
+          if (!kakaoMaps) {
+            retryCount += 1;
+
+            if (retryCount >= maxRetryCount) {
+              finishReject(
+                new Error("카카오 주소 좌표 변환 서비스를 사용할 수 없습니다.")
+              );
+              return;
+            }
+
+            window.setTimeout(runWhenKakaoReady, 100);
+            return;
+          }
+
+          if (typeof kakaoMaps.load === "function") {
+            kakaoMaps.load(executeGeocode);
+            return;
+          }
+
+          executeGeocode();
+        } catch (e) {
+          finishReject(e);
+        }
+      };
+
+      runWhenKakaoReady();
+    });
+  };
+
   const hasSafeText = (value) => String(value || "").trim().length > 0;
 
   const pickStableText = (baseValue, nextValue) => {
@@ -1279,19 +1908,37 @@ function ShopAdminPage() {
     return baseValue || "";
   };
 
+  const pickStableAddress = (...values) => {
+    for (const value of values) {
+      const address = normalizeAddressValue(value);
+
+      if (address) {
+        return address;
+      }
+    }
+
+    return "";
+  };
+
   const mergeShopRecord = (baseShop, nextShop) => {
     const base = baseShop || {};
     const next = nextShop || {};
 
     const baseImages = makeSafeImages(base);
     const nextImages = makeSafeImages(next);
-    const replaceImages = next?.__replaceImages === true;
+    const baseReplaceImages = base?.__replaceImages === true;
+    const nextReplaceImages = next?.__replaceImages === true;
+    const replaceImages = baseReplaceImages || nextReplaceImages;
 
-    const fixedImages = replaceImages
-      ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
+    const fixedImages = nextReplaceImages
+      ? makeUniqueImageList(nextImages)
+      : baseReplaceImages && baseImages.length
+      ? makeUniqueImageList(baseImages)
+      : baseReplaceImages && !baseImages.length && nextImages.length
+      ? makeUniqueImageList(nextImages)
       : nextImages.length >= baseImages.length
-      ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-      : baseImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
+      ? makeUniqueImageList(nextImages)
+      : makeUniqueImageList(baseImages);
 
     const baseCourses = makeSafeCourses(base);
     const nextCourses = makeSafeCourses(next);
@@ -1303,7 +1950,9 @@ function ShopAdminPage() {
 
     const baseCoursePricing = makeSafeCoursePricing(base);
     const nextCoursePricing = makeSafeCoursePricing(next);
-    const mergedCoursePricing =
+    const baseCompleteCoursePricing = filterCompleteCoursePricing(baseCoursePricing);
+    const nextCompleteCoursePricing = filterCompleteCoursePricing(nextCoursePricing);
+    const nextHasCoursePricingSource = !!(
       next?.coursePricing ||
       next?.priceTable ||
       next?.pricing ||
@@ -1311,20 +1960,43 @@ function ShopAdminPage() {
       next?.menuPrices ||
       next?.menus ||
       next?.courseMenus
-        ? nextCoursePricing
-        : baseCoursePricing;
+    );
+    const nextIsSubmitPayload = next?.__fromSubmitPayload === true;
+    const mergedCoursePricing = nextIsSubmitPayload
+      ? nextCompleteCoursePricing
+      : nextCompleteCoursePricing.length > 0
+      ? nextCompleteCoursePricing
+      : baseCompleteCoursePricing.length > 0
+      ? baseCompleteCoursePricing
+      : nextHasCoursePricingSource && nextCoursePricing.length > 0
+      ? nextCoursePricing
+      : baseCoursePricing;
 
     const representativeCandidate = normalizeImageSrc(
-      next.representativeImage ||
-        next.mainImage ||
-        next.thumbnail ||
-        next.coverImage ||
-        base.representativeImage ||
-        base.mainImage ||
-        base.thumbnail ||
-        base.coverImage ||
-        fixedImages[0] ||
-        ""
+      nextReplaceImages
+        ? next.representativeImage ||
+            next.mainImage ||
+            next.thumbnail ||
+            next.coverImage ||
+            fixedImages[0] ||
+            ""
+        : baseReplaceImages
+        ? base.representativeImage ||
+            base.mainImage ||
+            base.thumbnail ||
+            base.coverImage ||
+            fixedImages[0] ||
+            ""
+        : next.representativeImage ||
+            next.mainImage ||
+            next.thumbnail ||
+            next.coverImage ||
+            base.representativeImage ||
+            base.mainImage ||
+            base.thumbnail ||
+            base.coverImage ||
+            fixedImages[0] ||
+            ""
     );
 
     const representativeImage =
@@ -1335,9 +2007,25 @@ function ShopAdminPage() {
 
     const baseId = base._id || base.id || "";
     const nextId = next._id || next.id || next.shopId || "";
-    const premium = hasPremiumField(next)
-      ? normalizePremiumType(next)
-      : normalizePremiumType(base);
+    const resolvedAddress = pickStableAddress(
+      next.address,
+      next.roadAddress,
+      next.fullAddress,
+      next.locationText,
+      base.address,
+      base.roadAddress,
+      base.fullAddress,
+      base.locationText
+    );
+    const basePremium = normalizePremiumType(base);
+    const nextPremium = normalizePremiumType(next);
+    const nextHasPremiumField = hasPremiumField(next);
+    const premium = nextHasPremiumField ? nextPremium : basePremium;
+    const directPaymentEnabled = pickDirectPaymentEnabled(base, next);
+    const baseCoordinates = getShopCoordinates(base);
+    const nextCoordinates = getShopCoordinates(next);
+    const lat = nextCoordinates.lat || baseCoordinates.lat || 0;
+    const lng = nextCoordinates.lng || baseCoordinates.lng || 0;
 
     return normalizeShopForList({
       ...base,
@@ -1345,9 +2033,14 @@ function ShopAdminPage() {
       _id: nextId || baseId,
       id: nextId || baseId,
       name: pickStableText(base.name, next.name),
-      address: pickStableText(base.address, next.address || next.roadAddress || next.fullAddress),
-      roadAddress: pickStableText(base.roadAddress || base.address, next.roadAddress || next.address || next.fullAddress),
-      fullAddress: pickStableText(base.fullAddress || base.address, next.fullAddress || next.address || next.roadAddress),
+      address: resolvedAddress,
+      roadAddress: resolvedAddress,
+      fullAddress: resolvedAddress,
+      locationText: resolvedAddress,
+      lat,
+      lng,
+      latitude: lat,
+      longitude: lng,
       phone: pickStableText(base.phone || base.tel, next.phone || next.tel),
       businessHours: pickStableText(base.businessHours || base.openingHours || base.hours, next.businessHours || next.openingHours || next.hours),
       openingHours: pickStableText(base.openingHours || base.businessHours || base.hours, next.openingHours || next.businessHours || next.hours),
@@ -1362,6 +2055,14 @@ function ShopAdminPage() {
       priceTable: mergedCoursePricing,
       courseSections: mergedCoursePricing,
       status: next.status || base.status || "active",
+      directPaymentEnabled,
+      __directPaymentUpdated:
+        next.__directPaymentUpdated === true ||
+        base.__directPaymentUpdated === true ||
+        hasDirectPaymentField(next) ||
+        hasDirectPaymentField(base),
+      __replaceImages: replaceImages,
+      __imageReplaceLocked: next.__imageReplaceLocked === true || base.__imageReplaceLocked === true,
       premium,
       premiumType: premium,
       isPremium: premium !== "normal",
@@ -1414,15 +2115,114 @@ function ShopAdminPage() {
     return nameAddressKey ? [nameAddressKey] : [];
   };
 
+  const getShopPremiumBankKeys = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return [];
+    }
+
+    const id = String(shop._id || shop.id || shop.shopId || "").trim();
+    const name = normalizeText(shop.name || shop.shopName || shop.title);
+    const address = normalizeText(
+      shop.address || shop.roadAddress || shop.fullAddress || shop.locationText
+    );
+    const phone = normalizeText(
+      shop.phone || shop.tel || shop.virtualPhone || shop.fakePhone || shop.callNumber
+    );
+    const rawNameAddressKey = name && address ? `${name}::${address}` : "";
+    const dashedNameAddressKey = name && address ? `name-address:${name}:${address}` : "";
+
+    return Array.from(
+      new Set([
+        ...getShopImageBankKeys(shop),
+        ...getShopImageBankAliasKeys(shop),
+        ...getShopIdentityValues(shop),
+        id,
+        id ? `id:${id}` : "",
+        name ? `name:${name}` : "",
+        rawNameAddressKey,
+        dashedNameAddressKey,
+        phone ? `phone:${phone}` : "",
+      ].map((key) => String(key || "").trim()).filter(Boolean))
+    );
+  };
+
+  const readShopPremiumBank = () => {
+    return {};
+  };
+
+  const writeShopPremiumBank = (items) => {
+    return Array.isArray(items) ? items : [];
+  };
+
+  const removeShopPremiumBank = (shopOrId) => {
+    return shopOrId;
+  };
+
+  const hasExplicitPremiumValue = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return false;
+    }
+
+    return hasPremiumField(shop);
+  };
+
+  const normalizeShopPremiumFields = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return shop;
+    }
+
+    const premiumType = normalizePremiumType(shop);
+    const premiumBoolean = premiumType !== "normal";
+
+    return {
+      ...shop,
+      premium: premiumBoolean,
+      premiumType,
+      premiumLevel: premiumType,
+      membershipType: premiumType,
+      listingType: premiumType,
+      shopGrade: premiumType,
+      imageGrade: premiumType,
+      photoGrade: premiumType,
+      isPremium: premiumBoolean,
+      premiumActive: premiumBoolean,
+    };
+  };
+
+  const applyShopPremiumBank = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return shop;
+    }
+
+    if (hasExplicitPremiumValue(shop)) {
+      return normalizeShopPremiumFields(shop);
+    }
+
+    return shop;
+  };
+
   const readShopImageBank = () => {
     try {
       const localSaved = JSON.parse(localStorage.getItem(LOCAL_SHOP_IMAGE_BANK_KEY) || "{}");
       const sessionSaved = JSON.parse(sessionStorage.getItem(LOCAL_SHOP_IMAGE_BANK_KEY) || "{}");
 
-      return {
+      const mergedBank = {
         ...(localSaved && typeof localSaved === "object" && !Array.isArray(localSaved) ? localSaved : {}),
         ...(sessionSaved && typeof sessionSaved === "object" && !Array.isArray(sessionSaved) ? sessionSaved : {}),
       };
+
+      return Object.fromEntries(
+        Object.entries(mergedBank)
+          .map(([key, value]) => [
+            key,
+            Array.isArray(value)
+              ? value
+                  .map((image) => normalizeImageSrc(image))
+                  .filter(Boolean)
+                  .slice(0, currentShopImageLimit)
+              : [],
+          ])
+      );
     } catch (e) {
       return {};
     }
@@ -1480,26 +2280,41 @@ function ShopAdminPage() {
           return;
         }
 
-        const keys = getShopImageBankKeys(normalized);
-        const images = makeSafeImages(normalized).filter((image) => !String(image || "").startsWith("blob:"));
+        const keys = replace
+          ? Array.from(
+              new Set([
+                ...getShopImageBankKeys(normalized),
+                ...getShopImageBankAliasKeys(normalized),
+                ...getShopIdentityValues(normalized),
+              ].map((key) => String(key || "").trim()).filter(Boolean))
+            )
+          : getShopImageBankKeys(normalized);
+
+        const images = makeUniqueImageList(makeSafeImages(normalized));
 
         if (!keys.length) {
           return;
         }
 
         if (replace) {
-          getShopImageBankAliasKeys(normalized)
-            .filter((key) => !keys.includes(key))
-            .forEach((key) => {
+          keys.forEach((key) => {
+            delete nextBank[key];
+          });
+
+          Object.keys(nextBank).forEach((key) => {
+            if (keys.includes(key)) {
               delete nextBank[key];
-            });
+            }
+          });
         }
 
         keys.forEach((key) => {
           const currentImages = Array.isArray(nextBank[key]) ? nextBank[key] : [];
-          const fixedImages = images.length
-            ? images.map((image) => normalizeImageSrc(image)).filter(Boolean)
-            : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
+          const fixedImages = replace
+            ? makeUniqueImageList(images)
+            : images.length
+            ? makeUniqueImageList(images)
+            : makeUniqueImageList(currentImages);
 
           nextBank[key] = fixedImages;
         });
@@ -1517,9 +2332,11 @@ function ShopAdminPage() {
           const nextImages = Array.isArray(nextBank[key]) ? nextBank[key] : [];
           const currentImages = Array.isArray(fallbackBank[key]) ? fallbackBank[key] : [];
 
-          fallbackBank[key] = nextImages.length
-            ? nextImages.map((image) => normalizeImageSrc(image)).filter(Boolean)
-            : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
+          fallbackBank[key] = replace
+            ? makeUniqueImageList(nextImages)
+            : nextImages.length
+            ? makeUniqueImageList(nextImages)
+            : makeUniqueImageList(currentImages);
         });
 
         const fallbackText = JSON.stringify(fallbackBank);
@@ -1543,20 +2360,46 @@ function ShopAdminPage() {
     }
 
     const bank = readShopImageBank();
-    const keys = getShopImageBankKeys(shop);
-    const bankImages = keys
-      .flatMap((key) => (Array.isArray(bank[key]) ? bank[key] : []))
-      .map((image) => normalizeImageSrc(image))
-      .filter(Boolean);
+    const keys = Array.from(
+      new Set([
+        ...getShopImageBankKeys(shop),
+        ...getShopImageBankAliasKeys(shop),
+        ...getShopIdentityValues(shop),
+      ].map((key) => String(key || "").trim()).filter(Boolean))
+    );
+    const hasBankRecord = keys.some((key) =>
+      Object.prototype.hasOwnProperty.call(bank, key)
+    );
+    const bankImages = makeUniqueImageList(
+      keys.flatMap((key) => (Array.isArray(bank[key]) ? bank[key] : []))
+    );
 
-    const currentImages = makeSafeImages(shop);
-    const fixedImages = bankImages.length
+    const currentImages = makeUniqueImageList(makeSafeImages(shop));
+
+    const hasExplicitImageArray =
+      Array.isArray(shop.images) ||
+      Array.isArray(shop.photos) ||
+      Array.isArray(shop.imageUrls) ||
+      Array.isArray(shop.gallery) ||
+      Array.isArray(shop.pictures) ||
+      Array.isArray(shop.files);
+
+    const hasReplaceImageMarker = shop.__replaceImages === true;
+    const hasReplaceLockedMarker = shop.__imageReplaceLocked === true;
+
+    const shouldUseBankImages =
+      !hasReplaceLockedMarker &&
+      hasBankRecord &&
+      (
+        !hasExplicitImageArray ||
+        !currentImages.length ||
+        bankImages.length > currentImages.length ||
+        (hasReplaceImageMarker && !currentImages.length)
+      );
+
+    const fixedImages = shouldUseBankImages
       ? bankImages
-      : currentImages.map((image) => normalizeImageSrc(image)).filter(Boolean);
-
-    if (!fixedImages.length) {
-      return shop;
-    }
+      : currentImages;
 
     const representativeImage = normalizeImageSrc(
       shop.representativeImage ||
@@ -1592,6 +2435,23 @@ function ShopAdminPage() {
     };
   };
 
+  const applyFreshShopFromServer = (shop) => {
+    if (!shop || typeof shop !== "object") {
+      return shop;
+    }
+
+    const imageFixedShop =
+      currentAdminCategory === "karaoke"
+        ? shop
+        : applyShopImageBank(shop);
+
+    if (hasExplicitPremiumValue(imageFixedShop)) {
+      return normalizeShopPremiumFields(imageFixedShop);
+    }
+
+    return imageFixedShop;
+  };
+
   const readLocalShops = () => {
     try {
       const parseStorageItems = (storage, key) => {
@@ -1603,6 +2463,24 @@ function ShopAdminPage() {
           return [];
         }
       };
+
+      const legacyMassageItems =
+        currentAdminCategory === "massage"
+          ? [
+              ...parseStorageItems(localStorage, "noma_admin_shop_backup"),
+              ...parseStorageItems(sessionStorage, "noma_admin_shop_backup"),
+              ...parseStorageItems(localStorage, "nora_admin_shop_backup"),
+              ...parseStorageItems(sessionStorage, "nora_admin_shop_backup"),
+              ...parseStorageItems(localStorage, "noma_admin_shops"),
+              ...parseStorageItems(sessionStorage, "noma_admin_shops"),
+              ...parseStorageItems(localStorage, "noma_local_shops"),
+              ...parseStorageItems(sessionStorage, "noma_local_shops"),
+              ...parseStorageItems(localStorage, "nora_admin_shops"),
+              ...parseStorageItems(sessionStorage, "nora_admin_shops"),
+              ...parseStorageItems(localStorage, "nora_local_shops"),
+              ...parseStorageItems(sessionStorage, "nora_local_shops"),
+            ]
+          : [];
 
       return filterCurrentCategoryShops(
         filterDeletedShops(
@@ -1619,7 +2497,8 @@ function ShopAdminPage() {
             ...parseStorageItems(localStorage, `nora_local_shops_${currentAdminCategory}`),
             ...parseStorageItems(sessionStorage, `nora_admin_shops_${currentAdminCategory}`),
             ...parseStorageItems(sessionStorage, `nora_local_shops_${currentAdminCategory}`),
-          ]).map((item) => applyShopImageBank(item))
+            ...legacyMassageItems,
+          ]).map((item) => applyShopPremiumBank(applyShopImageBank(item)))
         )
       );
     } catch (e) {
@@ -1642,7 +2521,10 @@ function ShopAdminPage() {
 
     return {
       ...normalized,
-      __replaceImages: false,
+      __replaceImages: normalized.__replaceImages === true,
+      __imageReplaceLocked: normalized.__imageReplaceLocked === true,
+      __directPaymentUpdated: normalized.__directPaymentUpdated === true,
+      directPaymentEnabled: normalizeDirectPaymentEnabled(normalized.directPaymentEnabled),
       images,
       photos: images,
       imageUrls: images,
@@ -1672,24 +2554,32 @@ function ShopAdminPage() {
     }
 
     const coursePricing = filterCompleteCoursePricing(makeSafeCoursePricing(normalized));
+    const images = getStorageSafeImages(normalized);
+    const representativeImage =
+      images.includes(normalized.representativeImage)
+        ? normalized.representativeImage
+        : images[0] || "";
 
     return {
       ...normalized,
-      __replaceImages: false,
-      images: [],
-      photos: [],
-      imageUrls: [],
-      gallery: [],
-      pictures: [],
+      __replaceImages: normalized.__replaceImages === true,
+      __imageReplaceLocked: normalized.__imageReplaceLocked === true,
+      __directPaymentUpdated: normalized.__directPaymentUpdated === true,
+      directPaymentEnabled: normalizeDirectPaymentEnabled(normalized.directPaymentEnabled),
+      images,
+      photos: images,
+      imageUrls: images,
+      gallery: images,
+      pictures: images,
       files: [],
-      image: "",
-      imageUrl: "",
-      photo: "",
-      picture: "",
-      representativeImage: "",
-      mainImage: "",
-      thumbnail: "",
-      coverImage: "",
+      image: representativeImage,
+      imageUrl: representativeImage,
+      photo: representativeImage,
+      picture: representativeImage,
+      representativeImage,
+      mainImage: representativeImage,
+      thumbnail: representativeImage,
+      coverImage: representativeImage,
       coursePricing,
       pricing: coursePricing,
       priceTable: coursePricing,
@@ -1709,6 +2599,16 @@ function ShopAdminPage() {
         }
       };
 
+      const legacyMassageBackupItems =
+        currentAdminCategory === "massage"
+          ? [
+              ...parseStorageItems(localStorage, "noma_admin_shop_backup"),
+              ...parseStorageItems(sessionStorage, "noma_admin_shop_backup"),
+              ...parseStorageItems(localStorage, "nora_admin_shop_backup"),
+              ...parseStorageItems(sessionStorage, "nora_admin_shop_backup"),
+            ]
+          : [];
+
       return filterCurrentCategoryShops(
         filterDeletedShops(
           mergeShopList([
@@ -1716,7 +2616,8 @@ function ShopAdminPage() {
             ...parseStorageItems(sessionStorage, LOCAL_SHOP_BACKUP_KEY),
             ...parseStorageItems(localStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
             ...parseStorageItems(sessionStorage, `nora_admin_shop_backup_${currentAdminCategory}`),
-          ]).map((item) => applyShopImageBank(item))
+            ...legacyMassageBackupItems,
+          ]).map((item) => applyShopPremiumBank(applyShopImageBank(item)))
         )
       );
     } catch (e) {
@@ -1770,9 +2671,20 @@ function ShopAdminPage() {
       }
 
       if (key === LOCAL_SHOP_IMAGE_BANK_KEY) {
+        // 이미지 bank는 중복 mirror 저장을 하지 않습니다.
+      }
+
+      if (
+        key === LOCAL_SHOP_PREMIUM_BANK_KEY ||
+        key === NORA_LOCAL_SHOP_PREMIUM_BANK_KEY ||
+        key === LEGACY_LOCAL_SHOP_PREMIUM_BANK_KEY ||
+        key === LEGACY_NORA_SHOP_PREMIUM_BANK_KEY
+      ) {
         mirrorKeys.push(
-          `nora_admin_shop_image_bank_${currentAdminCategory}`,
-          `noma_admin_shop_image_bank_${currentAdminCategory}`
+          `nora_admin_shop_premium_bank_${currentAdminCategory}`,
+          `noma_admin_shop_premium_bank_${currentAdminCategory}`,
+          "nora_admin_shop_premium_bank",
+          "noma_admin_shop_premium_bank"
         );
       }
 
@@ -1805,6 +2717,110 @@ function ShopAdminPage() {
     }
   };
 
+  const sanitizeImageStorageValue = (value) => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => sanitizeImageStorageValue(item))
+        .filter((item) => item !== "" && item !== null && item !== undefined);
+    }
+
+    if (value && typeof value === "object") {
+      const nextValue = { ...value };
+      const imageKeys = [
+        "images",
+        "photos",
+        "imageUrls",
+        "gallery",
+        "pictures",
+        "files",
+      ];
+      const scalarImageKeys = [
+        "image",
+        "imageUrl",
+        "photo",
+        "picture",
+        "representativeImage",
+        "mainImage",
+        "thumbnail",
+        "coverImage",
+      ];
+
+      imageKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+          nextValue[key] = makeSafeArray(nextValue[key])
+            .map((image) => normalizeImageSrc(image))
+            .filter(Boolean)
+            .slice(0, currentShopImageLimit);
+        }
+      });
+
+      scalarImageKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+          nextValue[key] = normalizeImageSrc(nextValue[key]);
+        }
+      });
+
+      return nextValue;
+    }
+
+    if (typeof value === "string") {
+      return normalizeImageSrc(value);
+    }
+
+    return value;
+  };
+
+  const purgeUnsafeImageStorage = () => {
+    try {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const unsafePattern = /(data:image\/|blob:|\/9j\/|iVBOR|R0lGOD|UklGR)/;
+      const storages = [window.localStorage, window.sessionStorage].filter(Boolean);
+
+      storages.forEach((storage) => {
+        Object.keys(storage)
+          .filter((key) =>
+            key.includes("shop") ||
+            key.includes("image") ||
+            key.includes("backup") ||
+            key.includes("karaoke")
+          )
+          .forEach((key) => {
+            try {
+              const raw = storage.getItem(key) || "";
+
+              if (!raw || !unsafePattern.test(raw)) {
+                return;
+              }
+
+              const parsed = JSON.parse(raw);
+              const sanitized = sanitizeImageStorageValue(parsed);
+              const text = JSON.stringify(sanitized);
+
+              if (text.length > MAX_MIRROR_STORAGE_LENGTH && key.includes("image_bank")) {
+                storage.removeItem(key);
+                return;
+              }
+
+              storage.setItem(key, text);
+            } catch (e) {
+              if (key.includes("image_bank")) {
+                try {
+                  storage.removeItem(key);
+                } catch (removeError) {
+                  return;
+                }
+              }
+            }
+          });
+      });
+    } catch (e) {
+      console.warn("SHOP UNSAFE IMAGE STORAGE PURGE SKIP:", e.message);
+    }
+  };
+
   const dispatchShopStorageEvent = (shops) => {
     try {
       if (typeof window === "undefined") {
@@ -1816,8 +2832,20 @@ function ShopAdminPage() {
         currentAdminCategory,
         safeShops.length,
         safeShops
-          .slice(0, 20)
-          .map((shop) => String(shop?._id || shop?.id || shop?.shopId || shop?.name || ""))
+          .slice(0, 50)
+          .map((shop) =>
+            [
+              String(shop?._id || shop?.id || shop?.shopId || shop?.name || ""),
+              normalizePremiumType(shop),
+              String(shop?.premiumType || ""),
+              String(shop?.premium || ""),
+              String(shop?.isPremium || ""),
+              String(shop?.premiumActive || ""),
+              String(shop?.directPaymentEnabled || ""),
+              String(shop?.__directPaymentUpdated || ""),
+              String(shop?.updatedAt || ""),
+            ].join(":")
+          )
           .join(","),
       ].join("|");
 
@@ -1849,6 +2877,10 @@ function ShopAdminPage() {
                   public: LOCAL_PUBLIC_SHOP_KEY,
                   backup: LOCAL_SHOP_BACKUP_KEY,
                   imageBank: LOCAL_SHOP_IMAGE_BANK_KEY,
+                  premiumBank: LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  noraPremiumBank: NORA_LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  legacyPremiumBank: LEGACY_LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  legacyNoraPremiumBank: LEGACY_NORA_SHOP_PREMIUM_BANK_KEY,
                   deleted: DELETED_SHOP_KEY,
                 },
               },
@@ -1869,6 +2901,10 @@ function ShopAdminPage() {
                   public: LOCAL_PUBLIC_SHOP_KEY,
                   backup: LOCAL_SHOP_BACKUP_KEY,
                   imageBank: LOCAL_SHOP_IMAGE_BANK_KEY,
+                  premiumBank: LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  noraPremiumBank: NORA_LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  legacyPremiumBank: LEGACY_LOCAL_SHOP_PREMIUM_BANK_KEY,
+                  legacyNoraPremiumBank: LEGACY_NORA_SHOP_PREMIUM_BANK_KEY,
                   deleted: DELETED_SHOP_KEY,
                 },
               },
@@ -1904,7 +2940,27 @@ function ShopAdminPage() {
         })
         .filter(Boolean);
 
-      writeShopImageBank(normalizedItems);
+      if (replaceImageItems.length > 0) {
+        const replaceStorageItems = normalizedItems.filter((item) => {
+          return replaceImageItems.some((replaceItem) => {
+            const itemId = String(item?._id || item?.id || item?.shopId || "");
+            const replaceId = String(replaceItem?._id || replaceItem?.id || replaceItem?.shopId || "");
+            const itemNameAddressKey = `${normalizeText(item?.name)}::${normalizeText(item?.address || item?.roadAddress || item?.fullAddress)}`;
+            const replaceNameAddressKey = `${normalizeText(replaceItem?.name)}::${normalizeText(replaceItem?.address || replaceItem?.roadAddress || replaceItem?.fullAddress)}`;
+
+            return (
+              (itemId && replaceId && itemId === replaceId) ||
+              (itemNameAddressKey && replaceNameAddressKey && itemNameAddressKey === replaceNameAddressKey)
+            );
+          });
+        });
+        const keepStorageItems = normalizedItems.filter((item) => !replaceStorageItems.includes(item));
+
+        writeShopImageBank(replaceStorageItems, { replace: true });
+        writeShopImageBank(keepStorageItems, { replace: false });
+      } else {
+        writeShopImageBank(normalizedItems, { replace: false });
+      }
       saveBackupShops(normalizedItems);
 
       let storageText = JSON.stringify(normalizedItems);
@@ -1932,6 +2988,10 @@ function ShopAdminPage() {
 
           return {
             ...item,
+            __replaceImages: item.__replaceImages === true,
+            __imageReplaceLocked: item.__imageReplaceLocked === true,
+            __directPaymentUpdated: item.__directPaymentUpdated === true,
+            directPaymentEnabled: normalizeDirectPaymentEnabled(item.directPaymentEnabled),
             images,
             photos: images,
             imageUrls: images,
@@ -1980,6 +3040,8 @@ function ShopAdminPage() {
 
             return {
               ...item,
+              __directPaymentUpdated: item.__directPaymentUpdated === true,
+              directPaymentEnabled: normalizeDirectPaymentEnabled(item.directPaymentEnabled),
               images,
               photos: images,
               imageUrls: images,
@@ -2178,6 +3240,352 @@ function ShopAdminPage() {
     }
   };
 
+  const getApiOrigin = () => {
+    try {
+      return getApiBaseUrl().replace(/\/api\/?$/, "");
+    } catch (e) {
+      return "https://api.nora365.co.kr";
+    }
+  };
+
+  const extractUploadedImageUrls = (value) => {
+    const result = [];
+
+    const pushValue = (item) => {
+      if (!item) {
+        return;
+      }
+
+      if (Array.isArray(item)) {
+        item.forEach((child) => pushValue(child));
+        return;
+      }
+
+      if (typeof item === "string") {
+        const text = item.trim();
+
+        if (!text) {
+          return;
+        }
+
+        if (
+          (text.startsWith("{") && text.endsWith("}")) ||
+          (text.startsWith("[") && text.endsWith("]"))
+        ) {
+          try {
+            pushValue(JSON.parse(text));
+            return;
+          } catch (e) {
+            // JSON 문자열이 아니면 일반 URL 검사로 계속 진행
+          }
+        }
+
+        const embeddedCandidates = text.match(
+          /(?:https?:\/\/|\/\/|\/api\/|\/uploads\/|\/upload\/|api\/uploads\/|api\/upload\/|uploads\/|upload\/|shops\/)[^\s"'`<>),]+/gi
+        ) || [];
+
+        embeddedCandidates
+          .map((candidate) => normalizeImageSrc(cleanImageUrlCandidate(candidate)))
+          .filter((candidate) => candidate && isServerImageUrl(candidate))
+          .forEach((candidate) => result.push(candidate));
+
+        const image = normalizeImageSrc(cleanImageUrlCandidate(text));
+
+        if (image && isServerImageUrl(image)) {
+          result.push(image);
+        }
+
+        return;
+      }
+
+      if (typeof item === "object") {
+        [
+          item.url,
+          item.src,
+          item.path,
+          item.location,
+          item.href,
+          item.link,
+          item.image,
+          item.imageUrl,
+          item.imageURL,
+          item.fileUrl,
+          item.fileURL,
+          item.publicUrl,
+          item.publicURL,
+          item.cdnUrl,
+          item.cdnURL,
+          item.secure_url,
+          item.secureUrl,
+          item.uploadedUrl,
+          item.uploadedURL,
+          item.uploadUrl,
+          item.uploadURL,
+          item.thumbnail,
+          item.thumbnailUrl,
+          item.thumbnailURL,
+          item.mainImage,
+          item.representativeImage,
+          item.coverImage,
+          item.photo,
+          item.picture,
+          item.data,
+          item.payload,
+          item.body,
+          item.response,
+          item.file,
+          item.files,
+          item.images,
+          item.imageUrls,
+          item.imageURLs,
+          item.urls,
+          item.result,
+          item.results,
+          item.asset,
+          item.assets,
+          item.media,
+          item.medias,
+          item.object,
+          item.objects,
+          item.resource,
+          item.resources,
+        ].forEach((child) => pushValue(child));
+
+        const fileName =
+          item.filename ||
+          item.fileName ||
+          item.originalname ||
+          item.originalName ||
+          item.key ||
+          item.Key ||
+          item.name ||
+          "";
+
+        const directory =
+          item.destination ||
+          item.dest ||
+          item.folder ||
+          item.dir ||
+          item.directory ||
+          item.uploadDir ||
+          item.basePath ||
+          item.pathPrefix ||
+          "";
+
+        if (fileName && hasImageFileExtension(fileName)) {
+          if (directory) {
+            pushValue(`${String(directory).replace(/\/+$/, "")}/${fileName}`);
+          }
+
+          pushValue(`/uploads/${fileName}`);
+        }
+      }
+    };
+
+    pushValue(value);
+
+    return Array.from(
+      new Set(
+        result
+          .map((image) => normalizeImageSrc(image))
+          .filter((image) => isServerImageUrl(image))
+      )
+    ).slice(0, currentShopImageLimit);
+  };
+
+  const uploadShopImageFileDirect = async (file, uploadParams = {}) => {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      return [];
+    }
+
+    if (typeof fetch !== "function" || typeof FormData === "undefined") {
+      return [];
+    }
+
+    const token = getAdminAuthToken();
+    const formData = new FormData();
+
+    formData.append("image", file, file.name || "shop-image.jpg");
+
+    Object.entries(uploadParams || {}).forEach(([key, itemValue]) => {
+      if (itemValue !== undefined && itemValue !== null) {
+        formData.append(key, String(itemValue));
+      }
+    });
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/shops/upload`, {
+        method: "POST",
+        headers: token
+          ? {
+              Authorization: `Bearer ${token}`,
+            }
+          : undefined,
+        body: formData,
+      });
+
+      const headerUrls = [
+        response.headers.get("location"),
+        response.headers.get("x-image-url"),
+        response.headers.get("x-file-url"),
+        response.headers.get("x-upload-url"),
+      ].filter(Boolean);
+
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      const responseData = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text();
+
+      const urls = extractUploadedImageUrls([
+        ...headerUrls,
+        responseData,
+      ]);
+
+      if (response.ok && urls.length) {
+        return urls;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          typeof responseData === "string"
+            ? responseData || `UPLOAD_HTTP_${response.status}`
+            : responseData?.message || responseData?.msg || responseData?.error || `UPLOAD_HTTP_${response.status}`
+        );
+      }
+
+      throw new Error("서버 업로드 응답에서 이미지 URL을 찾지 못했습니다.");
+    } catch (e) {
+      console.warn("SHOP DIRECT IMAGE UPLOAD SKIP:", e.message || e);
+      return [];
+    }
+  };
+
+  const uploadShopImageFile = async (file) => {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      return [];
+    }
+
+    const uploadParams = {
+      category: currentAdminCategory,
+      shopCategory: currentAdminCategory,
+      serviceType: currentAdminCategory,
+      businessType: currentAdminCategory,
+      adminCategory: currentAdminCategory,
+      admin: "true",
+      adminMode: "true",
+      management: "true",
+    };
+
+    const uploadFunctionCandidates = [
+      shopApi?.uploadImage,
+      shopApi?.uploadShopImage,
+      shopApi?.uploadImages,
+      shopApi?.uploadShopImages,
+    ].filter((fn) => typeof fn === "function");
+
+    const uploadFunctions = Array.from(new Set(uploadFunctionCandidates));
+
+    if (!uploadFunctions.length) {
+      const directUrls = await uploadShopImageFileDirect(file, uploadParams);
+
+      if (directUrls.length) {
+        return directUrls;
+      }
+
+      throw new Error("이미지 업로드 API 함수가 확인되지 않았습니다. /client/src/services/shop.api.js 확인 필요");
+    }
+
+    let lastError = null;
+
+    for (const uploadFunction of uploadFunctions) {
+      try {
+        const data = await uploadFunction.call(shopApi, file, uploadParams);
+        const urls = extractUploadedImageUrls(data);
+
+        if (urls.length) {
+          return urls;
+        }
+
+        lastError = new Error("서버 업로드 응답에서 이미지 URL을 찾지 못했습니다.");
+      } catch (e) {
+        lastError = e;
+
+        const message = String(e?.message || "").toLowerCase();
+
+        if (
+          message.includes("too many requests") ||
+          message.includes("429") ||
+          message.includes("rate limit")
+        ) {
+          break;
+        }
+      }
+    }
+
+    throw lastError || new Error("이미지 업로드 실패");
+  };
+
+
+  const updateShopDirect = async (id, payload, params = {}) => {
+    const shopId = String(id || "").trim();
+
+    if (!shopId) {
+      throw new Error("수정 대상 없음");
+    }
+
+    const query = new URLSearchParams({
+      ...(params || {}),
+      category: currentAdminCategory,
+      shopCategory: currentAdminCategory,
+      serviceType: currentAdminCategory,
+      businessType: currentAdminCategory,
+      adminCategory: currentAdminCategory,
+      admin: "true",
+      adminMode: "true",
+      adminList: "true",
+      forAdmin: "true",
+      fromAdmin: "true",
+      management: "true",
+    }).toString();
+
+    const token = getAdminAuthToken();
+    const headers = {
+      "Content-Type": "application/json",
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(
+      `${getApiBaseUrl()}/shops/${encodeURIComponent(shopId)}${query ? `?${query}` : ""}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          ...payload,
+          directPaymentEnabled: normalizeDirectPaymentEnabled(payload.directPaymentEnabled),
+          __directPaymentUpdated: true,
+        }),
+      }
+    );
+
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof data === "string"
+          ? data || `SHOP_UPDATE_HTTP_${response.status}`
+          : data?.message || data?.msg || data?.error || `SHOP_UPDATE_HTTP_${response.status}`
+      );
+    }
+
+    return data;
+  };
+
   const extractDashboardShopItems = (res) => {
     if (!res) {
       return [];
@@ -2233,87 +3641,108 @@ function ShopAdminPage() {
   };
 
   const loadAdminDashboardShops = async () => {
-    try {
-      if (!isShopAdminRoute) {
-        return [];
-      }
-
-      const cachedDashboard = dashboardCacheRef.current;
-      const cacheAge = Date.now() - Number(dashboardCacheTimeRef.current || 0);
-
-      if (
-        cachedDashboard?.category === currentAdminCategory &&
-        Array.isArray(cachedDashboard.items) &&
-        cachedDashboard.items.length > 0 &&
-        cacheAge >= 0 &&
-        cacheAge < 5000
-      ) {
-        return cachedDashboard.items;
-      }
-
-      const params = new URLSearchParams({
-        ...currentAdminCategoryParams,
-        category: currentAdminCategory,
-        shopCategory: currentAdminCategory,
-        serviceType: currentAdminCategory,
-        businessType: currentAdminCategory,
-        adminCategory: currentAdminCategory,
-      });
-
-      const token = getAdminAuthToken();
-      const controller = new AbortController();
-      const timer = setTimeout(() => {
-        controller.abort();
-      }, 250);
-
-      const response = await fetch(
-        `${getApiBaseUrl()}/admin/dashboard?${params.toString()}`,
-        {
-          method: "GET",
-          headers: token
-            ? {
-                Authorization: `Bearer ${token}`,
-              }
-            : {},
-          signal: controller.signal,
-        }
-      );
-
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const data = await response.json();
-
-      const dashboardItems = getAdminVisibleShops(
-        filterDeletedShops(
-          extractDashboardShopItems(data)
-        )
-      ).map((item) => applyShopImageBank(item));
-
-      dashboardCacheRef.current = {
-        category: currentAdminCategory,
-        items: dashboardItems,
-      };
-      dashboardCacheTimeRef.current = Date.now();
-
-      return dashboardItems;
-    } catch (e) {
-      const cachedDashboard = dashboardCacheRef.current;
-
-      if (
-        cachedDashboard?.category === currentAdminCategory &&
-        Array.isArray(cachedDashboard.items) &&
-        cachedDashboard.items.length > 0
-      ) {
-        return cachedDashboard.items;
-      }
-
-      console.warn("SHOP DASHBOARD SYNC SKIP:", e.message);
+    if (!isShopAdminRoute) {
       return [];
     }
+
+    const cachedDashboard = dashboardCacheRef.current;
+    const cacheAge = Date.now() - Number(dashboardCacheTimeRef.current || 0);
+    const hasFreshCache =
+      cachedDashboard?.category === currentAdminCategory &&
+      Array.isArray(cachedDashboard.items) &&
+      Number(dashboardCacheTimeRef.current || 0) > 0 &&
+      cacheAge >= 0 &&
+      cacheAge < DASHBOARD_SYNC_CACHE_TTL_MS;
+
+    if (hasFreshCache) {
+      return cachedDashboard.items;
+    }
+
+    if (dashboardRequestRef.current) {
+      return dashboardRequestRef.current;
+    }
+
+    const requestPromise = (async () => {
+      let timer = null;
+
+      try {
+        const params = new URLSearchParams({
+          ...currentAdminCategoryParams,
+          category: currentAdminCategory,
+          shopCategory: currentAdminCategory,
+          serviceType: currentAdminCategory,
+          businessType: currentAdminCategory,
+          adminCategory: currentAdminCategory,
+        });
+
+        const token = getAdminAuthToken();
+        const controller = new AbortController();
+
+        timer = window.setTimeout(() => {
+          controller.abort();
+        }, 250);
+
+        const response = await fetch(
+          `${getApiBaseUrl()}/admin/dashboard?${params.toString()}`,
+          {
+            method: "GET",
+            headers: token
+              ? {
+                  Authorization: `Bearer ${token}`,
+                }
+              : {},
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          dashboardCacheRef.current = {
+            category: currentAdminCategory,
+            items: Array.isArray(cachedDashboard?.items) ? cachedDashboard.items : [],
+          };
+          dashboardCacheTimeRef.current = Date.now();
+
+          return dashboardCacheRef.current.items;
+        }
+
+        const data = await response.json();
+
+        const dashboardItems = getAdminVisibleShops(
+          extractDashboardShopItems(data)
+        ).map((item) => applyFreshShopFromServer(item));
+
+        dashboardCacheRef.current = {
+          category: currentAdminCategory,
+          items: dashboardItems,
+        };
+        dashboardCacheTimeRef.current = Date.now();
+
+        return dashboardItems;
+      } catch (e) {
+        const nextCachedDashboard = dashboardCacheRef.current;
+
+        if (
+          nextCachedDashboard?.category === currentAdminCategory &&
+          Array.isArray(nextCachedDashboard.items)
+        ) {
+          dashboardCacheTimeRef.current = Date.now();
+          return nextCachedDashboard.items;
+        }
+
+        console.warn("SHOP DASHBOARD SYNC SKIP:", e.message);
+        return [];
+      } finally {
+        if (timer) {
+          window.clearTimeout(timer);
+        }
+
+        dashboardRequestRef.current = null;
+      }
+    })();
+
+    dashboardRequestRef.current = requestPromise;
+
+    return requestPromise;
   };
 
   const normalizeShopForList = (shop) => {
@@ -2321,7 +3750,22 @@ function ShopAdminPage() {
       return null;
     }
 
-    const images = makeSafeImages(shop);
+    const replaceImages = shop.__replaceImages === true;
+    const explicitArrayImages =
+      currentAdminCategory === "karaoke"
+        ? makeSafeImages(shop)
+        : makeUniqueImageList([
+            shop?.images,
+            shop?.photos,
+            shop?.imageUrls,
+            shop?.gallery,
+            shop?.pictures,
+            shop?.files,
+          ].flatMap((source) => makeSafeArray(source)));
+
+    const images = replaceImages
+      ? explicitArrayImages
+      : makeUniqueImageList(makeSafeImages(shop));
 
     const representativeCandidate = normalizeImageSrc(
       shop.representativeImage ||
@@ -2339,9 +3783,9 @@ function ShopAdminPage() {
       "";
 
     const fixedImages = images.length
-      ? images.map((image) => normalizeImageSrc(image)).filter(Boolean)
+      ? makeImageListWithRepresentative(images, representativeImage)
       : representativeImage
-      ? [representativeImage]
+      ? makeUniqueImageList([representativeImage])
       : [];
 
     const id =
@@ -2352,6 +3796,13 @@ function ShopAdminPage() {
 
     const premium = normalizePremiumType(shop);
     const coursePricing = filterCompleteCoursePricing(makeSafeCoursePricing(shop));
+    const resolvedAddress = pickStableAddress(
+      shop.address,
+      shop.roadAddress,
+      shop.fullAddress,
+      shop.locationText
+    );
+    const coordinates = getShopCoordinates(shop);
 
     return {
       ...shop,
@@ -2373,9 +3824,14 @@ function ShopAdminPage() {
         getShopCategory(shop) ||
         currentAdminCategory,
       name: shop.name || "업체명 없음",
-      address: shop.address || shop.roadAddress || shop.fullAddress || "주소 없음",
-      roadAddress: shop.roadAddress || shop.address || shop.fullAddress || "주소 없음",
-      fullAddress: shop.fullAddress || shop.address || shop.roadAddress || "주소 없음",
+      address: resolvedAddress || "주소 없음",
+      roadAddress: resolvedAddress || "주소 없음",
+      fullAddress: resolvedAddress || "주소 없음",
+      locationText: resolvedAddress || "",
+      lat: coordinates.lat,
+      lng: coordinates.lng,
+      latitude: coordinates.lat,
+      longitude: coordinates.lng,
       phone: shop.phone || shop.tel || "",
       businessHours: shop.businessHours || shop.openingHours || shop.hours || "",
       openingHours: shop.openingHours || shop.businessHours || shop.hours || "",
@@ -2393,13 +3849,25 @@ function ShopAdminPage() {
       menus: coursePricing,
       courseMenus: coursePricing,
       status: shop.status || "active",
+      __replaceImages: shop.__replaceImages === true,
+      __imageReplaceLocked: shop.__imageReplaceLocked === true,
       premium,
       premiumType: premium,
+      premiumLevel: premium,
+      membershipType: premium,
+      listingType: premium,
+      shopGrade: premium,
+      imageGrade: premium,
+      photoGrade: premium,
       isPremium: premium !== "normal",
       premiumActive: premium !== "normal",
       visible: shop.visible === false ? false : true,
       approved: shop.approved === false ? false : true,
       isReservable: shop.isReservable === false ? false : true,
+      directPaymentEnabled: normalizeDirectPaymentEnabled(shop.directPaymentEnabled),
+      __directPaymentUpdated:
+        shop.__directPaymentUpdated === true ||
+        hasDirectPaymentField(shop),
       images: fixedImages,
       photos: fixedImages,
       imageUrls: fixedImages,
@@ -2492,64 +3960,11 @@ function ShopAdminPage() {
     return Array.from(map.values());
   };
 
-  const compressImageFile = (file) =>
-    new Promise((resolve) => {
-      try {
-        const reader = new FileReader();
+  const compressImageFile = async (file) => {
+    const uploadedUrls = await uploadShopImageFile(file);
 
-        reader.onload = () => {
-          try {
-            const img = new Image();
-
-            img.onload = () => {
-              try {
-                const maxSize = 640;
-                const width = Number(img.width || 0);
-                const height = Number(img.height || 0);
-                const ratio = width && height ? Math.min(1, maxSize / Math.max(width, height)) : 1;
-                const canvas = document.createElement("canvas");
-
-                canvas.width = Math.max(1, Math.round(width * ratio));
-                canvas.height = Math.max(1, Math.round(height * ratio));
-
-                const ctx = canvas.getContext("2d");
-
-                if (!ctx) {
-                  resolve(normalizeImageSrc(String(reader.result || "")));
-                  return;
-                }
-
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-                const compressed = canvas.toDataURL("image/jpeg", 0.52);
-                const safeCompressed = normalizeImageSrc(compressed);
-                const original = normalizeImageSrc(String(reader.result || ""));
-
-                resolve(safeCompressed || original);
-              } catch (e) {
-                resolve(normalizeImageSrc(String(reader.result || "")));
-              }
-            };
-
-            img.onerror = () => {
-              resolve(normalizeImageSrc(String(reader.result || "")));
-            };
-
-            img.src = String(reader.result || "");
-          } catch (e) {
-            resolve(normalizeImageSrc(String(reader.result || "")));
-          }
-        };
-
-        reader.onerror = () => {
-          resolve("");
-        };
-
-        reader.readAsDataURL(file);
-      } catch (e) {
-        resolve("");
-      }
-    });
+    return uploadedUrls[0] || "";
+  };
 
   const getShopStats = (shop) => {
     const shopId = String(shop?._id || shop?.id || "");
@@ -2696,16 +4111,21 @@ function ShopAdminPage() {
 
   const scheduleLoadStats = () => {
     try {
-      if (statsTimerRef.current) {
-        window.clearTimeout(statsTimerRef.current);
+      if (statsRunningRef.current || statsTimerRef.current) {
+        return;
       }
 
       statsTimerRef.current = window.setTimeout(() => {
         statsTimerRef.current = null;
-        loadStats();
-      }, 250);
+
+        if (!statsRunningRef.current) {
+          loadStats();
+        }
+      }, 500);
     } catch (e) {
-      loadStats();
+      if (!statsRunningRef.current) {
+        loadStats();
+      }
     }
   };
 
@@ -2732,18 +4152,19 @@ function ShopAdminPage() {
     const representativeImage =
       normalizeImageSrc(form.representativeImage || form.images[0] || "");
 
-    const normalizedFormImages = form.images
-      .map((image) => normalizeImageSrc(image))
-      .filter(Boolean);
+    const normalizedFormImages = makeUniqueImageList(form.images);
 
     const fixedImages = makeImageListWithRepresentative(
       normalizedFormImages,
       representativeImage
-    );
+    )
+      .filter((image) => isServerImageUrl(image))
+      .slice(0, currentShopImageLimit);
 
     const premiumType = normalizePremiumType(form.premium);
     const premiumBoolean = premiumType !== "normal";
     const coursePricing = completeCoursePricing;
+    const addressValue = normalizeAddressValue(form.address);
 
     return {
       category: currentAdminCategory,
@@ -2752,9 +4173,14 @@ function ShopAdminPage() {
       businessType: currentAdminCategory,
       adminCategory: currentAdminCategory,
       name: form.name,
-      address: form.address,
-      roadAddress: form.address,
-      fullAddress: form.address,
+      address: addressValue,
+      roadAddress: addressValue,
+      fullAddress: addressValue,
+      locationText: addressValue,
+      lat: normalizeCoordinateValue(form.lat),
+      lng: normalizeCoordinateValue(form.lng),
+      latitude: normalizeCoordinateValue(form.latitude || form.lat),
+      longitude: normalizeCoordinateValue(form.longitude || form.lng),
       phone: form.phone,
       businessHours: form.businessHours,
       openingHours: form.businessHours,
@@ -2774,11 +4200,19 @@ function ShopAdminPage() {
       status: form.status,
       premium: premiumBoolean,
       premiumType,
+      premiumLevel: premiumType,
+      membershipType: premiumType,
+      listingType: premiumType,
+      shopGrade: premiumType,
+      imageGrade: premiumType,
+      photoGrade: premiumType,
       isPremium: premiumBoolean,
       premiumActive: premiumBoolean,
       visible: true,
       approved: true,
       isReservable: true,
+      directPaymentEnabled: normalizeDirectPaymentEnabled(form.directPaymentEnabled),
+      __directPaymentUpdated: true,
       images: fixedImages,
       photos: fixedImages,
       imageUrls: fixedImages,
@@ -2797,8 +4231,7 @@ function ShopAdminPage() {
   };
 
   const getStatusPayload = (shop, status) => {
-    const images = makeSafeImages(shop);
-
+    const images = makeUniqueImageList(makeSafeImages(shop));
     const representativeImage =
       normalizeImageSrc(
         shop?.representativeImage ||
@@ -2809,16 +4242,17 @@ function ShopAdminPage() {
           ""
       );
 
-    const normalizedImages = images
-      .map((image) => normalizeImageSrc(image))
-      .filter(Boolean);
+    const normalizedImages = makeUniqueImageList(images);
 
     const fixedImages = makeImageListWithRepresentative(
       normalizedImages,
       representativeImage
-    );
+    )
+      .filter((image) => isServerImageUrl(image))
+      .slice(0, currentShopImageLimit);
 
-    const premium = normalizePremiumType(shop);
+    const premiumType = normalizePremiumType(shop);
+    const premiumBoolean = premiumType !== "normal";
     const coursePricing = filterCompleteCoursePricing(makeSafeCoursePricing(shop));
 
     return {
@@ -2829,10 +4263,18 @@ function ShopAdminPage() {
       businessType: getShopCategory(shop) || currentAdminCategory,
       adminCategory: getShopCategory(shop) || currentAdminCategory,
       status,
-      premium,
-      premiumType: premium,
-      isPremium: premium !== "normal",
-      premiumActive: premium !== "normal",
+      directPaymentEnabled: normalizeDirectPaymentEnabled(shop?.directPaymentEnabled),
+      __directPaymentUpdated: shop?.__directPaymentUpdated === true || hasDirectPaymentField(shop),
+      premium: premiumBoolean,
+      premiumType,
+      premiumLevel: premiumType,
+      membershipType: premiumType,
+      listingType: premiumType,
+      shopGrade: premiumType,
+      imageGrade: premiumType,
+      photoGrade: premiumType,
+      isPremium: premiumBoolean,
+      premiumActive: premiumBoolean,
       coursePricing,
       pricing: coursePricing,
       priceTable: coursePricing,
@@ -2867,8 +4309,10 @@ function ShopAdminPage() {
       const shopRegion = normalizeText(shop?.region);
       const shopDistrict = normalizeText(shop?.district);
       const roadAddress = normalizeText(shop?.roadAddress);
+      const fullAddress = normalizeText(shop?.fullAddress);
+      const locationText = normalizeText(shop?.locationText);
 
-      const searchTarget = `${name}${address}${phone}${businessHours}${shopRegion}${shopDistrict}${roadAddress}`;
+      const searchTarget = `${name}${address}${phone}${businessHours}${shopRegion}${shopDistrict}${roadAddress}${fullAddress}${locationText}`;
 
       const keywordOk = !safeKeyword || searchTarget.includes(safeKeyword);
 
@@ -2877,15 +4321,208 @@ function ShopAdminPage() {
         shopRegion.includes(safeRegion) ||
         address.includes(safeRegion) ||
         roadAddress.includes(safeRegion) ||
-        (!!safeDistrict && (address.includes(safeDistrict) || roadAddress.includes(safeDistrict) || shopDistrict.includes(safeDistrict)));
+        fullAddress.includes(safeRegion) ||
+        locationText.includes(safeRegion) ||
+        (!!safeDistrict && (address.includes(safeDistrict) || roadAddress.includes(safeDistrict) || fullAddress.includes(safeDistrict) || locationText.includes(safeDistrict) || shopDistrict.includes(safeDistrict)));
 
       const districtOk =
         !safeDistrict ||
         shopDistrict.includes(safeDistrict) ||
         address.includes(safeDistrict) ||
-        roadAddress.includes(safeDistrict);
+        roadAddress.includes(safeDistrict) ||
+        fullAddress.includes(safeDistrict) ||
+        locationText.includes(safeDistrict);
 
       return keywordOk && regionOk && districtOk;
+    });
+  };
+
+  const getSavedImageReplacementItems = () => {
+    try {
+      return filterCurrentCategoryShops(
+        filterDeletedShops([
+          ...readBackupShops(),
+          ...readLocalShops(),
+        ])
+      ).filter(
+        (item) =>
+          item?.__replaceImages === true ||
+          item?.__imageReplaceLocked === true
+      );
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const getShopRecordUpdatedTime = (shop) => {
+    const time = Date.parse(
+      String(
+        shop?.updatedAt ||
+          shop?.modifiedAt ||
+          shop?.createdAt ||
+          ""
+      )
+    );
+
+    return Number.isFinite(time) ? time : 0;
+  };
+
+  const findSavedImageReplacementShop = (shop, savedItems = []) => {
+    if (!shop || typeof shop !== "object") {
+      return null;
+    }
+
+    const targetId = String(
+      shop?._id ||
+        shop?.id ||
+        shop?.shopId ||
+        ""
+    ).trim();
+
+    const targetNameAddressKey = `${normalizeText(
+      shop?.name || shop?.title || shop?.shopName
+    )}::${normalizeText(
+      shop?.address ||
+        shop?.roadAddress ||
+        shop?.fullAddress ||
+        shop?.locationText
+    )}`;
+
+    const matches = (Array.isArray(savedItems) ? savedItems : [])
+      .filter((savedItem) => {
+        if (
+          !savedItem ||
+          (
+            savedItem?.__replaceImages !== true &&
+            savedItem?.__imageReplaceLocked !== true
+          )
+        ) {
+          return false;
+        }
+
+        const savedId = String(
+          savedItem?._id ||
+            savedItem?.id ||
+            savedItem?.shopId ||
+            ""
+        ).trim();
+
+        if (
+          targetId &&
+          savedId &&
+          targetId === savedId
+        ) {
+          return true;
+        }
+
+        const savedNameAddressKey = `${normalizeText(
+          savedItem?.name ||
+            savedItem?.title ||
+            savedItem?.shopName
+        )}::${normalizeText(
+          savedItem?.address ||
+            savedItem?.roadAddress ||
+            savedItem?.fullAddress ||
+            savedItem?.locationText
+        )}`;
+
+        return (
+          !!targetNameAddressKey &&
+          targetNameAddressKey !== "::" &&
+          !!savedNameAddressKey &&
+          savedNameAddressKey !== "::" &&
+          targetNameAddressKey === savedNameAddressKey
+        );
+      })
+      .sort(
+        (a, b) =>
+          getShopRecordUpdatedTime(b) -
+          getShopRecordUpdatedTime(a)
+      );
+
+    return matches[0] || null;
+  };
+
+  const applySavedImageReplacementToApiItem = (
+    shop,
+    savedItems = []
+  ) => {
+    const apiItem = normalizeShopForList(
+      applyFreshShopFromServer(shop)
+    );
+
+    if (!apiItem) {
+      return null;
+    }
+
+    if (currentAdminCategory === "karaoke") {
+      return apiItem;
+    }
+
+    const savedItem = findSavedImageReplacementShop(
+      apiItem,
+      savedItems
+    );
+
+    if (!savedItem) {
+      return apiItem;
+    }
+
+    const imageArrayKeys = [
+      "images",
+      "photos",
+      "imageUrls",
+      "gallery",
+      "pictures",
+      "files",
+    ];
+
+    const hasExplicitReplacementArray = imageArrayKeys.some(
+      (key) => Array.isArray(savedItem?.[key])
+    );
+
+    const savedImages = hasExplicitReplacementArray
+      ? makeUniqueImageList(
+          imageArrayKeys.flatMap((key) =>
+            makeSafeArray(savedItem?.[key])
+          )
+        )
+      : makeUniqueImageList(makeSafeImages(savedItem));
+
+    const savedRepresentativeImage = normalizeImageSrc(
+      savedItem?.representativeImage ||
+        savedItem?.mainImage ||
+        savedItem?.thumbnail ||
+        savedItem?.coverImage ||
+        savedImages[0] ||
+        ""
+    );
+
+    const representativeImage =
+      savedImages.find(
+        (image) => image === savedRepresentativeImage
+      ) ||
+      savedImages[0] ||
+      "";
+
+    return normalizeShopForList({
+      ...apiItem,
+      __replaceImages: true,
+      __imageReplaceLocked: true,
+      images: savedImages,
+      photos: savedImages,
+      imageUrls: savedImages,
+      gallery: savedImages,
+      pictures: savedImages,
+      files: [],
+      image: representativeImage,
+      imageUrl: representativeImage,
+      photo: representativeImage,
+      picture: representativeImage,
+      representativeImage,
+      mainImage: representativeImage,
+      thumbnail: representativeImage,
+      coverImage: representativeImage,
     });
   };
 
@@ -2897,167 +4534,45 @@ function ShopAdminPage() {
     loadRunningRef.current = true;
 
     try {
-      if (typeof window !== "undefined") {
-        window.setTimeout(() => {
-          loadRunningRef.current = false;
-        }, 1000);
-      }
-
       if (!isShopAdminRoute) {
         setInitialized(true);
         setLoading(false);
         setError("");
+        loadRunningRef.current = false;
         return;
       }
 
+      setLoading(true);
       setError("");
 
-      const localItems = filterDeletedShops(mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]));
+      const res = await shopApi.getList(currentAdminCategoryParams);
+      const savedImageReplacementItems = getSavedImageReplacementItems();
 
-      setList(localItems);
+      const apiItems = getAdminVisibleShops(
+        extractShopItems(res)
+      )
+        .map((item) =>
+          applySavedImageReplacementToApiItem(
+            item,
+            savedImageReplacementItems
+          )
+        )
+        .filter(Boolean);
 
+      setList(apiItems);
       setInitialized(true);
-      setLoading(false);
 
-      Promise.race([
-        shopApi.getList(currentAdminCategoryParams),
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              items: localItems,
-            });
-          }, 80);
-        }),
-      ])
-        .then(async (res) => {
-          const rawApiItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
-
-          const apiItems = rawApiItems.map((apiItem) => {
-            const apiId = String(apiItem?._id || apiItem?.id || apiItem?.shopId || "");
-            const apiNameAddressKey = `${normalizeText(apiItem?.name)}::${normalizeText(apiItem?.address || apiItem?.roadAddress || apiItem?.fullAddress)}`;
-
-            const localMatch = localItems.find((localItem) => {
-              const localId = String(localItem?._id || localItem?.id || localItem?.shopId || "");
-              const localNameAddressKey = `${normalizeText(localItem?.name)}::${normalizeText(localItem?.address || localItem?.roadAddress || localItem?.fullAddress)}`;
-
-              return (
-                (apiId && localId && apiId === localId) ||
-                (apiNameAddressKey && localNameAddressKey && apiNameAddressKey === localNameAddressKey)
-              );
-            });
-
-            const localImages = localMatch ? makeSafeImages(localMatch) : [];
-
-            if (!localMatch || !localImages.length) {
-              return applyShopImageBank(apiItem);
-            }
-
-            const representativeImage = normalizeImageSrc(
-              localMatch.representativeImage ||
-                localMatch.mainImage ||
-                localMatch.thumbnail ||
-                localMatch.coverImage ||
-                localImages[0] ||
-                ""
-            );
-
-            const normalizedLocalImages = localImages
-              .map((image) => normalizeImageSrc(image))
-              .filter(Boolean);
-
-            const fixedImages = makeImageListWithRepresentative(
-              normalizedLocalImages,
-              representativeImage
-            );
-
-            return {
-              ...apiItem,
-              images: fixedImages,
-              photos: fixedImages,
-              imageUrls: fixedImages,
-              gallery: fixedImages,
-              pictures: fixedImages,
-              files: [],
-              representativeImage,
-              mainImage: representativeImage,
-              thumbnail: representativeImage,
-              coverImage: representativeImage,
-              image: representativeImage,
-              imageUrl: representativeImage,
-              photo: representativeImage,
-              picture: representativeImage,
-            };
-          });
-
-          const quickList = filterDeletedShops(
-            mergeShopList([
-              ...localItems,
-              ...apiItems,
-            ])
-          );
-
-          if (quickList.length) {
-            saveLocalShops(quickList);
-            setList(quickList);
-          }
-
-          const dashboardItems =
-            await loadAdminDashboardShops();
-
-          const nextList = filterDeletedShops(
-            mergeShopList([
-              ...quickList,
-              ...dashboardItems,
-            ])
-          );
-
-          if (nextList.length) {
-            saveLocalShops(nextList);
-            setList(nextList);
-          } else {
-            const backupItems = readBackupShops();
-
-            if (backupItems.length) {
-              saveLocalShops(backupItems);
-              setList(backupItems);
-            } else {
-              setList(localItems);
-            }
-          }
-
-          scheduleLoadStats();
-        })
-        .catch((e) => {
-          console.warn("SHOP LOAD BACKGROUND SKIP:", e.message);
-
-          const fallbackItems = filterDeletedShops(mergeShopList([
-            ...readBackupShops(),
-            ...readLocalShops(),
-          ]));
-
-          if (fallbackItems.length) {
-            saveLocalShops(fallbackItems);
-            setList(fallbackItems);
-          }
-        });
-    } catch (e) {
-      console.error("SHOP LOAD ERROR:", e.message);
-
-      const localItems = filterDeletedShops(mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]));
-
-      if (localItems.length) {
-        saveLocalShops(localItems);
+      if (apiItems.length && !stats.length) {
+        scheduleLoadStats();
       }
-
-      setList(localItems);
+    } catch (e) {
+      console.warn("SHOP LOAD ERROR:", e.message);
+      setList([]);
+      setError(e.message || "업체 목록 조회 실패");
       setInitialized(true);
+    } finally {
       setLoading(false);
+      loadRunningRef.current = false;
     }
   };
 
@@ -3268,56 +4783,31 @@ function ShopAdminPage() {
 
   const onSearch = async () => {
     try {
+      setLoading(true);
       setError("");
 
-      const localItems = mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]);
+      const res = await shopApi.getList(currentAdminCategoryParams);
+      const savedImageReplacementItems = getSavedImageReplacementItems();
 
-      const res = await Promise.race([
-        shopApi.getList(currentAdminCategoryParams),
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              items: localItems,
-            });
-          }, 120);
-        }),
-      ]);
+      const items = getAdminVisibleShops(
+        extractShopItems(res)
+      )
+        .map((item) =>
+          applySavedImageReplacementToApiItem(
+            item,
+            savedImageReplacementItems
+          )
+        )
+        .filter(Boolean);
 
-      const dashboardItems =
-        await loadAdminDashboardShops();
+      setList(items);
 
-      const items = getAdminVisibleShops(filterDeletedShops(extractShopItems(res))).map((item) => applyShopImageBank(item));
-
-      setList((prev) => {
-        const nextList = filterDeletedShops(mergeShopList([
-          ...prev,
-          ...items,
-          ...dashboardItems,
-          ...localItems,
-        ]));
-
-        if (nextList.length) {
-          saveLocalShops(nextList);
-        }
-
-        return nextList;
-      });
-
-      scheduleLoadStats();
-    } catch (e) {
-      const localItems = mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]);
-
-      setList((prev) => mergeShopList([...prev, ...localItems]));
-
-      if (!localItems.length) {
-        setError(e.message || "업체 검색 실패");
+      if (items.length) {
+        scheduleLoadStats();
       }
+    } catch (e) {
+      setList([]);
+      setError(e.message || "업체 검색 실패");
     } finally {
       setLoading(false);
     }
@@ -3330,41 +4820,64 @@ function ShopAdminPage() {
       return;
     }
 
-    const imageFiles = files.filter((file) => {
-      return file && String(file.type || "").startsWith("image/");
-    });
+    const imageFiles = files
+      .filter((file) => file && String(file.type || "").startsWith("image/"))
+      .slice(0, currentShopImageLimit);
 
     if (!imageFiles.length) {
       e.target.value = "";
       return;
     }
 
-    const compressedImages = [];
+    try {
+      setSubmitting(true);
+      setError("");
 
-    for (const file of imageFiles.slice(0, MAX_LOCAL_IMAGE_COUNT)) {
-      const image = await compressImageFile(file);
+      const uploadedImages = [];
 
-      if (image) {
-        compressedImages.push(image);
+      for (const file of imageFiles) {
+        const uploadedImage = await compressImageFile(file);
+
+        if (uploadedImage && isServerImageUrl(uploadedImage)) {
+          uploadedImages.push(uploadedImage);
+        }
       }
-    }
 
-    if (compressedImages.length) {
+      const uniqueUploadedImages = makeUniqueImageList(
+        uploadedImages,
+        currentShopImageLimit
+      );
+
+      if (!uniqueUploadedImages.length) {
+        throw new Error("서버 업로드 응답에서 이미지 URL을 찾지 못했습니다.");
+      }
+
       setForm((prev) => {
-        const nextImages = [...prev.images, ...compressedImages]
-          .map((image) => normalizeImageSrc(image))
-          .filter(Boolean)
-          .slice(0, MAX_LOCAL_IMAGE_COUNT);
+        const nextImages = makeUniqueImageList(
+          [
+            ...prev.images,
+            ...uniqueUploadedImages,
+          ],
+          currentShopImageLimit
+        );
 
         return {
           ...prev,
           images: nextImages,
-          representativeImage: prev.representativeImage || nextImages[0] || "",
+          representativeImage:
+            prev.representativeImage && nextImages.includes(prev.representativeImage)
+              ? prev.representativeImage
+              : nextImages[0] || "",
         };
       });
+    } catch (error) {
+      console.error("SHOP IMAGE UPLOAD ERROR:", error);
+      setError(error?.message || "이미지 업로드 실패");
+      alert(error?.message || "이미지 업로드 실패");
+    } finally {
+      setSubmitting(false);
+      e.target.value = "";
     }
-
-    e.target.value = "";
   };
 
   const onSelectRepresentativeImage = (image) => {
@@ -3483,7 +4996,22 @@ function ShopAdminPage() {
       setSubmitting(true);
       setError("");
 
-      const payload = getSubmitPayload();
+      const coordinates = await geocodeAddress(form.address);
+      const payload = {
+        ...getSubmitPayload(),
+        __replaceImages: true,
+        __imageReplaceLocked: true,
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        latitude: coordinates.lat,
+        longitude: coordinates.lng,
+        location: {
+          lat: coordinates.lat,
+          lng: coordinates.lng,
+          latitude: coordinates.lat,
+          longitude: coordinates.lng,
+        },
+      };
 
       resetDashboardShopSyncCache();
 
@@ -3506,12 +5034,27 @@ function ShopAdminPage() {
         {
           ...serverShop,
           ...payload,
+          __fromSubmitPayload: true,
+          __premiumUpdated: true,
           _id: createdId,
           id: createdId,
           name: payload.name,
           address: payload.address,
           roadAddress: payload.address,
           fullAddress: payload.address,
+          lat: payload.lat,
+          lng: payload.lng,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          location: {
+            ...(serverShop?.location && typeof serverShop.location === "object"
+              ? serverShop.location
+              : {}),
+            lat: payload.lat,
+            lng: payload.lng,
+            latitude: payload.latitude,
+            longitude: payload.longitude,
+          },
           phone: payload.phone,
           businessHours: payload.businessHours,
           openingHours: payload.businessHours,
@@ -3525,8 +5068,16 @@ function ShopAdminPage() {
           courseSections: payload.courseSections,
           premium: payload.premium,
           premiumType: payload.premiumType,
+          premiumLevel: payload.premiumType,
+          membershipType: payload.premiumType,
+          listingType: payload.premiumType,
+          shopGrade: payload.premiumType,
+          imageGrade: payload.premiumType,
+          photoGrade: payload.premiumType,
           isPremium: payload.isPremium,
           premiumActive: payload.premiumActive,
+          directPaymentEnabled: payload.directPaymentEnabled,
+          __directPaymentUpdated: true,
           createdAt:
             serverShop?.createdAt ||
             new Date().toISOString(),
@@ -3536,54 +5087,45 @@ function ShopAdminPage() {
         }
       );
 
-      writeShopImageBank([createdShop]);
+      writeShopImageBank([createdShop], { replace: true });
       saveBackupShops([createdShop]);
       forgetDeletedShop(createdShop);
 
-      let loadedItems = [];
-      let dashboardItems = [];
-
-      try {
-        const listRes = await Promise.race([
-          shopApi.getList(currentAdminCategoryParams),
-          new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({
-                items: [],
-              });
-            }, 300);
-          }),
-        ]);
-
-        loadedItems = getAdminVisibleShops(
-          filterDeletedShops(
-            extractShopItems(listRes)
-          )
-        ).map((item) => applyShopImageBank(item));
-      } catch (e) {
-        loadedItems = [];
-      }
-
-      try {
-        dashboardItems =
-          await loadAdminDashboardShops();
-      } catch (e) {
-        dashboardItems = [];
-      }
-
-      const localItems = mergeShopList([
-        ...readBackupShops(),
-        ...readLocalShops(),
-      ]);
-
-      const nextList = filterDeletedShops(
+      const optimisticList = filterDeletedShops(
         mergeShopList([
-          ...localItems,
-          ...loadedItems,
-          ...dashboardItems,
+          ...list,
           createdShop,
         ])
       );
+
+      setList(optimisticList);
+
+      let nextList = optimisticList;
+
+      try {
+        const listRes = await shopApi.getList(currentAdminCategoryParams);
+        const savedImageReplacementItems = getSavedImageReplacementItems();
+
+        const serverItems = getAdminVisibleShops(
+          extractShopItems(listRes)
+        )
+          .map((item) =>
+            applySavedImageReplacementToApiItem(
+              item,
+              savedImageReplacementItems
+            )
+          )
+          .filter(Boolean);
+
+        if (serverItems.length) {
+          nextList = serverItems;
+        }
+      } catch (listSyncError) {
+        console.warn(
+          "SHOP CREATE LIST SYNC SKIP:",
+          listSyncError.message
+        );
+      }
 
       saveLocalShops(nextList);
       dispatchShopStorageEvent(nextList);
@@ -3612,7 +5154,7 @@ function ShopAdminPage() {
   };
 
   const onEdit = (shop) => {
-    const images = makeSafeImages(shop);
+    const images = makeUniqueImageList(makeSafeImages(shop));
 
     const representativeImage =
       normalizeImageSrc(
@@ -3624,11 +5166,18 @@ function ShopAdminPage() {
           ""
       );
 
+    const coordinates = getShopCoordinates(shop);
+
     setEditingId(shop?._id || shop?.id || "");
 
     setForm({
       name: shop?.name || "",
-      address: shop?.address || "",
+      address: pickStableAddress(
+        shop?.address,
+        shop?.roadAddress,
+        shop?.fullAddress,
+        shop?.locationText
+      ),
       phone: shop?.phone || shop?.tel || "",
       businessHours: shop?.businessHours || shop?.openingHours || shop?.hours || "",
       intro: shop?.intro || shop?.description || shop?.shopIntro || "",
@@ -3640,7 +5189,12 @@ function ShopAdminPage() {
       priceInput: "",
       status: shop?.status || "active",
       premium: normalizePremiumType(shop),
-      images: images.slice(0, MAX_LOCAL_IMAGE_COUNT),
+      directPaymentEnabled: normalizeDirectPaymentEnabled(shop?.directPaymentEnabled),
+      lat: coordinates.lat,
+      lng: coordinates.lng,
+      latitude: coordinates.lat,
+      longitude: coordinates.lng,
+      images: images.slice(0, currentShopImageLimit),
       representativeImage,
       coursePricing: makeSafeCoursePricing(shop),
     });
@@ -3679,7 +5233,49 @@ function ShopAdminPage() {
       setSubmitting(true);
       setError("");
 
-      const payload = getSubmitPayload();
+      const coordinates = await geocodeAddress(form.address);
+      const basePayload = {
+        ...getSubmitPayload(),
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        latitude: coordinates.lat,
+        longitude: coordinates.lng,
+        location: {
+          lat: coordinates.lat,
+          lng: coordinates.lng,
+          latitude: coordinates.lat,
+          longitude: coordinates.lng,
+        },
+      };
+      const fixedPayloadImages = makeImageListWithRepresentative(
+        makeUniqueImageList(form.images),
+        basePayload.representativeImage || form.representativeImage || form.images[0] || ""
+      )
+        .filter((image) => isServerImageUrl(image))
+        .slice(0, currentShopImageLimit);
+      const fixedPayloadRepresentativeImage = normalizeImageSrc(
+        basePayload.representativeImage || fixedPayloadImages[0] || ""
+      );
+
+      const payload = {
+        ...basePayload,
+        __replaceImages: true,
+        __imageReplaceLocked: true,
+        images: fixedPayloadImages,
+        photos: fixedPayloadImages,
+        imageUrls: fixedPayloadImages,
+        gallery: fixedPayloadImages,
+        pictures: fixedPayloadImages,
+        files: [],
+        image: fixedPayloadRepresentativeImage,
+        imageUrl: fixedPayloadRepresentativeImage,
+        photo: fixedPayloadRepresentativeImage,
+        picture: fixedPayloadRepresentativeImage,
+        representativeImage: fixedPayloadRepresentativeImage,
+        mainImage: fixedPayloadRepresentativeImage,
+        thumbnail: fixedPayloadRepresentativeImage,
+        coverImage: fixedPayloadRepresentativeImage,
+      };
 
       const currentShop =
         list.find((item) => String(item?._id || item?.id || "") === String(editingId)) ||
@@ -3690,15 +5286,34 @@ function ShopAdminPage() {
         ...currentShop,
         ...payload,
         __replaceImages: true,
+        __imageReplaceLocked: true,
+        __fromSubmitPayload: true,
+        __premiumUpdated: true,
+        __directPaymentUpdated: true,
+        directPaymentEnabled: payload.directPaymentEnabled,
         _id: currentShop?._id || editingId,
         id: currentShop?.id || editingId,
         address: payload.address,
         roadAddress: payload.address,
         fullAddress: payload.address,
+        lat: payload.lat,
+        lng: payload.lng,
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        location: {
+          ...(currentShop?.location && typeof currentShop.location === "object"
+            ? currentShop.location
+            : {}),
+          lat: payload.lat,
+          lng: payload.lng,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+        },
         updatedAt: new Date().toISOString(),
       });
 
       writeShopImageBank([optimisticUpdatedShop], { replace: true });
+      dispatchShopStorageEvent([optimisticUpdatedShop]);
 
       setList((prev) => {
         const nextList = filterDeletedShops(
@@ -3718,7 +5333,19 @@ function ShopAdminPage() {
         return nextList;
       });
 
-      const res = await shopApi.update(editingId, payload, currentAdminCategoryParams);
+      let res = null;
+
+      try {
+        res = await updateShopDirect(editingId, payload, currentAdminCategoryParams);
+      } catch (directError) {
+        console.warn("SHOP DIRECT UPDATE FALLBACK:", directError.message || directError);
+
+        if (typeof shopApi.update !== "function") {
+          throw directError;
+        }
+
+        res = await shopApi.update(editingId, payload, currentAdminCategoryParams);
+      }
 
       const serverUpdatedShop =
         res?.shop ||
@@ -3732,12 +5359,19 @@ function ShopAdminPage() {
           ...serverUpdatedShop,
           ...payload,
           __replaceImages: true,
+          __imageReplaceLocked: true,
+          __fromSubmitPayload: true,
+          __premiumUpdated: true,
           _id: serverUpdatedShop?._id || serverUpdatedShop?.id || optimisticUpdatedShop._id || editingId,
           id: serverUpdatedShop?._id || serverUpdatedShop?.id || optimisticUpdatedShop.id || editingId,
           name: payload.name,
           address: payload.address,
           roadAddress: payload.address,
           fullAddress: payload.address,
+          lat: payload.lat,
+          lng: payload.lng,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
           phone: payload.phone,
           businessHours: payload.businessHours,
           openingHours: payload.businessHours,
@@ -3753,8 +5387,16 @@ function ShopAdminPage() {
           courseSections: payload.courseSections,
           premium: payload.premium,
           premiumType: payload.premiumType,
+          premiumLevel: payload.premiumType,
+          membershipType: payload.premiumType,
+          listingType: payload.premiumType,
+          shopGrade: payload.premiumType,
+          imageGrade: payload.premiumType,
+          photoGrade: payload.premiumType,
           isPremium: payload.isPremium,
           premiumActive: payload.premiumActive,
+          directPaymentEnabled: payload.directPaymentEnabled,
+          __directPaymentUpdated: true,
           images: payload.images,
           photos: payload.photos,
           imageUrls: payload.imageUrls,
@@ -3766,6 +5408,7 @@ function ShopAdminPage() {
       );
 
       writeShopImageBank([updatedShop], { replace: true });
+      dispatchShopStorageEvent([updatedShop]);
 
       setList((prev) => {
         const nextList = filterDeletedShops(
@@ -3796,66 +5439,7 @@ function ShopAdminPage() {
 
       alert("업체 수정 완료");
 
-      setTimeout(async () => {
-        try {
-          const localItems = mergeShopList([
-            ...readBackupShops(),
-            ...readLocalShops(),
-          ]);
-
-          const listRes = await Promise.race([
-            shopApi.getList(currentAdminCategoryParams),
-            new Promise((resolve) => {
-              setTimeout(() => {
-                resolve({
-                  items: localItems,
-                });
-              }, 250);
-            }),
-          ]);
-
-          const dashboardItems =
-            await loadAdminDashboardShops();
-
-          const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item));
-
-          setList((prev) => {
-            const nextList = filterDeletedShops(
-              mergeShopList([
-                ...loadedItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                ...dashboardItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                ...prev.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                ...localItems.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                updatedShop,
-              ])
-            );
-
-            writeShopImageBank([updatedShop], { replace: true });
-            saveLocalShops(nextList);
-
-            return nextList;
-          });
-        } catch (e) {
-          console.warn("SHOP UPDATE RELOAD SKIP:", e.message);
-
-          setList((prev) => {
-            const nextList = filterDeletedShops(
-              mergeShopList([
-                ...prev.filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                ...readLocalShops().filter((item) => String(item?._id || item?.id || "") !== String(editingId)),
-                updatedShop,
-              ])
-            );
-
-            writeShopImageBank([updatedShop], { replace: true });
-            saveLocalShops(nextList);
-
-            return nextList;
-          });
-        }
-
-        scheduleLoadStats();
-      }, 50);
+      scheduleLoadStats();
     } catch (e) {
       setError(e.message || "업체 수정 실패");
     } finally {
@@ -3880,7 +5464,9 @@ function ShopAdminPage() {
       setSubmitting(true);
       setError("");
 
-      const beforeList = filterDeletedShops(mergeShopList([...list, ...readLocalShops()]));
+      const beforeList = filterDeletedShops(
+        getAdminVisibleShops(Array.isArray(list) ? list : [])
+      );
       const targetShop =
         beforeList.find((item) => String(item?._id || item?.id || "") === deleteId) ||
         null;
@@ -3892,6 +5478,7 @@ function ShopAdminPage() {
 
       rememberDeletedShop(deleteTarget);
       removeShopImageBank(deleteTarget);
+      removeShopPremiumBank(deleteTarget);
       dashboardCacheRef.current = {
         category: "",
         items: [],
@@ -3923,85 +5510,7 @@ function ShopAdminPage() {
         }
       }
 
-      setTimeout(async () => {
-        try {
-          const localItems = mergeShopList([
-            ...readBackupShops(),
-            ...readLocalShops(),
-          ]);
-
-          if (isLocalShopId(deleteId)) {
-            setList((prev) => {
-              const filtered = filterDeletedShops(mergeShopList([...prev, ...localItems])).filter((item) => {
-                const itemId = String(item?._id || item?.id || "");
-
-                return itemId !== deleteId;
-              });
-
-              saveLocalShops(filtered);
-
-              return filtered;
-            });
-
-            scheduleLoadStats();
-            return;
-          }
-
-          const listRes = await Promise.race([
-            shopApi.getList(currentAdminCategoryParams),
-            new Promise((resolve) => {
-              setTimeout(() => {
-                resolve({
-                  items: localItems,
-                });
-              }, 250);
-            }),
-          ]);
-
-          const dashboardItems =
-            await loadAdminDashboardShops();
-
-          const loadedItems = getAdminVisibleShops(filterDeletedShops(extractShopItems(listRes))).map((item) => applyShopImageBank(item)).filter((item) => {
-            const itemId = String(item?._id || item?.id || item?.shopId || "");
-
-            return itemId !== deleteId;
-          });
-
-          const dashboardLoadedItems = dashboardItems.filter((item) => {
-            const itemId = String(item?._id || item?.id || item?.shopId || "");
-
-            return itemId !== deleteId;
-          });
-
-          setList((prev) => {
-            const filtered = filterDeletedShops(mergeShopList([...prev, ...loadedItems, ...dashboardLoadedItems, ...localItems])).filter((item) => {
-              const itemId = String(item?._id || item?.id || "");
-
-              return itemId !== deleteId;
-            });
-
-            saveLocalShops(filtered);
-
-            return filtered;
-          });
-        } catch (e) {
-          console.warn("SHOP DELETE RELOAD SKIP:", e.message);
-
-          setList((prev) => {
-            const filtered = filterDeletedShops(mergeShopList([...prev, ...readLocalShops()])).filter((item) => {
-              const itemId = String(item?._id || item?.id || "");
-
-              return itemId !== deleteId;
-            });
-
-            saveLocalShops(filtered);
-
-            return filtered;
-          });
-        }
-
-        scheduleLoadStats();
-      }, 50);
+      scheduleLoadStats();
 
       if (!targetShop || nextList.length !== beforeList.length) {
         alert("삭제 완료");
@@ -4046,7 +5555,7 @@ function ShopAdminPage() {
         setForm((prev) => ({
           ...prev,
           status,
-          premium: payload.premium,
+          premium: payload.premiumType,
           images: payload.images,
           representativeImage: payload.representativeImage,
           coursePricing: makeSafeCoursePricing(payload),
@@ -4310,7 +5819,7 @@ function ShopAdminPage() {
             </select>
 
             <div style={styles.imageHelp}>
-              사진 장수 제한 없음 / 원본 사이즈 저장 / 아래 미리보기에서 대표 사진 선택
+              사진은 서버 업로드 후 URL만 저장 / base64·blob 저장 금지 / 최대 {currentShopImageLimit}장
             </div>
           </div>
 
@@ -4340,8 +5849,13 @@ function ShopAdminPage() {
                       src={safeImage}
                       alt={`shop-${index}`}
                       style={styles.previewImage}
+                      loading={index === 0 ? "eager" : "lazy"}
+                      decoding="async"
                       onError={(e) => {
-                        e.currentTarget.style.display = "none";
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = SHOP_IMAGE_FALLBACK_SRC;
+                        e.currentTarget.style.display = "block";
+                        e.currentTarget.style.opacity = "1";
                       }}
                     />
 
@@ -4542,7 +6056,7 @@ function ShopAdminPage() {
             </button>
           </div>
 
-          {!!form.courses.length && (
+          {false && !!form.courses.length && (
             <div style={styles.tagWrap}>
               {form.courses.map((course, index) => (
                 <div key={`${course}-${index}`} style={styles.tag}>
@@ -4578,7 +6092,7 @@ function ShopAdminPage() {
             </button>
           </div>
 
-          {!!form.price.length && (
+          {false && !!form.price.length && (
             <div style={styles.tagWrap}>
               {form.price.map((price, index) => (
                 <div key={`${price}-${index}`} style={styles.tag}>
@@ -4597,13 +6111,20 @@ function ShopAdminPage() {
           )}
 
           <select
-            name="status"
-            value={form.status}
-            onChange={onChange}
+            name="directPaymentEnabled"
+            value={form.directPaymentEnabled ? "true" : "false"}
+            onChange={(e) => {
+              const value = e.target.value === "true";
+
+              setForm((prev) => ({
+                ...prev,
+                directPaymentEnabled: value,
+              }));
+            }}
             style={styles.input}
           >
-            <option value="active">active</option>
-            <option value="inactive">inactive</option>
+            <option value="false">바로결제 비활성화</option>
+            <option value="true">바로결제 활성화</option>
           </select>
 
           {!editingId ? (
@@ -4629,7 +6150,7 @@ function ShopAdminPage() {
         ) : (
           <div style={styles.list}>
             {filteredList.map((shop) => {
-              const bankFixedShop = applyShopImageBank(shop);
+              const bankFixedShop = shop;
               const shopImages = makeSafeImages(bankFixedShop)
                 .map((image) => normalizeImageSrc(image))
                 .filter(Boolean);
@@ -4648,6 +6169,7 @@ function ShopAdminPage() {
                 shopImages,
                 representativeImage
               );
+              const visibleOrderedImages = orderedImages.slice(0, currentShopImageLimit);
 
               const shopStats =
                 getShopStats(shop);
@@ -4712,13 +6234,14 @@ function ShopAdminPage() {
               const premium = normalizePremiumType(shop);
               const shopCoursePricing = filterCompleteCoursePricing(makeSafeCoursePricing(shop));
               const businessOpen = isShopBusinessOpen(shop?.businessHours || shop?.openingHours || shop?.hours || "");
+              const directPaymentActive = normalizeDirectPaymentEnabled(shop?.directPaymentEnabled);
 
               return (
                 <div key={shop?._id || shop?.id || shop?.name}>
                   <div style={{ ...styles.card, ...(!businessOpen ? styles.closedShopCard : {}) }}>
-                    {!!orderedImages.length && (
+                    {!!visibleOrderedImages.length && (
                       <div style={styles.cardImages}>
-                        {orderedImages.map((image, index) => {
+                        {visibleOrderedImages.map((image, index) => {
                           const safeImage = normalizeImageSrc(image);
 
                           if (!safeImage) {
@@ -4734,14 +6257,25 @@ function ShopAdminPage() {
                                 src={safeImage}
                                 alt={`shop-card-${index}`}
                                 style={styles.cardImage}
+                                loading={index === 0 ? "eager" : "lazy"}
+                                decoding="async"
                                 onError={(e) => {
-                                  e.currentTarget.style.display = "none";
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = SHOP_IMAGE_FALLBACK_SRC;
+                                  e.currentTarget.style.display = "block";
+                                  e.currentTarget.style.opacity = "1";
                                 }}
                               />
 
                               {index === 0 && (
                                 <div style={styles.cardRepresentativeBadge}>
                                   대표
+                                </div>
+                              )}
+
+                              {directPaymentActive && (
+                                <div style={styles.cardDirectPaymentBadge}>
+                                  바로결제
                                 </div>
                               )}
                             </div>
@@ -4765,21 +6299,10 @@ function ShopAdminPage() {
                         </div>
 
                         <div style={styles.address}>
-                          {shop?.address || "주소 없음"}
+                          {pickStableAddress(shop?.address, shop?.roadAddress, shop?.fullAddress, shop?.locationText) || "주소 없음"}
                         </div>
                       </div>
 
-                      <div
-                        style={{
-                          ...styles.status,
-                          color:
-                            shop?.status === "inactive"
-                              ? "#ff9800"
-                              : "#4caf50",
-                        }}
-                      >
-                        {shop?.status || "active"}
-                      </div>
                     </div>
 
                     <div style={styles.section}>
@@ -4798,6 +6321,11 @@ function ShopAdminPage() {
                     <div style={styles.section}>
                       <strong>프리미엄:</strong>{" "}
                       {premium === "normal" ? "NORMAL" : String(premium || "normal").toUpperCase()}
+                    </div>
+
+                    <div style={styles.section}>
+                      <strong>바로결제:</strong>{" "}
+                      {directPaymentActive ? "활성화" : "비활성화"}
                     </div>
 
                     <div style={styles.section}>
@@ -4840,27 +6368,31 @@ function ShopAdminPage() {
                       ))}
                     </div>
 
-                    <div style={styles.section}>
-                      <strong>추가 코스:</strong>{" "}
-                      {makeSafeCourses(shop).length
-                        ? makeSafeCourses(shop).join(", ")
-                        : "-"}
-                    </div>
+                    {false && (
+                      <div style={styles.section}>
+                        <strong>추가 코스:</strong>{" "}
+                        {makeSafeCourses(shop).length
+                          ? makeSafeCourses(shop).join(", ")
+                          : "-"}
+                      </div>
+                    )}
 
-                    <div style={styles.section}>
-                      <strong>추가 금액:</strong>{" "}
-                      {makeSafePrice(shop).length
-                        ? Array.from(
-                            new Set(
-                              makeSafePrice(shop)
-                                .map((v) => Number(v))
-                                .filter((v) => Number.isFinite(v) && v > 0)
+                    {false && (
+                      <div style={styles.section}>
+                        <strong>추가 금액:</strong>{" "}
+                        {makeSafePrice(shop).length
+                          ? Array.from(
+                              new Set(
+                                makeSafePrice(shop)
+                                  .map((v) => Number(v))
+                                  .filter((v) => Number.isFinite(v) && v > 0)
+                              )
                             )
-                          )
-                            .map((v) => `${v.toLocaleString()}원`)
-                            .join(", ")
-                        : "-"}
-                    </div>
+                              .map((v) => `${v.toLocaleString()}원`)
+                              .join(", ")
+                          : "-"}
+                      </div>
+                    )}
 
                     <div style={styles.actions}>
                       <button
@@ -4879,19 +6411,6 @@ function ShopAdminPage() {
                         삭제
                       </button>
 
-                      <button
-                        style={styles.statusBtn}
-                        onClick={() =>
-                          onStatus(
-                            shop?._id || shop?.id,
-                            shop?.status === "active" ? "inactive" : "active",
-                            shop
-                          )
-                        }
-                        disabled={submitting}
-                      >
-                        {shop?.status === "active" ? "비활성화" : "활성화"}
-                      </button>
                     </div>
                   </div>
 
@@ -5228,6 +6747,7 @@ const styles = {
     width: "100%",
     height: "100%",
     objectFit: "cover",
+    objectPosition: "center center",
     display: "block",
   },
   representativeBadge: {
@@ -5552,6 +7072,7 @@ const styles = {
     width: "100%",
     height: "100%",
     objectFit: "cover",
+    objectPosition: "center center",
     display: "block",
   },
   cardRepresentativeBadge: {
@@ -5564,6 +7085,16 @@ const styles = {
     fontWeight: "bold",
     padding: "2px 5px",
     borderRadius: 4,
+  },
+  cardDirectPaymentBadge: {
+    position: "absolute",
+    right: 6,
+    bottom: 6,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "bold",
+    textShadow: "0 1px 4px rgba(0, 0, 0, 0.95)",
+    letterSpacing: 0.2,
   },
   cardTop: {
     display: "flex",

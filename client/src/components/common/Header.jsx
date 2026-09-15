@@ -26,6 +26,7 @@ import {
  * ✔ gold neon UI
  * ✔ 기존 프로젝트 구조 충돌 없음
  * ✔ 단독 사용 가능
+ * ✔ 우측 제휴 문의 / 프로필 아이콘 최소 추가
  * =====================================================
  */
 
@@ -305,6 +306,15 @@ export default function Header({
     }
   };
 
+  const onProfile = () => {
+    if (isLoggedIn) {
+      movePage("/mypage");
+      return;
+    }
+
+    movePage("/login");
+  };
+
   return (
     <header
       className="common-header"
@@ -377,16 +387,6 @@ export default function Header({
           style={styles.menuBtn}
         >
           관리자
-        </button>
-
-        <button
-          type="button"
-          onClick={() =>
-            movePage("/inquiry")
-          }
-          style={styles.menuBtn}
-        >
-          제휴 문의
         </button>
       </nav>
 
@@ -484,6 +484,26 @@ export default function Header({
             로그아웃
           </button>
         )}
+
+        <button
+          type="button"
+          onClick={() =>
+            movePage("/inquiry")
+          }
+          style={styles.inquiryBtn}
+        >
+          제휴 문의
+        </button>
+
+        <button
+          type="button"
+          onClick={onProfile}
+          style={styles.profileBtn}
+          aria-label="프로필"
+          title="프로필"
+        >
+          👤
+        </button>
       </div>
     </header>
   );
@@ -724,5 +744,42 @@ const styles = {
     cursor: "pointer",
     boxShadow:
       "0 0 12px rgba(255,77,79,0.32)",
+  },
+
+  inquiryBtn: {
+    height: 44,
+    border:
+      `1px solid ${GOLD_DARK}`,
+    background:
+      "linear-gradient(180deg, rgba(8,8,8,0.98), rgba(0,0,0,1))",
+    color: "#fff",
+    fontWeight: 950,
+    borderRadius: 8,
+    padding:
+      "0 18px",
+    cursor: "pointer",
+    boxShadow:
+      "0 0 8px rgba(255,212,0,0.30), inset 0 0 10px rgba(255,212,0,0.05)",
+  },
+
+  profileBtn: {
+    width: 44,
+    height: 44,
+    border:
+      "1px solid rgba(255,212,0,0.88)",
+    background:
+      "linear-gradient(180deg, rgba(8,8,8,0.98), rgba(0,0,0,1))",
+    color: GOLD,
+    fontSize: 22,
+    fontWeight: 900,
+    borderRadius: "50%",
+    cursor: "pointer",
+    display: "flex",
+    alignItems:
+      "center",
+    justifyContent:
+      "center",
+    boxShadow:
+      "0 0 12px rgba(255,212,0,0.38)",
   },
 };

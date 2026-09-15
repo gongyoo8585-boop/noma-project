@@ -11,14 +11,27 @@
  * ✔ axios 구조 대응
  * ✔ kakao 로그인 유지
  * ✔ 기존 흐름 유지
- * ✔ 🔥 email/id 로그인 동시 대응
- * ✔ 🔥 role/isAdmin 토큰 반영 강화
+ * ✔ email/id 로그인 동시 대응
+ * ✔ role/isAdmin 토큰 반영 강화
+ * ✔ 휴대폰 인증번호 발송/확인 최소 추가
+ * ✔ SMS 발송 설정이 있으면 실제 문자 발송
  * =====================================================
  */
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
+const crypto = require("crypto");
+
+function safeRequire(path) {
+  try {
+    return require(path);
+  } catch {
+    return null;
+  }
+}
+
+const nodemailer = safeRequire("nodemailer");
 
 const User = require("../models/User");
 
@@ -48,6 +61,414 @@ const KAKAO_REDIRECT_URI =
 const CLIENT_URL =
   process.env.CLIENT_URL ||
   "http://localhost:5173";
+
+const SMS_PROVIDER =
+  String(process.env.SMS_PROVIDER || "")
+    .toLowerCase()
+    .trim();
+
+const SMS_FROM =
+  String(
+    process.env.SMS_FROM ||
+      process.env.SMS_FROM_NUMBER ||
+      process.env.COOLSMS_FROM ||
+      process.env.SOLAPI_FROM ||
+      ""
+  )
+    .replace(/[^0-9]/g, "")
+    .trim();
+
+const COOLSMS_API_KEY =
+  process.env.COOLSMS_API_KEY ||
+  process.env.SOLAPI_API_KEY ||
+  "";
+
+const COOLSMS_API_SECRET =
+  process.env.COOLSMS_API_SECRET ||
+  process.env.SOLAPI_API_SECRET ||
+  "";
+
+const COOLSMS_API_URL =
+  process.env.COOLSMS_API_URL ||
+  process.env.SOLAPI_API_URL ||
+  "https://api.solapi.com/messages/v4/send";
+
+const SMS_WEBHOOK_URL =
+  process.env.SMS_WEBHOOK_URL ||
+  "";
+
+const TWILIO_ACCOUNT_SID =
+  process.env.TWILIO_ACCOUNT_SID ||
+  process.env.SMS_ACCOUNT_SID ||
+  "";
+
+const TWILIO_AUTH_TOKEN =
+  process.env.TWILIO_AUTH_TOKEN ||
+  process.env.SMS_AUTH_TOKEN ||
+  process.env.SMS_API_KEY ||
+  "";
+
+const TWILIO_FROM =
+  String(
+    process.env.TWILIO_FROM ||
+      process.env.TWILIO_PHONE_NUMBER ||
+      process.env.SMS_FROM ||
+      process.env.SMS_FROM_NUMBER ||
+      ""
+  )
+    .replace(/[^0-9+]/g, "")
+    .trim();
+
+const TWILIO_API_URL =
+  process.env.TWILIO_API_URL ||
+  "https://api.twilio.com/2010-04-01";
+
+const SMTP_HOST = (() => {
+  const host =
+    String(
+      process.env.SMTP_HOST ||
+      ""
+    )
+      .trim();
+
+  if (
+    host.toLowerCase() ===
+    "smtp.hiworks.com"
+  ) {
+    return "smtps.hiworks.com";
+  }
+
+  return host;
+})();
+
+const SMTP_PORT = (() => {
+  const configuredPort =
+    Number(
+      process.env.SMTP_PORT ||
+      0
+    );
+
+  if (
+    SMTP_HOST.toLowerCase() ===
+      "smtps.hiworks.com" &&
+    (
+      !configuredPort ||
+      configuredPort === 587
+    )
+  ) {
+    return 465;
+  }
+
+  return configuredPort || 587;
+})();
+
+const SMTP_USER =
+  String(
+    process.env.SMTP_USER ||
+    ""
+  )
+    .trim();
+
+const SMTP_PASS =
+  String(
+    process.env.SMTP_PASS ||
+    ""
+  );
+
+const SMTP_FROM =
+  String(
+    process.env.SMTP_FROM ||
+    process.env.MAIL_FROM ||
+    SMTP_USER ||
+    ""
+  )
+    .trim();
+
+/* =========================
+휴대폰 인증 임시 저장소
+========================= */
+const phoneCodeStore = new Map();
+const emailCodeStore = new Map();
+
+function normalizePhone(phone) {
+  return String(phone || "")
+    .replace(/[^0-9]/g, "")
+    .trim();
+}
+
+function normalizeEmail(email) {
+  return String(email || "")
+    .toLowerCase()
+    .trim();
+}
+
+function createPhoneCode() {
+  return String(
+    Math.floor(100000 + Math.random() * 900000)
+  );
+}
+
+function createEmailCode() {
+  return String(
+    Math.floor(100000 + Math.random() * 900000)
+  );
+}
+
+function createSmsText(code) {
+  return `[NORA] 인증번호는 ${code} 입니다. 5분 이내에 입력해주세요.`;
+}
+
+function createEmailSubject() {
+  return "[NORA] 이메일 인증번호";
+}
+
+function createEmailText(code) {
+  return [
+    "NORA 이메일 인증번호입니다.",
+    "",
+    `인증번호: ${code}`,
+    "",
+    "인증번호는 5분 동안 유효합니다.",
+    "본인이 요청하지 않았다면 이 메일을 무시해주세요.",
+  ].join("\n");
+}
+
+function createEmailHtml(code) {
+  return `
+    <div style="margin:0;padding:24px;background:#ffffff;font-family:Arial,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#222;">
+      <div style="max-width:520px;margin:0 auto;">
+        <h2 style="margin:0 0 20px;font-size:22px;line-height:1.4;">NORA 이메일 인증</h2>
+        <p style="margin:0 0 18px;font-size:15px;line-height:1.6;">아래 인증번호를 회원가입 화면에 입력해주세요.</p>
+        <div style="margin:0 0 18px;padding:18px;border:1px solid #dddddd;border-radius:8px;text-align:center;">
+          <div style="margin-bottom:8px;font-size:13px;color:#666666;">이메일 인증번호</div>
+          <div style="font-size:30px;font-weight:700;letter-spacing:6px;color:#111111;">${code}</div>
+        </div>
+        <p style="margin:0 0 8px;font-size:14px;line-height:1.6;">인증번호는 5분 동안 유효합니다.</p>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#777777;">본인이 요청하지 않았다면 이 메일을 무시해주세요.</p>
+      </div>
+    </div>
+  `;
+}
+
+function createSolapiAuthorization() {
+  const date =
+    new Date().toISOString();
+
+  const salt =
+    crypto.randomBytes(16).toString("hex");
+
+  const signature =
+    crypto
+      .createHmac(
+        "sha256",
+        COOLSMS_API_SECRET
+      )
+      .update(date + salt)
+      .digest("hex");
+
+  return `HMAC-SHA256 apiKey=${COOLSMS_API_KEY}, date=${date}, salt=${salt}, signature=${signature}`;
+}
+
+async function sendSmsMessage(phone, code) {
+  const text =
+    createSmsText(code);
+
+  if (
+    SMS_PROVIDER === "solapi" ||
+    SMS_PROVIDER === "coolsms"
+  ) {
+    if (
+      !COOLSMS_API_KEY ||
+      !COOLSMS_API_SECRET ||
+      !SMS_FROM
+    ) {
+      throw new Error(
+        "SMS_PROVIDER_NOT_CONFIGURED"
+      );
+    }
+
+    await axios.post(
+      COOLSMS_API_URL,
+      {
+        message: {
+          to: phone,
+          from: SMS_FROM,
+          text,
+        },
+      },
+      {
+        headers: {
+          Authorization:
+            createSolapiAuthorization(),
+          "Content-Type":
+            "application/json",
+        },
+        timeout: 10000,
+      }
+    );
+
+    return true;
+  }
+
+  if (SMS_PROVIDER === "twilio") {
+    if (
+      !TWILIO_ACCOUNT_SID ||
+      !TWILIO_AUTH_TOKEN ||
+      !TWILIO_FROM
+    ) {
+      throw new Error(
+        "SMS_PROVIDER_NOT_CONFIGURED"
+      );
+    }
+
+    await axios.post(
+      `${TWILIO_API_URL}/Accounts/${encodeURIComponent(
+        TWILIO_ACCOUNT_SID
+      )}/Messages.json`,
+      new URLSearchParams({
+        To: phone,
+        From: TWILIO_FROM,
+        Body: text,
+      }).toString(),
+      {
+        auth: {
+          username: TWILIO_ACCOUNT_SID,
+          password: TWILIO_AUTH_TOKEN,
+        },
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+        timeout: 10000,
+      }
+    );
+
+    return true;
+  }
+
+  if (SMS_WEBHOOK_URL) {
+    await axios.post(
+      SMS_WEBHOOK_URL,
+      {
+        to: phone,
+        phone,
+        text,
+        code,
+      },
+      {
+        timeout: 10000,
+      }
+    );
+
+    return true;
+  }
+
+  if (
+    process.env.NODE_ENV === "production"
+  ) {
+    console.error(
+      "[SMS CONFIG MISSING] SMS provider is not configured. Verification code was generated but SMS was not sent."
+    );
+
+    console.log(
+      `[PHONE VERIFY CODE] ${phone}: ${code}`
+    );
+
+    return false;
+  }
+
+  console.log(
+    `[PHONE VERIFY CODE] ${phone}: ${code}`
+  );
+
+  return false;
+}
+
+async function sendEmailMessage(email, code) {
+  if (
+    !nodemailer ||
+    !SMTP_HOST ||
+    !SMTP_PORT ||
+    !SMTP_USER ||
+    !SMTP_PASS ||
+    !SMTP_FROM
+  ) {
+    throw new Error(
+      "EMAIL_PROVIDER_NOT_CONFIGURED"
+    );
+  }
+
+  const smtpSecure =
+    SMTP_PORT === 465 ||
+    SMTP_HOST
+      .toLowerCase()
+      .startsWith("smtps.");
+
+  const transporter =
+    nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: smtpSecure,
+      requireTLS:
+        !smtpSecure &&
+        SMTP_PORT === 587,
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS,
+      },
+      tls: {
+        servername: SMTP_HOST,
+        minVersion: "TLSv1.2",
+      },
+    });
+
+  const mailInfo =
+    await transporter.sendMail({
+      from: `"NORA" <${SMTP_FROM}>`,
+      to: email,
+      replyTo: SMTP_FROM,
+      subject: createEmailSubject(),
+      text: createEmailText(code),
+      html: createEmailHtml(code),
+    });
+
+  const accepted =
+    Array.isArray(mailInfo?.accepted)
+      ? mailInfo.accepted
+      : [];
+
+  const rejected =
+    Array.isArray(mailInfo?.rejected)
+      ? mailInfo.rejected
+      : [];
+
+  console.log("[EMAIL SEND RESULT]", {
+    to: email,
+    accepted,
+    rejected,
+    response: mailInfo?.response || "",
+    messageId: mailInfo?.messageId || "",
+    envelope: mailInfo?.envelope || null,
+  });
+
+  if (
+    rejected.length > 0 &&
+    rejected
+      .map((item) => String(item).toLowerCase())
+      .includes(String(email).toLowerCase())
+  ) {
+    throw new Error("EMAIL_RECIPIENT_REJECTED");
+  }
+
+  if (
+    accepted.length === 0 &&
+    process.env.NODE_ENV === "production"
+  ) {
+    throw new Error("EMAIL_NOT_ACCEPTED");
+  }
+
+  return true;
+}
 
 /* =========================
 공통 응답
@@ -155,7 +576,18 @@ exports.register = async (req, res) => {
       nickname,
       phone,
       email,
+      serviceType,
     } = req.body || {};
+
+    const safeEmail =
+      normalizeEmail(email);
+
+    const safeServiceType =
+      String(serviceType || "")
+        .trim()
+        .toLowerCase() === "karaoke"
+        ? "karaoke"
+        : "general";
 
     if (!id || !password) {
       return fail(
@@ -163,6 +595,23 @@ exports.register = async (req, res) => {
         400,
         "ID_PASSWORD_REQUIRED"
       );
+    }
+
+    if (safeEmail) {
+      const saved =
+        emailCodeStore.get(safeEmail);
+
+      if (
+        !saved ||
+        saved.verified !== true ||
+        (saved.expiresAt && saved.expiresAt < Date.now())
+      ) {
+        return fail(
+          res,
+          400,
+          "EMAIL_NOT_VERIFIED"
+        );
+      }
     }
 
     const exists =
@@ -187,11 +636,17 @@ exports.register = async (req, res) => {
         password: hash,
         nickname: nickname || id,
         phone: phone || "",
-        email: email || "",
+        email: safeEmail || "",
+        emailVerified: !!safeEmail,
+        serviceType: safeServiceType,
         role: "user",
         isAdmin: false,
         blocked: false,
       });
+
+    if (safeEmail) {
+      emailCodeStore.delete(safeEmail);
+    }
 
     const token =
       createToken(user);
@@ -210,6 +665,555 @@ exports.register = async (req, res) => {
       res,
       500,
       "REGISTER_FAILED"
+    );
+  }
+};
+
+/* =====================================================
+🔥 관리자 전용 회원가입
+===================================================== */
+exports.adminRegister = async (req, res) => {
+  try {
+    const requestToken =
+      String(req.token || "")
+        .replace(/^Bearer\s+/i, "")
+        .trim();
+
+    if (!requestToken) {
+      return fail(
+        res,
+        401,
+        "AUTH_TOKEN_REQUIRED"
+      );
+    }
+
+    let verifiedAdminPayload = null;
+
+    try {
+      verifiedAdminPayload =
+        jwt.verify(
+          requestToken,
+          JWT_SECRET
+        );
+    } catch (e) {
+      return fail(
+        res,
+        401,
+        "INVALID_ADMIN_TOKEN"
+      );
+    }
+
+    const verifiedRole =
+      String(
+        verifiedAdminPayload?.role ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      verifiedRole !== "admin" &&
+      verifiedAdminPayload?.isAdmin !== true
+    ) {
+      return fail(
+        res,
+        403,
+        "ADMIN_REQUIRED"
+      );
+    }
+
+    const verifiedMongoId =
+      String(
+        verifiedAdminPayload?._id ||
+        verifiedAdminPayload?.userId ||
+        ""
+      )
+        .trim();
+
+    const verifiedLoginId =
+      String(
+        verifiedAdminPayload?.id ||
+        ""
+      )
+        .trim();
+
+    let requestAdmin = null;
+
+    if (
+      /^[0-9a-fA-F]{24}$/.test(
+        verifiedMongoId
+      )
+    ) {
+      requestAdmin =
+        await User.findById(
+          verifiedMongoId
+        ).select(
+          "+role +id"
+        );
+    }
+
+    if (
+      !requestAdmin &&
+      verifiedLoginId
+    ) {
+      requestAdmin =
+        await User.findOne({
+          id: verifiedLoginId,
+        }).select(
+          "+role +id"
+        );
+    }
+
+    if (
+      !requestAdmin ||
+      String(requestAdmin.role || "")
+        .trim()
+        .toLowerCase() !== "admin"
+    ) {
+      return fail(
+        res,
+        403,
+        "ADMIN_REQUIRED"
+      );
+    }
+
+    const {
+      id,
+      password,
+      nickname,
+      phone,
+      email,
+      role,
+      serviceType,
+    } = req.body || {};
+
+    const safeId =
+      String(id || "")
+        .trim();
+
+    const safeEmail =
+      normalizeEmail(email);
+
+    const safeRole =
+      String(role || "user")
+        .trim()
+        .toLowerCase();
+
+    if (
+      !["user", "shop", "admin"].includes(
+        safeRole
+      )
+    ) {
+      return fail(
+        res,
+        400,
+        "INVALID_ROLE"
+      );
+    }
+
+    let safeServiceType =
+      "general";
+
+    if (safeRole === "shop") {
+      const requestedServiceType =
+        String(serviceType || "")
+          .trim()
+          .toLowerCase();
+
+      if (
+        !["massage", "karaoke"].includes(
+          requestedServiceType
+        )
+      ) {
+        return fail(
+          res,
+          400,
+          "INVALID_SERVICE_TYPE"
+        );
+      }
+
+      safeServiceType =
+        requestedServiceType;
+    }
+
+    if (!safeId || !password) {
+      return fail(
+        res,
+        400,
+        "ID_PASSWORD_REQUIRED"
+      );
+    }
+
+    if (!nickname) {
+      return fail(
+        res,
+        400,
+        "NICKNAME_REQUIRED"
+      );
+    }
+
+    if (!safeEmail) {
+      return fail(
+        res,
+        400,
+        "EMAIL_REQUIRED"
+      );
+    }
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        safeEmail
+      )
+    ) {
+      return fail(
+        res,
+        400,
+        "INVALID_EMAIL"
+      );
+    }
+
+    const idExists =
+      await User.findOne({
+        id: safeId,
+      });
+
+    if (idExists) {
+      return fail(
+        res,
+        409,
+        "USER_ALREADY_EXISTS"
+      );
+    }
+
+    const emailExists =
+      await User.findOne({
+        email: safeEmail,
+      });
+
+    if (emailExists) {
+      return fail(
+        res,
+        409,
+        "EMAIL_ALREADY_EXISTS"
+      );
+    }
+
+    const hash =
+      await bcrypt.hash(
+        password,
+        10
+      );
+
+    const user =
+      await User.create({
+        id: safeId,
+        password: hash,
+        nickname:
+          String(nickname || "")
+            .trim() ||
+          safeId,
+        phone: phone || "",
+        email: safeEmail,
+        emailVerified: false,
+        serviceType:
+          safeServiceType,
+        role: safeRole,
+        isAdmin:
+          safeRole === "admin",
+        status: "active",
+        blocked: false,
+      });
+
+    return ok(res, {
+      user: safeUser(user),
+    });
+  } catch (err) {
+    console.error(
+      "ADMIN REGISTER ERROR:",
+      err
+    );
+
+    return fail(
+      res,
+      500,
+      "ADMIN_REGISTER_FAILED"
+    );
+  }
+};
+
+
+/* =====================================================
+🔥 휴대폰 인증번호 발송
+===================================================== */
+exports.sendVerificationCode = async (req, res) => {
+  try {
+    const phone =
+      normalizePhone(req.body?.phone);
+
+    if (!phone) {
+      return fail(
+        res,
+        400,
+        "PHONE_REQUIRED"
+      );
+    }
+
+    if (!/^01[0-9]{8,9}$/.test(phone)) {
+      return fail(
+        res,
+        400,
+        "INVALID_PHONE"
+      );
+    }
+
+    const code =
+      createPhoneCode();
+
+    const smsSent =
+      await sendSmsMessage(
+        phone,
+        code
+      );
+
+    phoneCodeStore.set(phone, {
+      code,
+      expiresAt:
+        Date.now() + 1000 * 60 * 5,
+      verified: false,
+    });
+
+    return ok(res, {
+      message: "VERIFICATION_CODE_SENT",
+      smsSent,
+      devCode:
+        process.env.NODE_ENV === "production"
+          ? undefined
+          : code,
+    });
+  } catch (err) {
+    console.error(
+      "SEND VERIFICATION CODE ERROR:",
+      err
+    );
+
+    return fail(
+      res,
+      500,
+      err?.message ||
+        "SEND_CODE_FAILED"
+    );
+  }
+};
+
+/* =====================================================
+🔥 휴대폰 인증번호 확인
+===================================================== */
+exports.verifyVerificationCode = async (req, res) => {
+  try {
+    const phone =
+      normalizePhone(req.body?.phone);
+
+    const code =
+      String(req.body?.code || "")
+        .trim();
+
+    if (!phone || !code) {
+      return fail(
+        res,
+        400,
+        "PHONE_CODE_REQUIRED"
+      );
+    }
+
+    const saved =
+      phoneCodeStore.get(phone);
+
+    if (!saved) {
+      return fail(
+        res,
+        400,
+        "CODE_NOT_FOUND"
+      );
+    }
+
+    if (
+      saved.expiresAt &&
+      saved.expiresAt < Date.now()
+    ) {
+      phoneCodeStore.delete(phone);
+
+      return fail(
+        res,
+        400,
+        "CODE_EXPIRED"
+      );
+    }
+
+    if (saved.code !== code) {
+      return fail(
+        res,
+        400,
+        "INVALID_CODE"
+      );
+    }
+
+    phoneCodeStore.set(phone, {
+      ...saved,
+      verified: true,
+    });
+
+    return ok(res, {
+      verified: true,
+      message: "PHONE_VERIFIED",
+    });
+  } catch (err) {
+    console.error(
+      "VERIFY VERIFICATION CODE ERROR:",
+      err
+    );
+
+    return fail(
+      res,
+      500,
+      "VERIFY_CODE_FAILED"
+    );
+  }
+};
+
+/* =====================================================
+🔥 이메일 인증번호 발송
+===================================================== */
+exports.sendEmailVerificationCode = async (req, res) => {
+  try {
+    const email =
+      normalizeEmail(req.body?.email);
+
+    if (!email) {
+      return fail(
+        res,
+        400,
+        "EMAIL_REQUIRED"
+      );
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return fail(
+        res,
+        400,
+        "INVALID_EMAIL"
+      );
+    }
+
+    const code =
+      createEmailCode();
+
+    const emailSent =
+      await sendEmailMessage(
+        email,
+        code
+      );
+
+    emailCodeStore.set(email, {
+      code,
+      expiresAt:
+        Date.now() + 1000 * 60 * 5,
+      verified: false,
+    });
+
+    return ok(res, {
+      message: "EMAIL_VERIFICATION_CODE_SENT",
+      emailSent,
+      devCode:
+        process.env.NODE_ENV === "production"
+          ? undefined
+          : code,
+    });
+  } catch (err) {
+    console.error(
+      "SEND EMAIL VERIFICATION CODE ERROR:",
+      err
+    );
+
+    return fail(
+      res,
+      500,
+      err?.message ||
+        "SEND_EMAIL_CODE_FAILED"
+    );
+  }
+};
+
+/* =====================================================
+🔥 이메일 인증번호 확인
+===================================================== */
+exports.verifyEmailVerificationCode = async (req, res) => {
+  try {
+    const email =
+      normalizeEmail(req.body?.email);
+
+    const code =
+      String(req.body?.code || "")
+        .trim();
+
+    if (!email || !code) {
+      return fail(
+        res,
+        400,
+        "EMAIL_CODE_REQUIRED"
+      );
+    }
+
+    const saved =
+      emailCodeStore.get(email);
+
+    if (!saved) {
+      return fail(
+        res,
+        400,
+        "CODE_NOT_FOUND"
+      );
+    }
+
+    if (
+      saved.expiresAt &&
+      saved.expiresAt < Date.now()
+    ) {
+      emailCodeStore.delete(email);
+
+      return fail(
+        res,
+        400,
+        "CODE_EXPIRED"
+      );
+    }
+
+    if (saved.code !== code) {
+      return fail(
+        res,
+        400,
+        "INVALID_CODE"
+      );
+    }
+
+    emailCodeStore.set(email, {
+      ...saved,
+      verified: true,
+    });
+
+    return ok(res, {
+      verified: true,
+      message: "EMAIL_VERIFIED",
+    });
+  } catch (err) {
+    console.error(
+      "VERIFY EMAIL VERIFICATION CODE ERROR:",
+      err
+    );
+
+    return fail(
+      res,
+      500,
+      "VERIFY_EMAIL_CODE_FAILED"
     );
   }
 };
@@ -344,11 +1348,17 @@ exports.login = async (req, res) => {
     const safe =
       safeUser(user);
 
+    const adminToken =
+      safe?.role === "admin" ||
+      safe?.isAdmin === true
+        ? token
+        : undefined;
+
     return ok(res, {
       token,
       accessToken: token,
       authToken: token,
-      adminToken: token,
+      adminToken,
       jwt: token,
       user: safe,
 
@@ -356,7 +1366,7 @@ exports.login = async (req, res) => {
         token,
         accessToken: token,
         authToken: token,
-        adminToken: token,
+        adminToken,
         jwt: token,
         user: safe,
       },
@@ -491,13 +1501,22 @@ exports.getToken = async (req, res) => {
     const token =
       createToken(user);
 
+    const safe =
+      safeUser(user);
+
+    const adminToken =
+      safe?.role === "admin" ||
+      safe?.isAdmin === true
+        ? token
+        : undefined;
+
     return ok(res, {
       token,
       accessToken: token,
       authToken: token,
-      adminToken: token,
+      adminToken,
       jwt: token,
-      user: safeUser(user),
+      user: safe,
     });
   } catch (err) {
     console.error(
@@ -743,13 +1762,22 @@ exports.kakaoSimple =
       const token =
         createToken(user);
 
+      const safe =
+        safeUser(user);
+
+      const adminToken =
+        safe?.role === "admin" ||
+        safe?.isAdmin === true
+          ? token
+          : undefined;
+
       return ok(res, {
         token,
         accessToken: token,
         authToken: token,
-        adminToken: token,
+        adminToken,
         jwt: token,
-        user: safeUser(user),
+        user: safe,
       });
     } catch (err) {
       console.error(

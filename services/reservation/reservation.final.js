@@ -18,14 +18,17 @@ let analyticsService = null;
 let queueService = null;
 let lockService = null;
 
-try { Reservation = require("../modules/reservation/models/Reservation"); } catch (_) {}
-try { Payment = require("../modules/payment/models/Payment"); } catch (_) {}
+try { Reservation = require("../../models/Reservation"); } catch (_) {}
+try { if (!Reservation) Reservation = require("../../modules/reservation/models/Reservation"); } catch (_) {}
+try { Payment = require("../../models/Payment"); } catch (_) {}
+try { if (!Payment) Payment = require("../../modules/payment/models/Payment"); } catch (_) {}
 
-try { pricingService = require("./pricingService"); } catch (_) {}
-try { notifyService = require("./notifyService"); } catch (_) {}
-try { analyticsService = require("./analyticsService"); } catch (_) {}
-try { queueService = require("./queueService"); } catch (_) {}
-try { lockService = require("./redis.lock"); } catch (_) {}
+try { pricingService = require("../shop/pricingService"); } catch (_) {}
+try { notifyService = require("../notification/notifyService"); } catch (_) {}
+try { analyticsService = require("../analytics/analyticsService"); } catch (_) {}
+try { queueService = require("../queue/queue.bull"); } catch (_) {}
+try { if (!queueService) queueService = require("../queue/queuesService"); } catch (_) {}
+try { lockService = require("../cache/redis.lock"); } catch (_) {}
 
 /* =====================================================
 🔥 HELPER
@@ -57,6 +60,7 @@ class ReservationFinalService {
 
     assert(userId, "USER_REQUIRED");
     assert(shopId, "SHOP_REQUIRED");
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
 
     const lockKey = `reservation:${shopId}:${reservationDate}:${reservationTime}`;
 
@@ -77,7 +81,7 @@ class ReservationFinalService {
       /* 가격 계산 */
       let pricing = { finalAmount: basePrice };
 
-      if (pricingService) {
+      if (pricingService && typeof pricingService.calculate === "function") {
         pricing = pricingService.calculate({
           basePrice,
           duration,
@@ -96,22 +100,26 @@ class ReservationFinalService {
       });
 
       /* 알림 */
-      notifyService?.pushAsync({
-        userId,
-        type: "reservation_created",
-        message: "예약이 생성되었습니다.",
-        payload: { reservationId: reservation._id },
-      });
+      if (notifyService && typeof notifyService.pushAsync === "function") {
+        notifyService.pushAsync({
+          userId,
+          type: "reservation_created",
+          message: "예약이 생성되었습니다.",
+          payload: { reservationId: reservation._id },
+        });
+      }
 
       /* analytics */
-      analyticsService?.track({
-        type: "reservation",
-        userId,
-        payload: {
-          reservationId: reservation._id,
-          amount: pricing.finalAmount,
-        },
-      });
+      if (analyticsService && typeof analyticsService.track === "function") {
+        analyticsService.track({
+          type: "reservation",
+          userId,
+          payload: {
+            reservationId: reservation._id,
+            amount: pricing.finalAmount,
+          },
+        });
+      }
 
       this.last = reservation;
 
@@ -122,7 +130,7 @@ class ReservationFinalService {
     };
 
     /* 🔥 LOCK 적용 */
-    if (lockService) {
+    if (lockService && typeof lockService.withLock === "function") {
       return lockService.withLock(lockKey, exec);
     }
 
@@ -133,6 +141,8 @@ class ReservationFinalService {
   🔥 결제 연결
   ===================================================== */
   async attachPayment(reservationId, paymentId) {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) throw new Error("RESERVATION_NOT_FOUND");
 
@@ -146,17 +156,21 @@ class ReservationFinalService {
   🔥 결제 완료 처리
   ===================================================== */
   async markPaid(reservationId) {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) throw new Error("RESERVATION_NOT_FOUND");
 
     reservation.status = "paid";
     await reservation.save();
 
-    notifyService?.pushAsync({
-      userId: reservation.userId,
-      type: "reservation_paid",
-      message: "예약 결제가 완료되었습니다.",
-    });
+    if (notifyService && typeof notifyService.pushAsync === "function") {
+      notifyService.pushAsync({
+        userId: reservation.userId,
+        type: "reservation_paid",
+        message: "예약 결제가 완료되었습니다.",
+      });
+    }
 
     return reservation;
   }
@@ -165,6 +179,8 @@ class ReservationFinalService {
   🔥 예약 취소
   ===================================================== */
   async cancel(reservationId, reason = "") {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) throw new Error("RESERVATION_NOT_FOUND");
 
@@ -182,11 +198,13 @@ class ReservationFinalService {
       } catch (_) {}
     }
 
-    notifyService?.pushAsync({
-      userId: reservation.userId,
-      type: "reservation_cancel",
-      message: "예약이 취소되었습니다.",
-    });
+    if (notifyService && typeof notifyService.pushAsync === "function") {
+      notifyService.pushAsync({
+        userId: reservation.userId,
+        type: "reservation_cancel",
+        message: "예약이 취소되었습니다.",
+      });
+    }
 
     return reservation;
   }
@@ -195,17 +213,21 @@ class ReservationFinalService {
   🔥 예약 완료 처리
   ===================================================== */
   async complete(reservationId) {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) throw new Error("RESERVATION_NOT_FOUND");
 
     reservation.status = "completed";
     await reservation.save();
 
-    notifyService?.pushAsync({
-      userId: reservation.userId,
-      type: "reservation_complete",
-      message: "예약이 완료되었습니다.",
-    });
+    if (notifyService && typeof notifyService.pushAsync === "function") {
+      notifyService.pushAsync({
+        userId: reservation.userId,
+        type: "reservation_complete",
+        message: "예약이 완료되었습니다.",
+      });
+    }
 
     return reservation;
   }
@@ -214,6 +236,8 @@ class ReservationFinalService {
   🔥 실패 처리
   ===================================================== */
   async fail(reservationId, reason = "UNKNOWN") {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) throw new Error("RESERVATION_NOT_FOUND");
 
@@ -221,11 +245,13 @@ class ReservationFinalService {
     reservation.failReason = reason;
     await reservation.save();
 
-    notifyService?.pushAsync({
-      userId: reservation.userId,
-      type: "reservation_fail",
-      message: "예약 처리 실패",
-    });
+    if (notifyService && typeof notifyService.pushAsync === "function") {
+      notifyService.pushAsync({
+        userId: reservation.userId,
+        type: "reservation_fail",
+        message: "예약 처리 실패",
+      });
+    }
 
     return reservation;
   }
@@ -234,6 +260,8 @@ class ReservationFinalService {
   🔥 조회
   ===================================================== */
   async get(reservationId) {
+    assert(Reservation, "RESERVATION_MODEL_NOT_LOADED");
+
     return Reservation.findById(reservationId);
   }
 
@@ -241,7 +269,7 @@ class ReservationFinalService {
   🔥 비동기 생성
   ===================================================== */
   async createAsync(data) {
-    if (!queueService) {
+    if (!queueService || typeof queueService.add !== "function") {
       return this.create(data);
     }
 

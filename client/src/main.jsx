@@ -96,6 +96,54 @@ if (
     "load",
     async () => {
       try {
+        const isLocalHost =
+          window.location.hostname ===
+            "localhost" ||
+          window.location.hostname ===
+            "127.0.0.1";
+
+        const registrations =
+          await navigator.serviceWorker.getRegistrations();
+
+        if (isLocalHost) {
+          for (const registration of registrations) {
+            try {
+              await registration.unregister();
+            } catch (e) {
+              console.warn(
+                "SW unregister 실패:",
+                e
+              );
+            }
+          }
+
+          if (
+            navigator.serviceWorker.controller &&
+            sessionStorage.getItem(
+              "nora-local-sw-reload"
+            ) !== "done"
+          ) {
+            sessionStorage.setItem(
+              "nora-local-sw-reload",
+              "done"
+            );
+
+            window.location.reload();
+
+            return;
+          }
+
+          sessionStorage.removeItem(
+            "nora-local-sw-reload"
+          );
+
+          console.log(
+            "✅ LOCAL Service Worker 해제 완료"
+          );
+
+          return;
+        }
+
         /* 🔥 최소 추가 */
         const check =
           await fetch(
@@ -126,9 +174,6 @@ if (
         }
 
         /* 🔥 기존 SW 제거 */
-        const registrations =
-          await navigator.serviceWorker.getRegistrations();
-
         for (const registration of registrations) {
           try {
             await registration.unregister();

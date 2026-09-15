@@ -6,21 +6,31 @@
 👉 통계 집계
 👉 payment / reservation 분석
 👉 cache / queue 연동
+👉 legacy analytics require fail 방지
 ===================================================== */
 
 /* =====================================================
 🔥 SAFE REQUIRE
 ===================================================== */
-let cacheService = null;
-let queueService = null;
+function safeRequire(modulePath) {
+  try {
+    return require(modulePath);
+  } catch (_) {
+    return null;
+  }
+}
 
-try {
-  cacheService = require("./cacheService");
-} catch (_) {}
+const cacheService =
+  safeRequire("../cache/cacheService") ||
+  safeRequire("../cache/cache.service") ||
+  safeRequire("./cacheService") ||
+  null;
 
-try {
-  queueService = require("./queueService");
-} catch (_) {}
+const queueService =
+  safeRequire("../queue/queueService") ||
+  safeRequire("../queue/queue.service") ||
+  safeRequire("./queueService") ||
+  null;
 
 /* =====================================================
 🔥 SERVICE
@@ -31,9 +41,6 @@ class AnalyticsService {
     this.maxEvents = Number(process.env.ANALYTICS_MAX || 10000);
   }
 
-  /* =====================================================
-  🔥 TRACK EVENT
-  ===================================================== */
   track(event = {}) {
     const data = {
       type: event.type || "unknown",
@@ -48,8 +55,7 @@ class AnalyticsService {
       this.events.shift();
     }
 
-    // cache 저장
-    if (cacheService) {
+    if (cacheService && typeof cacheService.set === "function") {
       try {
         cacheService.set("analytics:last", data, 60);
       } catch (_) {}
@@ -58,48 +64,40 @@ class AnalyticsService {
     return data;
   }
 
-  /* =====================================================
-  🔥 BULK TRACK
-  ===================================================== */
   trackMany(events = []) {
     const results = [];
 
-    for (const e of Array.isArray(events) ? events : []) {
-      results.push(this.track(e));
+    for (const event of Array.isArray(events) ? events : []) {
+      results.push(this.track(event));
     }
 
     return results;
   }
 
-  /* =====================================================
-  🔥 GET EVENTS
-  ===================================================== */
   getEvents(limit = 50) {
-    return this.events.slice(-limit).reverse();
+    const safeLimit = Math.max(1, Number(limit || 50));
+
+    return this.events.slice(-safeLimit).reverse();
   }
 
-  /* =====================================================
-  🔥 FILTER EVENTS
-  ===================================================== */
   filterByType(type) {
-    return this.events.filter(e => e.type === type);
+    return this.events.filter((event) => event.type === type);
   }
 
   filterByUser(userId) {
-    return this.events.filter(e => String(e.userId) === String(userId));
+    return this.events.filter(
+      (event) => String(event.userId) === String(userId)
+    );
   }
 
-  /* =====================================================
-  🔥 PAYMENT ANALYTICS
-  ===================================================== */
   getPaymentStats() {
     const payments = this.filterByType("payment");
 
     let total = 0;
-    let count = payments.length;
+    const count = payments.length;
 
-    for (const p of payments) {
-      total += Number(p.payload.amount || 0);
+    for (const payment of payments) {
+      total += Number(payment.payload.amount || 0);
     }
 
     return {
@@ -109,27 +107,25 @@ class AnalyticsService {
     };
   }
 
-  /* =====================================================
-  🔥 RESERVATION ANALYTICS
-  ===================================================== */
   getReservationStats() {
     const reservations = this.filterByType("reservation");
 
     return {
       total: reservations.length,
-      completed: reservations.filter(r => r.payload.status === "completed").length,
-      cancelled: reservations.filter(r => r.payload.status === "cancelled").length,
+      completed: reservations.filter(
+        (reservation) => reservation.payload.status === "completed"
+      ).length,
+      cancelled: reservations.filter(
+        (reservation) => reservation.payload.status === "cancelled"
+      ).length,
     };
   }
 
-  /* =====================================================
-  🔥 DAILY STATS
-  ===================================================== */
   getDailyStats() {
     const map = {};
 
-    for (const e of this.events) {
-      const day = e.createdAt.toISOString().slice(0, 10);
+    for (const event of this.events) {
+      const day = event.createdAt.toISOString().slice(0, 10);
 
       if (!map[day]) {
         map[day] = {
@@ -141,18 +137,22 @@ class AnalyticsService {
 
       map[day].total += 1;
 
-      if (e.type === "payment") map[day].payment += 1;
-      if (e.type === "reservation") map[day].reservation += 1;
+      if (event.type === "payment") {
+        map[day].payment += 1;
+      }
+
+      if (event.type === "reservation") {
+        map[day].reservation += 1;
+      }
     }
 
     return map;
   }
 
-  /* =====================================================
-  🔥 QUEUE INTEGRATION (비동기 분석)
-  ===================================================== */
   async trackAsync(event) {
-    if (!queueService) return this.track(event);
+    if (!queueService || typeof queueService.add !== "function") {
+      return this.track(event);
+    }
 
     return queueService.add({
       type: "analytics",
@@ -161,22 +161,54 @@ class AnalyticsService {
     });
   }
 
-  /* =====================================================
-  🔥 CLEAR
-  ===================================================== */
   clear() {
     const count = this.events.length;
+
     this.events = [];
+
     return count;
   }
 
-  /* =====================================================
-  🔥 STATS
-  ===================================================== */
   getStats() {
     return {
       totalEvents: this.events.length,
       maxEvents: this.maxEvents,
+    };
+  }
+
+  getAnalytics() {
+    return {
+      events: this.getEvents(50),
+      stats: this.getStats(),
+      payment: this.getPaymentStats(),
+      reservation: this.getReservationStats(),
+      daily: this.getDailyStats(),
+    };
+  }
+
+  getDashboardStats() {
+    return this.getAnalytics();
+  }
+
+  getSummary() {
+    return this.getAnalytics();
+  }
+
+  getShopAnalytics() {
+    return {
+      totalEvents: this.events.length,
+      views: this.filterByType("shop_view").length,
+      searches: this.filterByType("shop_search").length,
+      reservations: this.filterByType("reservation").length,
+    };
+  }
+
+  getCacheAnalytics() {
+    return {
+      enabled: !!cacheService,
+      last: cacheService && typeof cacheService.get === "function"
+        ? cacheService.get("analytics:last")
+        : null,
     };
   }
 }

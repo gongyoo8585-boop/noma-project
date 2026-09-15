@@ -2,245 +2,424 @@
 
 const mongoose = require("mongoose");
 
-/* ========================= */
-/* 🔥 BASE SCHEMA */
-/* ========================= */
-const schema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true, index: true },
-  password: { type: String, required: true },
+const schema = new mongoose.Schema(
+  {
+    id: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-  nickname: { type: String, default: "" },
+    password: {
+      type: String,
+      required: true,
+    },
 
-  role: {
-    type: String,
-    enum: ["user", "admin", "superAdmin"],
-    default: "user",
-    index: true
+    nickname: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    role: {
+      type: String,
+      enum: ["user", "shop", "admin", "superAdmin"],
+      default: "user",
+    },
+
+    serviceType: {
+      type: String,
+      enum: ["general", "massage", "karaoke"],
+      default: "general",
+    },
+
+    status: {
+      type: String,
+      enum: ["active", "blocked", "deleted"],
+      default: "active",
+    },
+
+    blocked: {
+      type: Boolean,
+      default: false,
+    },
+
+    favorites: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Shop",
+      },
+    ],
+
+    point: {
+      type: Number,
+      default: 0,
+    },
+
+    attendanceCount: {
+      type: Number,
+      default: 0,
+    },
+
+    lastAttendAt: {
+      type: Date,
+      default: null,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    email: {
+      type: String,
+      default: "",
+      trim: true,
+      lowercase: true,
+    },
+
+    phone: {
+      type: String,
+      default: "",
+    },
+
+    profileImage: {
+      type: String,
+      default: "",
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+
+    loginCount: {
+      type: Number,
+      default: 0,
+    },
+
+    statusMessage: {
+      type: String,
+      default: "",
+    },
+
+    level: {
+      type: Number,
+      default: 1,
+    },
+
+    exp: {
+      type: Number,
+      default: 0,
+    },
+
+    banReason: {
+      type: String,
+      default: "",
+    },
+
+    lastIp: {
+      type: String,
+      default: "",
+    },
+
+    lastUserAgent: {
+      type: String,
+      default: "",
+    },
+
+    loginFailCount: {
+      type: Number,
+      default: 0,
+    },
+
+    lockedUntil: {
+      type: Date,
+      default: null,
+    },
+
+    notificationEnabled: {
+      type: Boolean,
+      default: true,
+    },
+
+    marketingAgree: {
+      type: Boolean,
+      default: false,
+    },
+
+    lastActionAt: {
+      type: Date,
+      default: null,
+    },
+
+    deviceCount: {
+      type: Number,
+      default: 0,
+    },
   },
+  {
+    timestamps: true,
+    autoIndex: false,
+    autoCreate: false,
+  }
+);
 
-  favorites: [{ type: mongoose.Schema.Types.ObjectId, ref: "Shop" }],
+schema.set("autoIndex", false);
 
-  point: { type: Number, default: 0 },
-  attendanceCount: { type: Number, default: 0 },
-  lastAttendAt: { type: Date, default: null },
+schema.set("autoCreate", false);
 
-  isActive: { type: Boolean, default: true },
-  isDeleted: { type: Boolean, default: false, index: true },
-
-  email: { type: String, default: "", index: true },
-  phone: { type: String, default: "" },
-
-  profileImage: { type: String, default: "" },
-
-  lastLoginAt: { type: Date, default: null },
-  loginCount: { type: Number, default: 0 },
-
-  statusMessage: { type: String, default: "" },
-
-  level: { type: Number, default: 1 },
-  exp: { type: Number, default: 0 },
-
-  banReason: { type: String, default: "" },
-
-  lastIp: { type: String, default: "" },
-  lastUserAgent: { type: String, default: "" },
-
-  loginFailCount: { type: Number, default: 0 },
-  lockedUntil: { type: Date, default: null },
-
-  notificationEnabled: { type: Boolean, default: true },
-  marketingAgree: { type: Boolean, default: false },
-
-  lastActionAt: { type: Date, default: null },
-  deviceCount: { type: Number, default: 0 }
-
-}, { timestamps: true });
-
-/* ========================= */
-/* 🔥 UTIL */
-/* ========================= */
 function safeCompareId(a, b) {
   return String(a) === String(b);
 }
 
-function isValidEmail(v){
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
 }
 
-/* ========================= */
-/* 🔥 PRE SAVE (통합) */
-/* ========================= */
-schema.pre("save", async function(next){
-  try{
-    // email normalize
-    if(this.email){
-      this.email = this.email.toLowerCase().trim();
-      if(!isValidEmail(this.email)) this.email = "";
+schema.pre("save", async function (next) {
+  try {
+    if (this.id) {
+      this.id = String(this.id).trim();
     }
 
-    // phone normalize
-    if(this.phone){
-      this.phone = String(this.phone).replace(/[^0-9]/g,"");
+    if (this.email) {
+      this.email = String(this.email).toLowerCase().trim();
+
+      if (!isValidEmail(this.email)) {
+        this.email = "";
+      }
     }
 
-    // nickname sanitize
-    if(this.nickname){
-      this.nickname = this.nickname.replace(/[<>]/g,"").trim();
+    if (this.phone) {
+      this.phone = String(this.phone).replace(/[^0-9]/g, "");
     }
 
-    // favorites dedupe
-    if(Array.isArray(this.favorites)){
-      this.favorites = [...new Set(this.favorites.map(v=>String(v)))];
+    if (this.nickname) {
+      this.nickname = String(this.nickname).replace(/[<>]/g, "").trim();
     }
 
-    // exp → level sync
+    if (Array.isArray(this.favorites)) {
+      this.favorites = [
+        ...new Set(this.favorites.map((value) => String(value))),
+      ];
+    }
+
+    this.point = Number(this.point || 0);
+
+    this.exp = Number(this.exp || 0);
+
     this.level = Math.floor(this.exp / 100) + 1;
 
-    // point protect
-    if(this.point < 0) this.point = 0;
+    this.loginCount = Number(this.loginCount || 0);
 
-    // loginCount limit
-    if(this.loginCount > 1000000) this.loginCount = 1000000;
+    this.deviceCount = Number(this.deviceCount || 0);
 
-    // device protect
-    if(this.deviceCount < 0) this.deviceCount = 0;
+    this.loginFailCount = Number(this.loginFailCount || 0);
 
-    // last action
+    if (this.point < 0) {
+      this.point = 0;
+    }
+
+    if (this.exp < 0) {
+      this.exp = 0;
+      this.level = 1;
+    }
+
+    if (this.loginCount < 0) {
+      this.loginCount = 0;
+    }
+
+    if (this.loginCount > 1000000) {
+      this.loginCount = 1000000;
+    }
+
+    if (this.deviceCount < 0) {
+      this.deviceCount = 0;
+    }
+
+    if (this.loginFailCount < 0) {
+      this.loginFailCount = 0;
+    }
+
     this.lastActionAt = new Date();
 
     next();
-  }catch(e){
-    next(e);
+  } catch (error) {
+    next(error);
   }
 });
 
-/* ========================= */
-/* 🔥 CORE METHODS */
-/* ========================= */
-schema.methods.isAdmin = function(){
-  return ["admin","superAdmin"].includes(this.role);
+schema.methods.isAdmin = function () {
+  return ["admin", "superAdmin"].includes(this.role);
 };
 
-schema.methods.isLocked = function(){
-  return this.lockedUntil && Date.now() < new Date(this.lockedUntil);
+schema.methods.isLocked = function () {
+  return this.lockedUntil && Date.now() < new Date(this.lockedUntil).getTime();
 };
 
-schema.methods.canLogin = function(){
-  if(this.isDeleted || !this.isActive) return false;
-  if(this.isLocked()) return false;
+schema.methods.canLogin = function () {
+  if (this.isDeleted || !this.isActive) {
+    return false;
+  }
+
+  if (this.isLocked()) {
+    return false;
+  }
+
   return true;
 };
 
-schema.methods.recordLogin = function(meta={}){
+schema.methods.recordLogin = function (meta = {}) {
   this.lastLoginAt = new Date();
-  this.loginCount++;
+
+  this.loginCount += 1;
+
   this.lastIp = meta.ip || this.lastIp;
-  this.lastUserAgent = meta.ua || this.lastUserAgent;
+
+  this.lastUserAgent = meta.ua || meta.userAgent || this.lastUserAgent;
+
   this.loginFailCount = 0;
+
   this.lockedUntil = null;
+
   return this.save();
 };
 
-schema.methods.increaseLoginFail = function(){
-  this.loginFailCount++;
-  if(this.loginFailCount >= 5){
-    this.lockedUntil = new Date(Date.now()+600000);
+schema.methods.increaseLoginFail = function () {
+  this.loginFailCount += 1;
+
+  if (this.loginFailCount >= 5) {
+    this.lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
   }
+
   return this.save();
 };
 
-/* ========================= */
-/* 🔥 FAVORITES */
-/* ========================= */
-schema.methods.addFavorite = function(id){
-  if(!this.favorites.some(v=>safeCompareId(v,id))){
-    this.favorites.push(id);
+schema.methods.addFavorite = function (shopId) {
+  if (!this.favorites.some((value) => safeCompareId(value, shopId))) {
+    this.favorites.push(shopId);
   }
+
   return this.save();
 };
 
-schema.methods.removeFavorite = function(id){
-  this.favorites = this.favorites.filter(v=>!safeCompareId(v,id));
+schema.methods.removeFavorite = function (shopId) {
+  this.favorites = this.favorites.filter(
+    (value) => !safeCompareId(value, shopId)
+  );
+
   return this.save();
 };
 
-/* ========================= */
-/* 🔥 POINT / LEVEL */
-/* ========================= */
-schema.methods.addPoint = function(n){
-  this.point += Number(n||0);
+schema.methods.addPoint = function (amount) {
+  this.point += Number(amount || 0);
+
+  if (this.point < 0) {
+    this.point = 0;
+  }
+
   return this.save();
 };
 
-schema.methods.addExp = function(n){
-  this.exp += Number(n||0);
+schema.methods.addExp = function (amount) {
+  this.exp += Number(amount || 0);
+
+  if (this.exp < 0) {
+    this.exp = 0;
+  }
+
+  this.level = Math.floor(this.exp / 100) + 1;
+
   return this.save();
 };
 
-/* ========================= */
-/* 🔥 PROFILE */
-/* ========================= */
-schema.methods.updateNickname = function(n){
-  this.nickname = String(n||"");
+schema.methods.updateNickname = function (nickname) {
+  this.nickname = String(nickname || "").replace(/[<>]/g, "").trim();
+
   return this.save();
 };
 
-schema.methods.updatePhone = function(p){
-  this.phone = String(p||"").replace(/[^0-9]/g,"");
+schema.methods.updatePhone = function (phone) {
+  this.phone = String(phone || "").replace(/[^0-9]/g, "");
+
   return this.save();
 };
 
-schema.methods.updateEmail = function(e){
-  if(isValidEmail(e)) this.email = e;
+schema.methods.updateEmail = function (email) {
+  const value = String(email || "").toLowerCase().trim();
+
+  if (isValidEmail(value)) {
+    this.email = value;
+  }
+
   return this.save();
 };
 
-/* ========================= */
-/* 🔥 ADMIN / SECURITY */
-/* ========================= */
-schema.methods.ban = function(reason){
+schema.methods.ban = function (reason = "") {
   this.isActive = false;
-  this.banReason = reason;
+
+  this.banReason = String(reason || "");
+
   return this.save();
 };
 
-schema.methods.unlock = function(){
+schema.methods.unlock = function () {
   this.loginFailCount = 0;
+
   this.lockedUntil = null;
+
   return this.save();
 };
 
-schema.methods.softDelete = function(){
+schema.methods.softDelete = function () {
   this.isDeleted = true;
+
   return this.save();
 };
 
-/* ========================= */
-/* 🔥 STATIC */
-/* ========================= */
-schema.statics.findSafe = function(q={}){
-  return this.find({ ...q, isDeleted:false });
+schema.statics.findSafe = function (query = {}) {
+  return this.find({
+    ...query,
+    isDeleted: false,
+  });
 };
 
-schema.statics.findAdmins = function(){
-  return this.find({ role:{ $in:["admin","superAdmin"] } });
+schema.statics.findAdmins = function () {
+  return this.find({
+    role: {
+      $in: ["admin", "superAdmin"],
+    },
+  });
 };
 
-schema.statics.topPointUsers = function(limit=10){
-  return this.find().sort({ point:-1 }).limit(limit);
+schema.statics.topPointUsers = function (limit = 10) {
+  return this.find()
+    .sort({
+      point: -1,
+    })
+    .limit(limit);
 };
 
-/* ========================= */
-/* 🔥 JSON SAFE */
-/* ========================= */
-schema.methods.toJSON = function(){
+schema.methods.toJSON = function () {
   const obj = this.toObject();
+
   delete obj.password;
+
   delete obj.loginFailCount;
+
   delete obj.lockedUntil;
+
   return obj;
 };
 
 console.log("🔥 USER MODEL FINAL STABLE READY");
 
-module.exports = mongoose.model("User", schema);
+module.exports =
+  mongoose.models.User ||
+  mongoose.model("User", schema);

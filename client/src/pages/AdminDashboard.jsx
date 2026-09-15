@@ -19,7 +19,9 @@ import PaymentAdminPage from "./admin/PaymentAdminPage";
 import ReviewAdminPage from "./admin/ReviewAdminPage";
 import ReportAdminPage from "./admin/ReportAdminPage";
 import AdminAnalyticsPage from "./AdminAnalyticsPage";
+import TermsAdminPage from "./admin/TermsAdminPage";
 import shopApi from "../services/shop.api";
+import userApi from "../services/user.api";
 
 const API_BASE_RAW =
   (
@@ -49,6 +51,8 @@ const EMPTY_DASHBOARD_DATA =
     summary: {
       totalShops: 0,
       totalUsers: 0,
+      totalShopUsers: 0,
+      totalAdmins: 0,
       totalReservations: 0,
       totalPayments: 0,
       totalRevenue: 0,
@@ -119,7 +123,17 @@ function getCachedDashboardData(category) {
       parsed.summary &&
       parsed.recent
     ) {
-      return parsed;
+      return {
+        ...parsed,
+        summary: {
+          ...parsed.summary,
+          totalShops: 0,
+        },
+        recent: {
+          ...parsed.recent,
+          shops: [],
+        },
+      };
     }
 
     return EMPTY_DASHBOARD_DATA;
@@ -267,35 +281,39 @@ function getDashboardCategory() {
       return queryCategory;
     }
 
-    return "massage";
+    if (
+      path === "/admin/dashboard" ||
+      path === "/admin/dashboard/"
+    ) {
+      return "massage";
+    }
+
+    return "";
   } catch (e) {
     console.warn(
       "ADMIN DASHBOARD CATEGORY ERROR:",
       e.message
     );
 
-    return "massage";
+    return "";
   }
 }
 
 function createDashboardUrl(category) {
+  const normalizedCategory =
+    normalizeDashboardCategory(category);
+
+  if (!normalizedCategory) {
+    return `${API_BASE}/admin/dashboard`;
+  }
+
   const query =
     new URLSearchParams({
-      category:
-        normalizeDashboardCategory(category) ||
-        "massage",
-      shopCategory:
-        normalizeDashboardCategory(category) ||
-        "massage",
-      serviceType:
-        normalizeDashboardCategory(category) ||
-        "massage",
-      businessType:
-        normalizeDashboardCategory(category) ||
-        "massage",
-      adminCategory:
-        normalizeDashboardCategory(category) ||
-        "massage",
+      category: normalizedCategory,
+      shopCategory: normalizedCategory,
+      serviceType: normalizedCategory,
+      businessType: normalizedCategory,
+      adminCategory: normalizedCategory,
     });
 
   return `${API_BASE}/admin/dashboard?${query.toString()}`;
@@ -373,15 +391,21 @@ function getShopIdentity(item = {}) {
 
 function getDashboardDeletedShopKeys(category) {
   const normalizedCategory =
-    normalizeDashboardCategory(category) ||
-    "massage";
+    normalizeDashboardCategory(category);
 
-  return [
+  const keys = [
     "nora_deleted_shop_ids",
     "noma_deleted_shop_ids",
-    `nora_deleted_shop_ids_${normalizedCategory}`,
-    `noma_deleted_shop_ids_${normalizedCategory}`,
   ];
+
+  if (normalizedCategory) {
+    keys.push(
+      `nora_deleted_shop_ids_${normalizedCategory}`,
+      `noma_deleted_shop_ids_${normalizedCategory}`
+    );
+  }
+
+  return keys;
 }
 
 function normalizeDeletedShopIdentity(value) {
@@ -614,6 +638,15 @@ function getDashboardShopCategory(item = {}) {
     return "";
   }
 
+  const identityCategory =
+    normalizeDashboardCategory(
+      getDashboardItemText(item)
+    );
+
+  if (identityCategory === "karaoke") {
+    return "karaoke";
+  }
+
   return (
     normalizeDashboardCategory(item.category) ||
     normalizeDashboardCategory(item.shopCategory) ||
@@ -626,6 +659,7 @@ function getDashboardShopCategory(item = {}) {
     normalizeDashboardCategory(item.shop?.shopCategory) ||
     normalizeDashboardCategory(item.data?.category) ||
     normalizeDashboardCategory(item.data?.shopCategory) ||
+    identityCategory ||
     ""
   );
 }
@@ -667,7 +701,9 @@ function sanitizeRecentDashboardShops(items, category = "") {
       item &&
       typeof item === "object" &&
       isSameDashboardShopCategory(item, category) &&
-      !isDeletedShop(item, category) &&
+      item.isDeleted !== true &&
+      item.deleted !== true &&
+      item.removed !== true &&
       !isHiddenDashboardShop(item)
     ) {
       uniqueMap.set(
@@ -684,15 +720,18 @@ function sanitizeRecentDashboardShops(items, category = "") {
 
 function buildAdminShopParams(category) {
   const normalizedCategory =
-    normalizeDashboardCategory(category) ||
-    "massage";
+    normalizeDashboardCategory(category);
 
   return {
-    category: normalizedCategory,
-    shopCategory: normalizedCategory,
-    serviceType: normalizedCategory,
-    businessType: normalizedCategory,
-    adminCategory: normalizedCategory,
+    ...(normalizedCategory
+      ? {
+          category: normalizedCategory,
+          shopCategory: normalizedCategory,
+          serviceType: normalizedCategory,
+          businessType: normalizedCategory,
+          adminCategory: normalizedCategory,
+        }
+      : {}),
     admin: "true",
     adminMode: "true",
     adminList: "true",
@@ -741,11 +780,397 @@ function normalizeShopSnapshotResponse(response) {
   };
 }
 
+function normalizeDashboardUsersResponse(response) {
+  const payload =
+    response &&
+    typeof response === "object" &&
+    !Array.isArray(response)
+      ? response
+      : {};
+
+  const nestedPayload =
+    payload?.data &&
+    typeof payload.data === "object" &&
+    !Array.isArray(payload.data)
+      ? payload.data
+      : {};
+
+  const users =
+    Array.isArray(payload.users)
+      ? payload.users
+      : Array.isArray(payload.items)
+      ? payload.items
+      : Array.isArray(payload.list)
+      ? payload.list
+      : Array.isArray(payload.data)
+      ? payload.data
+      : Array.isArray(nestedPayload.users)
+      ? nestedPayload.users
+      : Array.isArray(nestedPayload.items)
+      ? nestedPayload.items
+      : Array.isArray(nestedPayload.list)
+      ? nestedPayload.list
+      : Array.isArray(nestedPayload.data)
+      ? nestedPayload.data
+      : Array.isArray(response)
+      ? response
+      : [];
+
+  return {
+    ...payload,
+    users,
+    total: toNumber(
+      payload.total ??
+        payload.userCount ??
+        payload.totalUsers ??
+        payload.count ??
+        nestedPayload.total ??
+        nestedPayload.userCount ??
+        nestedPayload.totalUsers ??
+        nestedPayload.count,
+      users.length
+    ),
+  };
+}
+
+function getDashboardUserIdentity(item = {}) {
+  return String(
+    item._id ||
+      item.id ||
+      item.userId ||
+      item.email ||
+      item.phone ||
+      item.nickname ||
+      item.name ||
+      JSON.stringify(item)
+  );
+}
+
+function getDashboardUserText(item = {}) {
+  if (
+    typeof item === "string" ||
+    typeof item === "number"
+  ) {
+    return String(item);
+  }
+
+  if (
+    !item ||
+    typeof item !== "object"
+  ) {
+    return "";
+  }
+
+  return (
+    item.nickname ||
+    item.name ||
+    item.email ||
+    item.phone ||
+    item.id ||
+    item._id ||
+    ""
+  );
+}
+
+function sanitizeRecentDashboardUsers(items) {
+  const uniqueMap =
+    new Map();
+
+  toArray(items).forEach((item) => {
+    if (
+      item &&
+      typeof item === "object"
+    ) {
+      uniqueMap.set(
+        getDashboardUserIdentity(item),
+        item
+      );
+    }
+  });
+
+  return Array.from(
+    uniqueMap.values()
+  );
+}
+
+async function fetchUserDashboardSnapshot(
+  category = getDashboardCategory()
+) {
+  try {
+    if (
+      !userApi ||
+      typeof userApi.getList !== "function"
+    ) {
+      return {
+        ok: false,
+        totalUsers: 0,
+        totalShopUsers: 0,
+        totalAdmins: 0,
+        users: [],
+      };
+    }
+
+    const response =
+      await userApi.getList();
+
+    const normalized =
+      normalizeDashboardUsersResponse(
+        response
+      );
+
+    const users =
+      sanitizeRecentDashboardUsers(
+        normalized.users
+      );
+
+    const normalizedCategory =
+      normalizeDashboardCategory(
+        category
+      ) ||
+      getDashboardCategory();
+
+    const getUserRole = (user = {}) =>
+      String(
+        user?.role ||
+          user?.userRole ||
+          user?.type ||
+          "user"
+      )
+        .trim()
+        .toLowerCase();
+
+    const getUserServiceType = (user = {}) =>
+      String(
+        user?.serviceType ||
+          "general"
+      )
+        .trim()
+        .toLowerCase();
+
+    const dashboardUsers =
+      users.filter((user) => {
+        if (
+          getUserRole(user) !== "user"
+        ) {
+          return false;
+        }
+
+        const serviceType =
+          getUserServiceType(user);
+
+        if (
+          normalizedCategory ===
+          "karaoke"
+        ) {
+          return (
+            serviceType ===
+            "karaoke"
+          );
+        }
+
+        if (
+          normalizedCategory ===
+          "massage"
+        ) {
+          return (
+            serviceType !==
+            "karaoke"
+          );
+        }
+
+        return true;
+      });
+
+    const totalUsers =
+      dashboardUsers.length;
+
+    const totalShopUsers =
+      users.filter((user) => {
+        if (
+          getUserRole(user) !== "shop"
+        ) {
+          return false;
+        }
+
+        const serviceType =
+          getUserServiceType(user);
+
+        if (
+          normalizedCategory ===
+          "karaoke"
+        ) {
+          return (
+            serviceType ===
+            "karaoke"
+          );
+        }
+
+        if (
+          normalizedCategory ===
+          "massage"
+        ) {
+          return (
+            serviceType !==
+            "karaoke"
+          );
+        }
+
+        return true;
+      }).length;
+
+    const totalAdmins =
+      users.filter((user) => {
+        const role =
+          getUserRole(user);
+
+        const isAdminRole =
+          role === "admin" ||
+          role === "superadmin" ||
+          role === "super_admin";
+
+        if (!isAdminRole) {
+          return false;
+        }
+
+        const serviceType =
+          getUserServiceType(user);
+
+        if (
+          normalizedCategory ===
+          "karaoke"
+        ) {
+          return (
+            serviceType ===
+            "karaoke"
+          );
+        }
+
+        if (
+          normalizedCategory ===
+          "massage"
+        ) {
+          return (
+            serviceType !==
+            "karaoke"
+          );
+        }
+
+        return true;
+      }).length;
+
+    return {
+      ok: true,
+      totalUsers,
+      totalShopUsers,
+      totalAdmins,
+      users:
+        dashboardUsers,
+    };
+  } catch (e) {
+    const message =
+      String(e?.message || "");
+
+    if (
+      e?.name !== "AbortError" &&
+      !message.toLowerCase().includes("aborted")
+    ) {
+      console.error(
+        "ADMIN USER SNAPSHOT ERROR:",
+        e.message
+      );
+    }
+
+    return {
+      ok: false,
+      totalUsers: 0,
+      totalShopUsers: 0,
+      totalAdmins: 0,
+      users: [],
+    };
+  }
+}
+
+function mergeUserSnapshotIntoDashboard(dashboardData, userSnapshot) {
+  const safeDashboard =
+    dashboardData ||
+    EMPTY_DASHBOARD_DATA;
+
+  const snapshotUsers =
+    sanitizeRecentDashboardUsers(
+      toArray(userSnapshot?.users)
+    );
+
+  const currentUsers =
+    sanitizeRecentDashboardUsers(
+      toArray(safeDashboard?.recent?.users)
+    );
+
+  const nextUsers =
+    userSnapshot?.ok === true
+      ? snapshotUsers
+      : snapshotUsers.length > 0
+        ? snapshotUsers
+        : currentUsers;
+
+  const nextTotalUsers =
+    userSnapshot?.ok === true
+      ? toNumber(
+          userSnapshot.totalUsers,
+          0
+        )
+      : toNumber(
+          safeDashboard?.summary?.totalUsers,
+          0
+        );
+
+  const nextTotalShopUsers =
+    userSnapshot?.ok === true
+      ? toNumber(
+          userSnapshot.totalShopUsers,
+          0
+        )
+      : toNumber(
+          safeDashboard?.summary?.totalShopUsers,
+          0
+        );
+
+  const nextTotalAdmins =
+    userSnapshot?.ok === true
+      ? toNumber(
+          userSnapshot.totalAdmins,
+          0
+        )
+      : toNumber(
+          safeDashboard?.summary?.totalAdmins,
+          0
+        );
+
+  return {
+    ...safeDashboard,
+    summary: {
+      ...EMPTY_DASHBOARD_DATA.summary,
+      ...(safeDashboard.summary || {}),
+      totalUsers:
+        nextTotalUsers,
+      totalShopUsers:
+        nextTotalShopUsers,
+      totalAdmins:
+        nextTotalAdmins,
+    },
+    recent: {
+      ...EMPTY_DASHBOARD_DATA.recent,
+      ...(safeDashboard.recent || {}),
+      users:
+        nextUsers,
+    },
+  };
+}
+
 function getDashboardRequestCacheKey(prefix, category) {
   return [
     prefix,
     normalizeDashboardCategory(category) ||
-      "massage",
+      "all",
   ].join("|");
 }
 
@@ -833,11 +1258,6 @@ async function fetchShopDashboardSnapshot(category) {
             response
           );
 
-        const storedShops =
-          getDashboardStoredShopItems(
-            category
-          );
-
         const shops =
           sanitizeRecentDashboardShops(
             [
@@ -845,7 +1265,6 @@ async function fetchShopDashboardSnapshot(category) {
               ...toArray(normalized.items),
               ...toArray(normalized.list),
               ...toArray(normalized.data),
-              ...storedShops,
             ],
             category
           );
@@ -948,23 +1367,46 @@ function readDashboardStorageArray(storage, key) {
 function getDashboardShopStorageKeys(category) {
   const normalizedCategory =
     normalizeDashboardCategory(category) ||
-    getDashboardCategory() ||
-    "massage";
+    getDashboardCategory();
+
+  const baseKeys = [
+    "nora_admin_shops",
+    "nora_local_shops",
+    "nora_admin_shop_backup",
+    "noma_admin_shops",
+    "noma_local_shops",
+    "noma_admin_shop_backup",
+  ];
+
+  if (!normalizedCategory) {
+    return Array.from(
+      new Set([
+        ...baseKeys,
+        "nora_admin_shops_massage",
+        "nora_local_shops_massage",
+        "nora_admin_shop_backup_massage",
+        "noma_admin_shops_massage",
+        "noma_local_shops_massage",
+        "noma_admin_shop_backup_massage",
+        "nora_admin_shops_karaoke",
+        "nora_local_shops_karaoke",
+        "nora_admin_shop_backup_karaoke",
+        "noma_admin_shops_karaoke",
+        "noma_local_shops_karaoke",
+        "noma_admin_shop_backup_karaoke",
+      ])
+    );
+  }
 
   return Array.from(
     new Set([
+      ...baseKeys,
       `nora_admin_shops_${normalizedCategory}`,
       `nora_local_shops_${normalizedCategory}`,
       `nora_admin_shop_backup_${normalizedCategory}`,
       `noma_admin_shops_${normalizedCategory}`,
       `noma_local_shops_${normalizedCategory}`,
       `noma_admin_shop_backup_${normalizedCategory}`,
-      "nora_admin_shops",
-      "nora_local_shops",
-      "nora_admin_shop_backup",
-      "noma_admin_shops",
-      "noma_local_shops",
-      "noma_admin_shop_backup",
     ])
   );
 }
@@ -1357,18 +1799,6 @@ function AdminDashboard() {
 
     clearDashboardRequestCaches();
 
-    const storedShops =
-      getDashboardStoredShopItems(
-        dashboardCategory
-      );
-
-    if (storedShops.length) {
-      applyDashboardShopsNow(
-        storedShops,
-        dashboardCategory
-      );
-    }
-
     try {
       const shopSnapshot =
         await fetchShopDashboardSnapshot(
@@ -1383,6 +1813,34 @@ function AdminDashboard() {
           shopSnapshot.shops,
           dashboardCategory
         );
+      }
+
+      const userSnapshot =
+        await fetchUserDashboardSnapshot(
+          dashboardCategory
+        );
+
+      if (
+        userSnapshot?.ok === true &&
+        Array.isArray(userSnapshot.users)
+      ) {
+        setData((prevData) => {
+          const nextDashboard =
+            mergeUserSnapshotIntoDashboard(
+              prevData ||
+                getCachedDashboardData(
+                  dashboardCategory
+                ),
+              userSnapshot
+            );
+
+          setCachedDashboardData(
+            nextDashboard,
+            dashboardCategory
+          );
+
+          return nextDashboard;
+        });
       }
     } catch (e) {
       const message =
@@ -1471,14 +1929,20 @@ function AdminDashboard() {
             dashboardCategory
           );
 
-          return fetchDashboard(
-            dashboardCategory
-          ).then((res) => ({
+          return Promise.all([
+            fetchDashboard(
+              dashboardCategory
+            ),
+            fetchUserDashboardSnapshot(
+              dashboardCategory
+            ),
+          ]).then(([res, userSnapshot]) => ({
             res,
             shopSnapshot,
+            userSnapshot,
           }));
         })
-        .then(({ res, shopSnapshot }) => {
+        .then(({ res, shopSnapshot, userSnapshot }) => {
           if (
             res?.authRequired
           ) {
@@ -1499,10 +1963,16 @@ function AdminDashboard() {
               dashboardCategory
             );
 
-          const mergedDashboard =
+          const shopMergedDashboard =
             mergeShopSnapshotIntoDashboard(
               normalizedDashboard,
               shopSnapshot
+            );
+
+          const mergedDashboard =
+            mergeUserSnapshotIntoDashboard(
+              shopMergedDashboard,
+              userSnapshot
             );
 
           setData(
@@ -1646,21 +2116,7 @@ function AdminDashboard() {
         getEventShops(event);
 
       if (!Array.isArray(eventShops)) {
-        const fallbackShops =
-          getDashboardStoredShopItems(
-            getDashboardCategory()
-          );
-
-        if (!fallbackShops.length) {
-          return false;
-        }
-
-        applyDashboardShopsNow(
-          fallbackShops,
-          getDashboardCategory()
-        );
-
-        return true;
+        return false;
       }
 
       const currentCategory =
@@ -1727,18 +2183,6 @@ function AdminDashboard() {
         )
       ) {
         return;
-      }
-
-      const storedShops =
-        getDashboardStoredShopItems(
-          getDashboardCategory()
-        );
-
-      if (storedShops.length) {
-        applyDashboardShopsNow(
-          storedShops,
-          getDashboardCategory()
-        );
       }
 
       scheduleDashboardShopSync(50);
@@ -1827,7 +2271,9 @@ function AdminDashboard() {
         getDashboardCategory()
       ),
     users:
-      recent?.users || [],
+      sanitizeRecentDashboardUsers(
+        recent?.users
+      ),
     reservations:
       recent?.reservations ||
       [],
@@ -1837,6 +2283,21 @@ function AdminDashboard() {
     ...summary,
     totalShops:
       safeRecent.shops.length,
+    totalUsers:
+      toNumber(
+        summary?.totalUsers,
+        0
+      ),
+    totalShopUsers:
+      toNumber(
+        summary?.totalShopUsers,
+        0
+      ),
+    totalAdmins:
+      toNumber(
+        summary?.totalAdmins,
+        0
+      ),
   };
 
   return (
@@ -2037,6 +2498,30 @@ function AdminDashboard() {
             분석
           </button>
 
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                "terms"
+              )
+            }
+            style={{
+              ...styles.tabBtn,
+              background:
+                activeTab ===
+                "terms"
+                  ? "#d4af37"
+                  : "#111",
+              color:
+                activeTab ===
+                "terms"
+                  ? "#000"
+                  : "#fff",
+            }}
+          >
+            약관관리
+          </button>
+
         </div>
 
         {activeTab ===
@@ -2054,6 +2539,20 @@ function AdminDashboard() {
                 title="유저 수"
                 value={
                   safeSummary.totalUsers
+                }
+              />
+
+              <Card
+                title="업체 수"
+                value={
+                  safeSummary.totalShopUsers
+                }
+              />
+
+              <Card
+                title="관리자 수"
+                value={
+                  safeSummary.totalAdmins
                 }
               />
 
@@ -2089,6 +2588,7 @@ function AdminDashboard() {
                 category={
                   getDashboardCategory()
                 }
+                type="shops"
               />
             </div>
 
@@ -2102,6 +2602,7 @@ function AdminDashboard() {
                 category={
                   getDashboardCategory()
                 }
+                type="users"
               />
             </div>
 
@@ -2115,6 +2616,7 @@ function AdminDashboard() {
                 category={
                   getDashboardCategory()
                 }
+                type="reservations"
               />
             </div>
           </>
@@ -2197,6 +2699,17 @@ function AdminDashboard() {
           </div>
         )}
 
+        {activeTab ===
+          "terms" && (
+          <div style={styles.adminSection}>
+            <div style={styles.sectionTitle}>
+              📜 약관 관리
+            </div>
+
+            <TermsAdminPage />
+          </div>
+        )}
+
       </div>
     </AdminLayout>
   );
@@ -2222,13 +2735,27 @@ function Card({
 function List({
   items,
   category = "",
+  type = "shops",
 }) {
   const visibleItems =
     toArray(items).filter(
-      (item) =>
-        isSameDashboardShopCategory(item, category) &&
-        !isDeletedShop(item, category) &&
-        !isHiddenDashboardShop(item)
+      (item) => {
+        if (type === "users") {
+          return !!item;
+        }
+
+        if (type === "reservations") {
+          return !!item;
+        }
+
+        return (
+          isSameDashboardShopCategory(item, category) &&
+          item?.isDeleted !== true &&
+          item?.deleted !== true &&
+          item?.removed !== true &&
+          !isHiddenDashboardShop(item)
+        );
+      }
     );
 
   if (
@@ -2245,10 +2772,15 @@ function List({
       {visibleItems.map(
         (item, idx) => {
           const displayText =
-            getDashboardItemText(item) ||
-            "데이터";
+            type === "users"
+              ? getDashboardUserText(item) ||
+                getDashboardItemText(item) ||
+                "데이터"
+              : getDashboardItemText(item) ||
+                "데이터";
 
           if (
+            type === "shops" &&
             isHiddenDashboardShop(item)
           ) {
             return null;

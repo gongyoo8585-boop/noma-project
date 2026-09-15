@@ -3,9 +3,10 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /* 🔥 최소 추가 (공통 UI) */
-import Loading from "./common/Loading";
 import ErrorMessage from "./common/ErrorMessage";
 import EmptyState from "./common/EmptyState";
+
+const GOLD_GRADIENT = "linear-gradient(90deg, #F7D774 0%, #D4AF37 50%, #B8860B 100%)";
 
 /**
  * =====================================================
@@ -181,82 +182,245 @@ const getSearchAddressText = (shop) => {
 
 /* 🔥 최소 추가: 브라우저에서 실제 카카오 JS 키 안전 확보 */
 const getKakaoKey = () => {
-  const envKey = window.__ENV__?.KAKAO_KEY;
+  const candidates = [
+    window.__ENV__?.VITE_KAKAO_MAP_KEY,
+    window.__ENV__?.VITE_KAKAO_JS_KEY,
+    window.__ENV__?.VITE_KAKAO_JAVASCRIPT_KEY,
+    window.__ENV__?.VITE_KAKAO_API_KEY,
+    window.__ENV__?.VITE_KAKAO_APP_KEY,
+    window.__ENV__?.KAKAO_MAP_KEY,
+    window.__ENV__?.KAKAO_JS_KEY,
+    window.__ENV__?.KAKAO_JAVASCRIPT_KEY,
+    window.__ENV__?.KAKAO_KEY,
+    import.meta.env.VITE_KAKAO_MAP_KEY,
+    import.meta.env.VITE_KAKAO_JS_KEY,
+    import.meta.env.VITE_KAKAO_JAVASCRIPT_KEY,
+    import.meta.env.VITE_KAKAO_API_KEY,
+    import.meta.env.VITE_KAKAO_APP_KEY,
+    import.meta.env.KAKAO_JS_KEY,
+    "290ec1ed8354f004a77502dfef5cbd28",
+  ];
 
-  if (
-    envKey &&
-    typeof envKey === "string" &&
-    !envKey.includes("%") &&
-    envKey !== "undefined" &&
-    envKey !== "null"
-  ) {
-    return envKey;
-  }
+  const key = candidates
+    .map((item) => String(item || "").trim())
+    .find(
+      (item) =>
+        item &&
+        !item.includes("%") &&
+        item !== "undefined" &&
+        item !== "null"
+    );
 
-  return "290ec1ed8354f004a77502dfef5cbd28";
+  return key || "";
 };
 
 /* 🔥 최소 추가: SDK 동적 로드 */
-const loadKakaoScript = () => {
-  return new Promise((resolve, reject) => {
-    if (
-      window.__KAKAO_SDK_LOADED__ &&
-      window.kakao?.maps &&
-      window.kakao.maps.load
-    ) {
-      resolve(window.kakao);
+const KAKAO_SDK_PRIMARY_ID = "kakao-map-sdk";
+const KAKAO_SDK_SHARED_IDS = [
+  "kakao-map-sdk",
+  "nora-kakao-map-sdk",
+];
+
+const getKakaoSdkSrc = () => {
+  const key = getKakaoKey();
+
+  if (!key) {
+    return "";
+  }
+
+  return `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(
+    key
+  )}&libraries=services,clusterer,drawing&autoload=false`;
+};
+
+const isKakaoSdkReady = () => {
+  return !!(
+    window.kakao &&
+    window.kakao.maps &&
+    typeof window.kakao.maps.Map === "function"
+  );
+};
+
+const findKakaoScript = () => {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  for (const id of KAKAO_SDK_SHARED_IDS) {
+    const script = document.getElementById(id);
+
+    if (script) {
+      return script;
+    }
+  }
+
+  return (
+    Array.from(document.querySelectorAll("script")).find((script) =>
+      String(script.src || "").includes("dapi.kakao.com/v2/maps/sdk.js")
+    ) || null
+  );
+};
+
+const preloadKakaoScript = () => {
+  try {
+    if (typeof document === "undefined") {
       return;
     }
 
-    if (window.kakao?.maps && window.kakao.maps.load) {
+    const src = getKakaoSdkSrc();
+
+    if (!src) {
+      return;
+    }
+
+    if (!document.querySelector('link[data-nora-kakao-preconnect="true"]')) {
+      const preconnect = document.createElement("link");
+      preconnect.rel = "preconnect";
+      preconnect.href = "https://dapi.kakao.com";
+      preconnect.crossOrigin = "anonymous";
+      preconnect.dataset.noraKakaoPreconnect = "true";
+      document.head.appendChild(preconnect);
+    }
+
+    if (!document.querySelector('link[data-nora-kakao-preload="true"]')) {
+      const preload = document.createElement("link");
+      preload.rel = "preload";
+      preload.as = "script";
+      preload.href = src;
+      preload.dataset.noraKakaoPreload = "true";
+      document.head.appendChild(preload);
+    }
+  } catch (e) {}
+};
+
+let kakaoScriptPromise = null;
+
+const waitForKakaoReady = (resolve, reject, timeoutMs = 4500) => {
+  const startedAt = Date.now();
+
+  const tick = () => {
+    if (isKakaoSdkReady()) {
       window.__KAKAO_SDK_LOADED__ = true;
+      const script = findKakaoScript();
+      if (script) {
+        script.dataset.noraKakaoState = "ready";
+      }
       resolve(window.kakao);
       return;
     }
 
-    const existing = document.getElementById("kakao-map-sdk");
+    if (window.kakao?.maps?.load) {
+      try {
+        window.kakao.maps.load(() => {
+          if (isKakaoSdkReady()) {
+            window.__KAKAO_SDK_LOADED__ = true;
+            resolve(window.kakao);
+          } else {
+            reject(new Error("KAKAO_NOT_READY"));
+          }
+        });
+        return;
+      } catch (e) {}
+    }
 
-    if (existing) {
-      existing.onload = () => {
-        if (window.kakao?.maps) {
-          window.__KAKAO_SDK_LOADED__ = true;
-          resolve(window.kakao);
-        } else {
-          reject(new Error("KAKAO_NOT_READY"));
-        }
-      };
-
-      existing.onerror = () => reject(new Error("KAKAO_LOAD_FAIL"));
+    if (Date.now() - startedAt >= timeoutMs) {
+      reject(new Error("KAKAO_LOAD_TIMEOUT"));
       return;
     }
 
-    const key = getKakaoKey();
+    window.setTimeout(tick, 40);
+  };
 
-    if (!key) {
+  tick();
+};
+
+const loadKakaoScript = () => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return Promise.reject(new Error("KAKAO_BROWSER_ONLY"));
+  }
+
+  if (isKakaoSdkReady()) {
+    window.__KAKAO_SDK_LOADED__ = true;
+    return Promise.resolve(window.kakao);
+  }
+
+  if (kakaoScriptPromise) {
+    return kakaoScriptPromise;
+  }
+
+  preloadKakaoScript();
+
+  kakaoScriptPromise = new Promise((resolve, reject) => {
+    const src = getKakaoSdkSrc();
+
+    if (!src) {
+      kakaoScriptPromise = null;
       reject(new Error("KAKAO_KEY_MISSING"));
       return;
     }
 
-    const script = document.createElement("script");
-    script.id = "kakao-map-sdk";
-    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&libraries=services,clusterer,drawing&autoload=false`;
-    script.async = true;
+    let script = findKakaoScript();
 
-    script.onload = () => {
-      if (window.kakao?.maps) {
-        window.__KAKAO_SDK_LOADED__ = true;
-        resolve(window.kakao);
-      } else {
-        reject(new Error("KAKAO_NOT_READY"));
-      }
+    const handleReady = () => {
+      waitForKakaoReady(
+        resolve,
+        (error) => {
+          kakaoScriptPromise = null;
+          reject(error);
+        }
+      );
     };
 
-    script.onerror = () => reject(new Error("KAKAO_LOAD_FAIL"));
+    if (script) {
+      if (!script.id) {
+        script.id = KAKAO_SDK_PRIMARY_ID;
+      }
+
+      script.dataset.noraKakaoMap = "true";
+      script.dataset.noraKakaoState = script.dataset.noraKakaoState || "loading";
+
+      script.addEventListener("load", handleReady, { once: true });
+      script.addEventListener(
+        "error",
+        () => {
+          kakaoScriptPromise = null;
+          reject(new Error("KAKAO_LOAD_FAIL"));
+        },
+        { once: true }
+      );
+
+      handleReady();
+      return;
+    }
+
+    script = document.createElement("script");
+    script.id = KAKAO_SDK_PRIMARY_ID;
+    script.src = src;
+    script.async = true;
+    script.defer = true;
+    script.dataset.noraKakaoMap = "true";
+    script.dataset.noraKakaoState = "loading";
+
+    script.addEventListener("load", handleReady, { once: true });
+    script.addEventListener(
+      "error",
+      () => {
+        kakaoScriptPromise = null;
+        reject(new Error("KAKAO_LOAD_FAIL"));
+      },
+      { once: true }
+    );
 
     document.head.appendChild(script);
   });
+
+  return kakaoScriptPromise;
 };
 
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  preloadKakaoScript();
+  loadKakaoScript().catch(() => {});
+}
 function KakaoMap({
   shops = [],
   height = "500px",
@@ -275,8 +439,11 @@ function KakaoMap({
   const lastSafeCenterRef = useRef(DEFAULT_CENTER);
   const programMoveRef = useRef(false);
   const geocodeSeqRef = useRef(0);
+  const dragendHandlerRef = useRef(null);
+  const readyTimerRef = useRef(null);
 
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(isKakaoSdkReady());
+  const [mapCreated, setMapCreated] = useState(false);
   const [error, setError] = useState("");
 
   const selectedLocationText =
@@ -343,9 +510,11 @@ function KakaoMap({
     const currentCenter =
       mapRefInstance.current.getCenter();
 
-    mapRefInstance.current.setCenter(
-      currentCenter
-    );
+    if (currentCenter) {
+      mapRefInstance.current.setCenter(
+        currentCenter
+      );
+    }
   };
 
   const geocodeShopPosition = (shop) => {
@@ -448,55 +617,68 @@ function KakaoMap({
 
   useEffect(() => {
     let mounted = true;
-    let sdkReady = false;
+
+    preloadKakaoScript();
 
     const markReady = () => {
       if (!mounted) return;
-      sdkReady = true;
       window.__KAKAO_SDK_LOADED__ = true;
       setLoaded(true);
+      setError("");
     };
 
-    const fallbackReady = () => {
-      setTimeout(() => {
-        if (!mounted) return;
-        if (!sdkReady && window.kakao && window.kakao.maps) {
+    if (isKakaoSdkReady()) {
+      markReady();
+    } else {
+      loadKakaoScript()
+        .then(() => {
           markReady();
-        }
-      }, 1000);
-    };
-
-    if (window.kakao && window.kakao.maps && window.kakao.maps.load) {
-      try {
-        window.kakao.maps.load(markReady);
-        fallbackReady();
-      } catch (e) {
-        if (!mounted) return;
-        setError("카카오맵 초기화 실패");
-      }
-
-      return () => {
-        mounted = false;
-      };
+        })
+        .catch(() => {
+          if (!mounted) return;
+          setError("카카오맵 로드 실패");
+        });
     }
 
-    loadKakaoScript()
-      .then((kakao) => {
-        kakao.maps.load(markReady);
-        fallbackReady();
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setError("카카오맵 로드 실패");
-      });
+    const readyTimer = window.setInterval(() => {
+      readyTimerRef.current = readyTimer;
+      if (isKakaoSdkReady()) {
+        markReady();
+        window.clearInterval(readyTimer);
+      if (readyTimerRef.current) {
+        window.clearInterval(readyTimerRef.current);
+        readyTimerRef.current = null;
+      }
+      }
+    }, 80);
 
     return () => {
       mounted = false;
+      window.clearInterval(readyTimer);
+      if (readyTimerRef.current) {
+        window.clearInterval(readyTimerRef.current);
+        readyTimerRef.current = null;
+      }
+
+      if (infoWindowRef.current) {
+        infoWindowRef.current.close();
+      }
+
+      clearMarkers();
+
+      if (mapRefInstance.current && window.kakao?.maps && dragendHandlerRef.current) {
+        window.kakao.maps.event.removeListener(
+          mapRefInstance.current,
+          "dragend",
+          dragendHandlerRef.current
+        );
+        dragendHandlerRef.current = null;
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (!loaded || !mapRef.current || !window.kakao?.maps) return;
+    if (!loaded || mapRefInstance.current || !mapRef.current || !window.kakao?.maps) return;
 
     const initCenter =
       center &&
@@ -510,6 +692,8 @@ function KakaoMap({
 
     lastSafeCenterRef.current = initCenter;
 
+    if (!mapRef.current) return;
+
     const map = new window.kakao.maps.Map(mapRef.current, {
       center: new window.kakao.maps.LatLng(
         initCenter.lat,
@@ -519,12 +703,13 @@ function KakaoMap({
     });
 
     mapRefInstance.current = map;
+    setMapCreated(true);
 
     infoWindowRef.current = new window.kakao.maps.InfoWindow({
       zIndex: 10,
     });
 
-    window.kakao.maps.event.addListener(map, "dragend", () => {
+    const handleDragEnd = () => {
       if (programMoveRef.current) {
         return;
       }
@@ -543,13 +728,18 @@ function KakaoMap({
             lng,
           };
 
-          onMapMove({
-            lat,
-            lng,
-          });
+          try {
+            onMapMove({
+              lat,
+              lng,
+            });
+          } catch (e) {}
         }
       }
-    });
+    };
+
+    dragendHandlerRef.current = handleDragEnd;
+    window.kakao.maps.event.addListener(map, "dragend", handleDragEnd);
 
     if (window.kakao.maps.MarkerClusterer) {
       clusterRef.current = new window.kakao.maps.MarkerClusterer({
@@ -595,11 +785,19 @@ function KakaoMap({
   }, [selectedShopId]);
 
   const clearMarkers = () => {
-    markersRef.current.forEach((m) => m.setMap(null));
-    markersRef.current = [];
+    try {
+      markersRef.current.forEach((m) => {
+        if (m && typeof m.setMap === "function") {
+          m.setMap(null);
+        }
+      });
+      markersRef.current = [];
 
-    if (clusterRef.current) {
-      clusterRef.current.clear();
+      if (clusterRef.current && typeof clusterRef.current.clear === "function") {
+        clusterRef.current.clear();
+      }
+    } catch (e) {
+      markersRef.current = [];
     }
   };
 
@@ -676,7 +874,11 @@ function KakaoMap({
             infoWindowRef.current.close();
           }
 
+          try {
+            try {
           onMarkerClick && onMarkerClick(shop);
+        } catch (e) {}
+          } catch (e) {}
           return;
         }
 
@@ -691,7 +893,9 @@ function KakaoMap({
           marker
         );
 
-        onMarkerClick && onMarkerClick(shop);
+        try {
+          onMarkerClick && onMarkerClick(shop);
+        } catch (e) {}
       });
 
       if (
@@ -823,10 +1027,12 @@ function KakaoMap({
         selectedMarkerIdRef.current = null;
 
         if (onMapMove) {
-          onMapMove({
-            lat: Number(latitude),
-            lng: Number(longitude),
-          });
+          try {
+            onMapMove({
+              lat: Number(latitude),
+              lng: Number(longitude),
+            });
+          } catch (e) {}
         }
 
         setTimeout(relayoutMap, 0);
@@ -834,31 +1040,61 @@ function KakaoMap({
       },
       () => {
         alert("위치 권한 필요");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 3000,
+        maximumAge: 30000,
       }
     );
   };
 
   return (
     <div style={styles.wrap}>
-      {!loaded && !error && <Loading message="지도 로딩 중..." />}
-      {error && <ErrorMessage message={error} />}
-      {loaded && !error && shops.length === 0 && (
-        <EmptyState message="표시할 매장이 없습니다." />
-      )}
-
       <div
         ref={mapRef}
         style={{
           width: "100%",
           height,
           minHeight: height,
-          border: "1px solid #333",
+          border: "none",
           borderRadius: 12,
-          background: "#f5f5f5",
+          background:
+            "radial-gradient(circle at 52% 42%, rgba(255,255,255,0.22), transparent 18%), linear-gradient(135deg, #8b8f85 0%, #7d8479 44%, #6f756d 100%)",
           display: "block",
           overflow: "hidden",
         }}
       />
+
+      {!mapCreated && !error && (
+        <div style={styles.instantMapPreviewLayer}>
+          <div style={styles.instantMapRoadMain} />
+          <div style={styles.instantMapRoadSubOne} />
+          <div style={styles.instantMapRoadSubTwo} />
+          <div style={styles.instantMapRiver} />
+          <div style={styles.instantMapParkOne} />
+          <div style={styles.instantMapParkTwo} />
+          <div style={styles.instantMapLabelCenter}>경상남도 김해시 삼계동</div>
+          <div style={styles.instantMapLabelOne}>가야대역</div>
+          <div style={styles.instantMapLabelTwo}>해동이 스포츠센터</div>
+          <div style={styles.instantMapLabelThree}>삼계동</div>
+          <div style={styles.instantMapDotOne} />
+          <div style={styles.instantMapDotTwo} />
+          <div style={styles.instantMapDotThree} />
+        </div>
+      )}
+
+      {error && !mapCreated && (
+        <div style={styles.mapErrorLayer}>
+          <ErrorMessage message={error} />
+        </div>
+      )}
+
+      {mapCreated && !error && shops.length === 0 && (
+        <div style={styles.emptyLayer}>
+          <EmptyState message="표시할 매장이 없습니다." />
+        </div>
+      )}
 
       <div style={styles.topOverlay}>
         <button
@@ -887,44 +1123,226 @@ const styles = {
     background: "#000",
   },
 
+  instantMapPreviewLayer: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 1,
+    overflow: "hidden",
+    pointerEvents: "none",
+    background:
+      "radial-gradient(circle at 52% 42%, rgba(255,255,255,0.2), transparent 18%), linear-gradient(135deg, #8b8f85 0%, #7d8479 44%, #6f756d 100%)",
+  },
+
+  instantMapRoadMain: {
+    position: "absolute",
+    left: "-8%",
+    top: "42%",
+    width: "118%",
+    height: 42,
+    borderRadius: 28,
+    background: "rgba(180, 164, 114, 0.7)",
+    transform: "rotate(-27deg)",
+    boxShadow: "none",
+  },
+
+  instantMapRoadSubOne: {
+    position: "absolute",
+    left: "37%",
+    top: "-12%",
+    width: 34,
+    height: "125%",
+    borderRadius: 24,
+    background: "rgba(205, 198, 165, 0.54)",
+    transform: "rotate(5deg)",
+    boxShadow: "none",
+  },
+
+  instantMapRoadSubTwo: {
+    position: "absolute",
+    left: "48%",
+    top: "8%",
+    width: 22,
+    height: "98%",
+    borderRadius: 20,
+    background: "rgba(190, 185, 155, 0.48)",
+    transform: "rotate(-9deg)",
+  },
+
+  instantMapRiver: {
+    position: "absolute",
+    right: "15%",
+    top: "6%",
+    width: 90,
+    height: "72%",
+    borderRadius: "50%",
+    background: "rgba(105, 145, 155, 0.35)",
+    transform: "rotate(17deg)",
+    filter: "blur(0.3px)",
+  },
+
+  instantMapParkOne: {
+    position: "absolute",
+    right: "4%",
+    top: "7%",
+    width: 250,
+    height: 230,
+    borderRadius: "45% 55% 35% 60%",
+    background: "rgba(90, 130, 78, 0.42)",
+  },
+
+  instantMapParkTwo: {
+    position: "absolute",
+    left: "12%",
+    bottom: "7%",
+    width: 220,
+    height: 180,
+    borderRadius: "55% 45% 60% 40%",
+    background: "rgba(88, 124, 76, 0.34)",
+  },
+
+  instantMapLabelCenter: {
+    position: "absolute",
+    left: "43%",
+    top: "38%",
+    color: "rgba(35,35,35,0.72)",
+    fontSize: 15,
+    fontWeight: 800,
+    textShadow: "none",
+  },
+
+  instantMapLabelOne: {
+    position: "absolute",
+    left: "36%",
+    top: "29%",
+    color: "rgba(55,45,115,0.7)",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+
+  instantMapLabelTwo: {
+    position: "absolute",
+    left: "58%",
+    top: "29%",
+    color: "rgba(30,85,130,0.72)",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+
+  instantMapLabelThree: {
+    position: "absolute",
+    left: "54%",
+    top: "55%",
+    color: "rgba(90,60,30,0.74)",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+
+  instantMapDotOne: {
+    position: "absolute",
+    left: "38%",
+    top: "35%",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    background: "rgba(90, 55, 155, 0.8)",
+  },
+
+  instantMapDotTwo: {
+    position: "absolute",
+    left: "60%",
+    top: "37%",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    background: "rgba(30, 110, 160, 0.8)",
+  },
+
+  instantMapDotThree: {
+    position: "absolute",
+    left: "50%",
+    top: "60%",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    background: "rgba(160, 80, 55, 0.85)",
+  },
+
+  mapErrorLayer: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 12,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    boxSizing: "border-box",
+    background: "rgba(0, 0, 0, 0.72)",
+  },
+
+  emptyLayer: {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    zIndex: 11,
+    transform: "translate(-50%, -50%)",
+    pointerEvents: "none",
+  },
+
   topOverlay: {
     position: "absolute",
     top: 14,
     left: 14,
+    right: 14,
     zIndex: 20,
     display: "flex",
     alignItems: "center",
-    gap: 12,
+    justifyContent: "flex-start",
+    gap: 8,
     pointerEvents: "auto",
   },
 
   myLocationButton: {
-    height: 42,
-    padding: "0 18px",
-    border: "1px solid #d1a500",
-    borderRadius: 8,
-    background: "rgba(0, 0, 0, 0.92)",
+    height: 48,
+    minWidth: "max-content",
+    padding: "0 16px",
+    border: "2px solid transparent",
+    borderRadius: 9,
+    background: `linear-gradient(#000000, #000000) padding-box, ${GOLD_GRADIENT} border-box`,
     color: "#fff",
-    fontSize: 15,
-    fontWeight: 600,
+    fontSize: 16,
+    fontWeight: 700,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    wordBreak: "keep-all",
+    flexShrink: 0,
     cursor: "pointer",
-    boxShadow:
-      "0 0 10px rgba(255, 212, 0, 0.45), inset 0 0 8px rgba(255, 212, 0, 0.08)",
+    boxShadow: "none",
   },
 
   locationText: {
-    height: 42,
+    height: 48,
+    width: "fit-content",
+    maxWidth: "calc(100% - 112px)",
+    minWidth: 0,
+    flex: "0 1 auto",
     padding: "0 18px",
     display: "flex",
     alignItems: "center",
-    border: "1px solid #d1a500",
-    borderRadius: 8,
-    background: "rgba(0, 0, 0, 0.92)",
+    justifyContent: "center",
+    boxSizing: "border-box",
+    border: "2px solid transparent",
+    borderRadius: 9,
+    background: `linear-gradient(#000000, #000000) padding-box, ${GOLD_GRADIENT} border-box`,
     color: "#fff",
-    fontSize: 15,
-    fontWeight: 600,
-    boxShadow:
-      "0 0 10px rgba(255, 212, 0, 0.45), inset 0 0 8px rgba(255, 212, 0, 0.08)",
+    fontSize: 16,
+    fontWeight: 700,
+    lineHeight: 1.25,
+    textAlign: "center",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    wordBreak: "keep-all",
+    boxShadow: "none",
   },
 };
 

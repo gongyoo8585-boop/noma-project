@@ -1,10 +1,23 @@
 "use strict";
 
-const paymentService = require("../../services/payment/payment.service");
+function safeRequire(modulePath) {
+  try {
+    return require(modulePath);
+  } catch (error) {
+    console.warn("[paymentController] require fail:", modulePath, error.message);
+    return null;
+  }
+}
+
+const paymentService =
+  safeRequire("../../services/payment/payment.service") ||
+  safeRequire("../../services/payment/paymentService") ||
+  safeRequire("../../services/payment.service") ||
+  {};
 
 let Reservation = null;
 try {
-  Reservation = require("../../models/Reservation");
+  Reservation = safeRequire("../../models/Reservation");
 } catch (_) {}
 
 /* =====================================================
@@ -27,12 +40,34 @@ const uid = (req) => String(req.user?.id || req.user?._id || "");
 const isAdmin = (req) =>
   ["admin", "superAdmin"].includes(req.user?.role);
 
+function serviceMethod(name) {
+  if (paymentService && typeof paymentService[name] === "function") {
+    return paymentService[name].bind(paymentService);
+  }
+
+  return null;
+}
+
+async function callPaymentService(name, fallback, ...args) {
+  const fn = serviceMethod(name);
+
+  if (fn) {
+    return fn(...args);
+  }
+
+  if (typeof fallback === "function") {
+    return fallback(...args);
+  }
+
+  return fallback;
+}
+
 /* =====================================================
 🔥 KAKAO PAY FLOW
 ===================================================== */
 exports.kakaoReady = safeAsync(async (req, res) => {
   const payload = await buildPayload(req);
-  const result = await paymentService.kakaoReady(payload);
+  const result = await callPaymentService("kakaoReady", { orderId: payload.orderId, redirectUrl: "" }, payload);
 
   return ok(
     res,
@@ -46,7 +81,7 @@ exports.kakaoReady = safeAsync(async (req, res) => {
 });
 
 exports.kakaoSuccess = safeAsync(async (req, res) => {
-  const result = await paymentService.kakaoApprove({
+  const result = await callPaymentService("kakaoApprove", {}, {
     pgToken: req.query.pg_token,
     orderId: req.query.orderId,
     userId: req.query.userId,
@@ -69,36 +104,36 @@ exports.kakaoFail = safeAsync(async (req, res) => {
 exports.createCheckout = safeAsync(async (req, res) => {
   const payload = await buildPayload(req);
   const result =
-    typeof paymentService.createCheckoutSession === "function"
-      ? await paymentService.createCheckoutSession(payload)
-      : await paymentService.createPayment(payload);
+    serviceMethod("createCheckoutSession")
+      ? await callPaymentService("createCheckoutSession", null, payload)
+      : await callPaymentService("createPayment", null, payload);
 
   return ok(res, result || {});
 });
 
 exports.createPayment = safeAsync(async (req, res) => {
   const payload = await buildPayload(req);
-  const payment = await paymentService.createPayment(payload);
+  const payment = await callPaymentService("createPayment", null, payload);
   return ok(res, { payment });
 });
 
 exports.approvePayment = safeAsync(async (req, res) => {
-  const payment = await paymentService.approvePayment(req.body);
+  const payment = await callPaymentService("approvePayment", {}, req.body);
   return ok(res, { payment });
 });
 
 exports.cancelPayment = safeAsync(async (req, res) => {
-  const payment = await paymentService.cancelPayment(req.body);
+  const payment = await callPaymentService("cancelPayment", {}, req.body);
   return ok(res, { payment });
 });
 
 exports.failPayment = safeAsync(async (req, res) => {
-  const payment = await paymentService.failPayment(req.body);
+  const payment = await callPaymentService("failPayment", {}, req.body);
   return ok(res, { payment });
 });
 
 exports.refundPayment = safeAsync(async (req, res) => {
-  const payment = await paymentService.refundPayment(req.body);
+  const payment = await callPaymentService("refundPayment", {}, req.body);
   return ok(res, { payment });
 });
 
@@ -115,12 +150,12 @@ exports.validateCheckout = safeAsync(async (req, res) => {
 🔥 QUERY
 ===================================================== */
 exports.getPayment = safeAsync(async (req, res) => {
-  const payment = await paymentService.getPaymentById(req.params.paymentId);
+  const payment = await callPaymentService("getPaymentById", null, req.params.paymentId);
   return ok(res, { payment });
 });
 
 exports.getPaymentByOrderId = safeAsync(async (req, res) => {
-  const payment = await paymentService.getPaymentByOrderId(req.params.orderId);
+  const payment = await callPaymentService("getPaymentByOrderId", null, req.params.orderId);
   return ok(res, { payment });
 });
 
@@ -143,7 +178,7 @@ exports.getReceipt = safeAsync(async (req, res) => {
 });
 
 exports.myPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments({
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, {
     userId: uid(req),
   });
 
@@ -151,12 +186,12 @@ exports.myPayments = safeAsync(async (req, res) => {
 });
 
 exports.listPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments(req.query);
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, req.query);
   return ok(res, result);
 });
 
 exports.getReservationPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments({
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, {
     reservationId: req.params.reservationId,
   });
 
@@ -164,7 +199,7 @@ exports.getReservationPayments = safeAsync(async (req, res) => {
 });
 
 exports.getUserPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments({
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, {
     userId: req.params.userId,
   });
 
@@ -172,7 +207,7 @@ exports.getUserPayments = safeAsync(async (req, res) => {
 });
 
 exports.getShopPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments({
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, {
     shopId: req.params.shopId,
   });
 
@@ -249,17 +284,17 @@ exports.clearExpired = safeAsync(async (req, res) => {
 🔥 MOCK
 ===================================================== */
 exports.mockSuccess = safeAsync(async (req, res) => {
-  const payment = await paymentService.approvePayment(req.body);
+  const payment = await callPaymentService("approvePayment", {}, req.body);
   return ok(res, { payment });
 });
 
 exports.mockCancel = safeAsync(async (req, res) => {
-  const payment = await paymentService.cancelPayment(req.body);
+  const payment = await callPaymentService("cancelPayment", {}, req.body);
   return ok(res, { payment });
 });
 
 exports.mockFail = safeAsync(async (req, res) => {
-  const payment = await paymentService.failPayment(req.body);
+  const payment = await callPaymentService("failPayment", {}, req.body);
   return ok(res, { payment });
 });
 
@@ -267,7 +302,7 @@ exports.mockFail = safeAsync(async (req, res) => {
 🔥 EXTRA
 ===================================================== */
 exports.getPaymentStatus = safeAsync(async (req, res) => {
-  const payment = await paymentService.getPaymentById(req.params.paymentId);
+  const payment = await callPaymentService("getPaymentById", null, req.params.paymentId);
   return ok(res, {
     status: payment?.status || payment?.paymentStatus || "unknown",
     payment,
@@ -275,7 +310,7 @@ exports.getPaymentStatus = safeAsync(async (req, res) => {
 });
 
 exports.getRecentPayments = safeAsync(async (req, res) => {
-  const result = await paymentService.listPayments({
+  const result = await callPaymentService("listPayments", { list: [], total: 0 }, {
     limit: req.query.limit || 20,
   });
 

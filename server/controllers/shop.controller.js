@@ -149,13 +149,25 @@ const normalizePremiumFields = (data = {}) => {
 
 const waitForMongoConnection = async () => {
   const start = Date.now();
+  const timeoutMs = Math.max(
+    Number(process.env.MONGO_CONNECT_TIMEOUT_MS || process.env.API_TIMEOUT || 5000),
+    2500
+  );
+
+  if (mongoose.connection.readyState === 1) {
+    return true;
+  }
 
   if (
     mongoose.connection.readyState !== 1 &&
     dbModule &&
     typeof dbModule.ensureDBConnection === "function"
   ) {
-    await dbModule.ensureDBConnection();
+    try {
+      await dbModule.ensureDBConnection();
+    } catch (e) {
+      console.warn("SHOP DB ENSURE WAIT:", e.message);
+    }
   }
 
   if (
@@ -163,11 +175,15 @@ const waitForMongoConnection = async () => {
     dbModule &&
     typeof dbModule.connectDB === "function"
   ) {
-    await dbModule.connectDB();
+    try {
+      await dbModule.connectDB();
+    } catch (e) {
+      console.warn("SHOP DB CONNECT WAIT:", e.message);
+    }
   }
 
   while (mongoose.connection.readyState !== 1) {
-    if (Date.now() - start > 2500) {
+    if (Date.now() - start > timeoutMs) {
       throw new Error("DB_NOT_CONNECTED");
     }
 
@@ -328,6 +344,7 @@ const normalizeShopCategory = (value) => {
   if (
     text === "karaoke" ||
     text === "노래방" ||
+    text === "가라오케" ||
     text === "nora-karaoke" ||
     text === "nora_karaoke" ||
     text === "coin-karaoke" ||
@@ -347,6 +364,79 @@ const normalizeShopCategory = (value) => {
   }
 
   return "";
+};
+
+const getShopCategoryAliases = (category) => {
+  const normalized = normalizeShopCategory(category);
+
+  if (normalized === "karaoke") {
+    return [
+      "karaoke",
+      "노래방",
+      "가라오케",
+      "nora-karaoke",
+      "nora_karaoke",
+      "coin-karaoke",
+      "coin_karaoke",
+    ];
+  }
+
+  if (normalized === "massage") {
+    return [
+      "massage",
+      "마사지",
+      "shop",
+      "nora-massage",
+      "nora_massage",
+    ];
+  }
+
+  return [];
+};
+
+const buildShopCategoryFilter = (category) => {
+  const normalized = normalizeShopCategory(category);
+  const aliases = getShopCategoryAliases(normalized);
+
+  if (aliases.length === 0) {
+    return {};
+  }
+
+  const categoryFields = [
+    "category",
+    "shopCategory",
+    "serviceType",
+    "businessType",
+    "adminCategory",
+    "type",
+  ];
+
+  // Legacy massage shops were created before category fields were required.
+  // Treat every shop that is not explicitly karaoke as massage so those
+  // existing production records remain visible in the massage dashboard.
+  if (normalized === "massage") {
+    const karaokeAliases = getShopCategoryAliases("karaoke");
+    const karaokeIdentityPattern = /노래방|가라오케|karaoke|coin[\s_-]*karaoke/i;
+
+    return {
+      $nor: [
+        ...categoryFields.map((field) => ({
+          [field]: { $in: karaokeAliases },
+        })),
+        { name: karaokeIdentityPattern },
+        { title: karaokeIdentityPattern },
+        { shopName: karaokeIdentityPattern },
+        { businessName: karaokeIdentityPattern },
+        { slug: karaokeIdentityPattern },
+      ],
+    };
+  }
+
+  return {
+    $or: categoryFields.map((field) => ({
+      [field]: { $in: aliases },
+    })),
+  };
 };
 
 const getRequestCategory = (req) => {
@@ -379,9 +469,7 @@ const buildCategoryGuard = (req) => {
     return {};
   }
 
-  return {
-    category,
-  };
+  return buildShopCategoryFilter(category);
 };
 
 const applyCategoryToData = (data = {}, req) => {
@@ -481,8 +569,15 @@ const buildShopSearchQuery = (params = {}) => {
 
   if (category) {
     const safeCategory = normalizeShopCategory(category);
+    const categoryFilter = buildShopCategoryFilter(safeCategory || category);
 
-    query.category = safeCategory || new RegExp(escapeRegex(category), "i");
+    if (Object.keys(categoryFilter).length > 0) {
+      query.$and = query.$and || [];
+
+      query.$and.push(categoryFilter);
+    } else {
+      query.category = new RegExp(escapeRegex(category), "i");
+    }
   }
 
   if (region && region !== "지역") {
@@ -545,6 +640,28 @@ const normalizeImageArray = (value) => {
   return [];
 };
 
+const KARAOKE_SHOP_IMAGE_LIMIT = 4;
+const DEFAULT_SHOP_IMAGE_LIMIT = 12;
+
+const getShopImageLimit = (data = {}, fallback = {}) => {
+  const category =
+    normalizeShopCategory(data.category) ||
+    normalizeShopCategory(data.shopCategory) ||
+    normalizeShopCategory(data.serviceType) ||
+    normalizeShopCategory(data.businessType) ||
+    normalizeShopCategory(data.adminCategory) ||
+    normalizeShopCategory(fallback.category) ||
+    normalizeShopCategory(fallback.shopCategory) ||
+    normalizeShopCategory(fallback.serviceType) ||
+    normalizeShopCategory(fallback.businessType) ||
+    normalizeShopCategory(fallback.adminCategory) ||
+    "massage";
+
+  return category === "karaoke"
+    ? KARAOKE_SHOP_IMAGE_LIMIT
+    : DEFAULT_SHOP_IMAGE_LIMIT;
+};
+
 const hasOwnImageField = (data = {}) =>
   Object.prototype.hasOwnProperty.call(data, "images") ||
   Object.prototype.hasOwnProperty.call(data, "photos") ||
@@ -553,29 +670,31 @@ const hasOwnImageField = (data = {}) =>
 const normalizeShopImages = (data = {}, fallback = {}) => {
   const exactIncomingImages = hasOwnImageField(data);
 
-  const images = normalizeImageArray(data.images);
-  const photos = normalizeImageArray(data.photos);
-  const imageUrls = normalizeImageArray(data.imageUrls);
-  const fallbackImages = normalizeImageArray(fallback.images);
-  const fallbackPhotos = normalizeImageArray(fallback.photos);
-  const fallbackImageUrls = normalizeImageArray(fallback.imageUrls);
+  const getCanonicalImages = (source = {}) => {
+    if (Object.prototype.hasOwnProperty.call(source, "images")) {
+      return normalizeImageArray(source.images);
+    }
 
+    if (Object.prototype.hasOwnProperty.call(source, "photos")) {
+      return normalizeImageArray(source.photos);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(source, "imageUrls")) {
+      return normalizeImageArray(source.imageUrls);
+    }
+
+    return [];
+  };
+
+  const incomingImages = getCanonicalImages(data);
+  const fallbackImages = getCanonicalImages(fallback);
   const merged = [];
 
   const sourceImages = exactIncomingImages
-    ? [
-        ...images,
-        ...photos,
-        ...imageUrls,
-      ]
-    : [
-        ...images,
-        ...photos,
-        ...imageUrls,
-        ...fallbackImages,
-        ...fallbackPhotos,
-        ...fallbackImageUrls,
-      ];
+    ? incomingImages
+    : incomingImages.length
+    ? incomingImages
+    : fallbackImages;
 
   sourceImages.forEach((image) => {
     if (image && !merged.includes(image)) {
@@ -583,7 +702,7 @@ const normalizeShopImages = (data = {}, fallback = {}) => {
     }
   });
 
-  const representativeImage = exactIncomingImages
+  const representativeCandidate = exactIncomingImages
     ? data.representativeImage ||
       data.mainImage ||
       data.thumbnail ||
@@ -601,10 +720,26 @@ const normalizeShopImages = (data = {}, fallback = {}) => {
       merged[0] ||
       "";
 
+  const imageLimit = getShopImageLimit(data, fallback);
+  const representativeIndex = merged.findIndex(
+    (image) => image === representativeCandidate
+  );
+  const groupStart =
+    representativeIndex >= 0
+      ? Math.floor(representativeIndex / imageLimit) * imageLimit
+      : 0;
+  const canonicalImages = merged.slice(groupStart, groupStart + imageLimit);
+
+  const representativeImage =
+    canonicalImages.find((image) => image === representativeCandidate) ||
+    canonicalImages[0] ||
+    representativeCandidate ||
+    "";
+
   return {
-    images: merged,
-    photos: merged,
-    imageUrls: merged,
+    images: canonicalImages,
+    photos: canonicalImages,
+    imageUrls: canonicalImages,
     representativeImage,
     mainImage: representativeImage,
     thumbnail: representativeImage,
@@ -675,6 +810,89 @@ const sortPremiumDistance = (items = []) => {
   });
 };
 
+const getStableShopSort = () => ({
+  premium: -1,
+  isPremium: -1,
+  premiumActive: -1,
+  createdAt: -1,
+});
+
+const isMongoPlannerError = (error) => {
+  const text = String(error?.message || error || "").toLowerCase();
+
+  return (
+    text.includes("multiplanner") ||
+    text.includes("query planner") ||
+    text.includes("planner") ||
+    text.includes("sort exceeded memory") ||
+    text.includes("badvalue")
+  );
+};
+
+const runShopFindWithFallback = async (query = {}, options = {}) => {
+  const limit = Math.min(Math.max(Number(options.limit) || 300, 1), 500);
+  const skip = Math.max(Number(options.skip) || 0, 0);
+  const sort = options.sort || getStableShopSort();
+
+  try {
+    return await Shop.find(query)
+      .lean()
+      .sort(sort)
+      .skip(skip)
+      .limit(limit);
+  } catch (error) {
+    if (!isMongoPlannerError(error)) {
+      throw error;
+    }
+
+    console.warn("SHOP FIND PLANNER FALLBACK:", error.message);
+  }
+
+  try {
+    return await Shop.find(query)
+      .lean()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+  } catch (error) {
+    if (!isMongoPlannerError(error)) {
+      throw error;
+    }
+
+    console.warn("SHOP FIND SIMPLE SORT FALLBACK:", error.message);
+  }
+
+  try {
+    return await Shop.find(query)
+      .lean()
+      .skip(skip)
+      .limit(limit);
+  } catch (error) {
+    if (!isMongoPlannerError(error)) {
+      throw error;
+    }
+
+    console.warn("SHOP FIND NO SORT FALLBACK:", error.message);
+  }
+
+  return [];
+};
+
+const runShopCountWithFallback = async (query = {}) => {
+  try {
+    return await Shop.countDocuments(query);
+  } catch (error) {
+    if (!isMongoPlannerError(error)) {
+      throw error;
+    }
+
+    console.warn("SHOP COUNT PLANNER FALLBACK:", error.message);
+
+    return 0;
+  }
+};
+
+
 const groupPremiumNearby = (items = [], limit = 3) => {
   const safeLimit = Math.max(Number(limit) || 3, 1);
   const sorted = sortPremiumDistance(items);
@@ -714,6 +932,7 @@ const sanitize = (shop) => {
   obj.images = imageData.images;
   obj.photos = imageData.photos;
   obj.imageUrls = imageData.imageUrls;
+  obj.image = imageData.representativeImage;
   obj.representativeImage = imageData.representativeImage;
   obj.mainImage = imageData.mainImage;
   obj.thumbnail = imageData.thumbnail;
@@ -851,6 +1070,7 @@ exports.create = async (req, res) => {
       visible,
       approved,
       isReservable,
+      directPaymentEnabled,
       serviceTypes,
       tags,
       priceOriginal,
@@ -875,8 +1095,6 @@ exports.create = async (req, res) => {
     const normalizedPrices = normalizePriceArray(price);
     const imageData = normalizeShopImages(req.body);
     const premiumState = normalizePremiumFields(req.body);
-    const safeCategory = getSafeRequestCategory(req);
-
     const createData = applyCategoryToData({
       name: String(name || "").trim(),
       address: String(address || "").trim(),
@@ -890,7 +1108,7 @@ exports.create = async (req, res) => {
       openingHours: businessHours || req.body.openingHours || req.body.hours || "",
       hours: businessHours || req.body.openingHours || req.body.hours || "",
       description,
-      category,
+      category: safeCategory,
       visible: visible !== false,
       approved: approved !== false,
       premium: premiumState.premium,
@@ -898,6 +1116,7 @@ exports.create = async (req, res) => {
       premiumActive: premiumState.premiumActive,
       premiumType: premiumState.premiumType,
       isReservable: isReservable !== false,
+      directPaymentEnabled: directPaymentEnabled === true || directPaymentEnabled === "true" || directPaymentEnabled === 1 || directPaymentEnabled === "1",
       tags: normalizeArray(tags),
       serviceTypes: normalizeArray(serviceTypes),
       priceOriginal: toNumberSafe(priceOriginal) || 0,
@@ -908,6 +1127,7 @@ exports.create = async (req, res) => {
       images: imageData.images,
       photos: imageData.photos,
       imageUrls: imageData.imageUrls,
+      image: imageData.representativeImage,
       representativeImage: imageData.representativeImage,
       mainImage: imageData.mainImage,
       thumbnail: imageData.thumbnail,
@@ -954,18 +1174,11 @@ exports.getList = async (req, res) => {
     const skip = (safePage - 1) * safeLimit;
 
     const [list, total] = await Promise.all([
-      Shop.find(query)
-        .lean()
-        .sort({
-          premium: -1,
-          isPremium: -1,
-          premiumActive: -1,
-          createdAt: -1,
-        })
-        .skip(Number(skip))
-        .limit(Number(safeLimit)),
-
-      Shop.countDocuments(query),
+      runShopFindWithFallback(query, {
+        skip: Number(skip),
+        limit: Number(safeLimit),
+      }),
+      runShopCountWithFallback(query),
     ]);
 
     const items = list.map(sanitize);
@@ -993,15 +1206,9 @@ exports.search = async (req, res) => {
 
     const query = buildShopSearchQuery(req.query);
 
-    const list = await Shop.find(query)
-      .lean()
-      .sort({
-        premium: -1,
-        isPremium: -1,
-        premiumActive: -1,
-        createdAt: -1,
-      })
-      .limit(300);
+    const list = await runShopFindWithFallback(query, {
+      limit: 300,
+    });
 
     const items = list.map(sanitize);
 
@@ -1176,6 +1383,14 @@ exports.update = async (req, res) => {
       shop.isReservable = data.isReservable !== false;
     }
 
+    if (data.directPaymentEnabled !== undefined) {
+      shop.directPaymentEnabled =
+        data.directPaymentEnabled === true ||
+        data.directPaymentEnabled === "true" ||
+        data.directPaymentEnabled === 1 ||
+        data.directPaymentEnabled === "1";
+    }
+
     if (
       data.virtualPhone !== undefined ||
       data.fakePhone !== undefined ||
@@ -1232,6 +1447,7 @@ exports.update = async (req, res) => {
       shop.images = imageData.images;
       shop.photos = imageData.photos;
       shop.imageUrls = imageData.imageUrls;
+      shop.image = imageData.representativeImage;
       shop.representativeImage = imageData.representativeImage;
       shop.mainImage = imageData.mainImage;
       shop.thumbnail = imageData.thumbnail;
@@ -1240,6 +1456,7 @@ exports.update = async (req, res) => {
       shop.images = previousImageData.images;
       shop.photos = previousImageData.photos;
       shop.imageUrls = previousImageData.imageUrls;
+      shop.image = previousImageData.representativeImage;
       shop.representativeImage = previousImageData.representativeImage;
       shop.mainImage = previousImageData.mainImage;
       shop.thumbnail = previousImageData.thumbnail;
@@ -1295,6 +1512,8 @@ exports.update = async (req, res) => {
     shop.markModified("isPremium");
     shop.markModified("premiumActive");
     shop.markModified("premiumType");
+    shop.markModified("directPaymentEnabled");
+    shop.markModified("image");
     shop.markModified("images");
     shop.markModified("photos");
     shop.markModified("imageUrls");
@@ -1431,15 +1650,9 @@ exports.getStats = async (req, res) => {
 
     const statsQuery = buildShopSearchQuery(req.query);
 
-    const shops = await Shop.find(statsQuery)
-      .lean()
-      .sort({
-        premium: -1,
-        isPremium: -1,
-        premiumActive: -1,
-        createdAt: -1,
-      })
-      .limit(500);
+    const shops = await runShopFindWithFallback(statsQuery, {
+      limit: 500,
+    });
 
     const shopIds = shops.map((shop) => String(shop._id));
 
@@ -1534,7 +1747,7 @@ exports.getStats = async (req, res) => {
       item.dailyCalls[todayKey] = Number(item.dailyCalls[todayKey] || item.callCount || 0);
     });
 
-    const total = await Shop.countDocuments(statsQuery);
+    const total = await runShopCountWithFallback(statsQuery);
 
     const shopStats = Object.values(byShop);
 
@@ -1602,15 +1815,9 @@ exports.nearby = async (req, res) => {
 
     const query = buildShopSearchQuery(req.query);
 
-    const list = await Shop.find(query)
-      .lean()
-      .sort({
-        premium: -1,
-        isPremium: -1,
-        premiumActive: -1,
-        createdAt: -1,
-      })
-      .limit(300);
+    const list = await runShopFindWithFallback(query, {
+      limit: 300,
+    });
 
     const items = list
       .map(sanitize)
@@ -1657,15 +1864,9 @@ exports.getPremiumNearby = async (req, res) => {
 
     const query = buildShopSearchQuery(req.query);
 
-    const list = await Shop.find(query)
-      .lean()
-      .sort({
-        premium: -1,
-        isPremium: -1,
-        premiumActive: -1,
-        createdAt: -1,
-      })
-      .limit(300);
+    const list = await runShopFindWithFallback(query, {
+      limit: 300,
+    });
 
     const items = list
       .map(sanitize)
@@ -1708,15 +1909,9 @@ exports.getRecommend = async (req, res) => {
 
     const query = buildShopSearchQuery(req.query);
 
-    const list = await Shop.find(query)
-      .lean()
-      .sort({
-        premium: -1,
-        isPremium: -1,
-        premiumActive: -1,
-        createdAt: -1,
-      })
-      .limit(20);
+    const list = await runShopFindWithFallback(query, {
+      limit: 20,
+    });
 
     const items = list.map(sanitize);
 

@@ -45,8 +45,28 @@ const UserSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["user", "admin"],
+      enum: ["user", "shop", "admin"],
       default: "user",
+      index: true,
+    },
+
+    serviceType: {
+      type: String,
+      enum: ["general", "massage", "karaoke"],
+      default: "general",
+      index: true,
+    },
+
+    jobGrade: {
+      type: String,
+      enum: ["premium", "normal"],
+      default: "normal",
+      index: true,
+    },
+
+    jobPostingEnabled: {
+      type: Boolean,
+      default: false,
       index: true,
     },
 

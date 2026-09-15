@@ -3,6 +3,11 @@
 /**
  * =====================================================
  * 🔥 AUTH ROUTES (FINAL COMPLETE - PATCHED)
+ * ✔ 기존 기능 100% 유지
+ * ✔ 휴대폰 인증번호 발송 route 유지
+ * ✔ 휴대폰 인증번호 확인 route 유지
+ * ✔ 이메일 인증번호 발송 route 최소 추가
+ * ✔ 이메일 인증번호 확인 route 최소 추가
  * =====================================================
  */
 
@@ -84,6 +89,30 @@ router.post("/login", safe(controller.login, "login"));
 router.get("/login", (req, res) => {
   return res.status(405).json({ ok: false, msg: "USE_POST_METHOD" });
 });
+
+// 휴대폰 인증번호 발송
+router.post(
+  "/send-code",
+  safe(controller.sendVerificationCode, "sendVerificationCode")
+);
+
+// 휴대폰 인증번호 확인
+router.post(
+  "/verify-code",
+  safe(controller.verifyVerificationCode, "verifyVerificationCode")
+);
+
+// 이메일 인증번호 발송
+router.post(
+  "/send-email-code",
+  safe(controller.sendEmailVerificationCode, "sendEmailVerificationCode")
+);
+
+// 이메일 인증번호 확인
+router.post(
+  "/verify-email-code",
+  safe(controller.verifyEmailVerificationCode, "verifyEmailVerificationCode")
+);
 
 // 내 정보
 router.get("/me", auth, safe(controller.me, "me"));

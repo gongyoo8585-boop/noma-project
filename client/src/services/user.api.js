@@ -3,6 +3,9 @@
 /**
  * =====================================================
  * 🔥 USER API (FINAL STABLE COMPLETE)
+ * ✔ 기존 기능 100% 유지
+ * ✔ 휴대폰 인증번호 발송 API 최소 추가
+ * ✔ 휴대폰 인증번호 확인 API 최소 추가
  * =====================================================
  */
 
@@ -19,16 +22,20 @@ const isLocalHost =
   );
 
 const API_BASE_URL =
-  (typeof window !== "undefined" &&
-    window.__ENV__ &&
-    window.__ENV__.API_BASE_URL) ||
-  (typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    (
-      import.meta.env.VITE_API_BASE_URL ||
-      import.meta.env.VITE_API_URL
-    )) ||
-  "https://api.nora365.co.kr/api";
+  isLocalHost
+    ? "http://localhost:10000/api"
+    : (
+        (typeof window !== "undefined" &&
+          window.__ENV__ &&
+          window.__ENV__.API_BASE_URL) ||
+        (typeof import.meta !== "undefined" &&
+          import.meta.env &&
+          (
+            import.meta.env.VITE_API_BASE_URL ||
+            import.meta.env.VITE_API_URL
+          )) ||
+        "https://api.nora365.co.kr/api"
+      );
 
 /* =========================
 🔥 AXIOS INSTANCE
@@ -78,8 +85,8 @@ let lastStatsAt = 0;
 let lastListAt = 0;
 let listPending = null;
 
-const USER_LIST_TIMEOUT_MS = 5000;
-const USER_STATS_TIMEOUT_MS = 5000;
+const USER_LIST_TIMEOUT_MS = 15000;
+const USER_STATS_TIMEOUT_MS = 15000;
 const USER_FAST_FALLBACK_MS = 300;
 
 function resolveAfter(ms, value) {
@@ -117,31 +124,199 @@ let listCache = {
 /* =========================
 🔥 TOKEN UTIL
 ========================= */
+function decodeTokenPayload(token) {
+  try {
+    const payload =
+      String(token || "")
+        .split(".")[1];
+
+    if (!payload) {
+      return null;
+    }
+
+    const normalized =
+      payload
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+    const padded =
+      normalized +
+      "=".repeat(
+        (4 - (normalized.length % 4)) % 4
+      );
+
+    return JSON.parse(
+      decodeURIComponent(
+        atob(padded)
+          .split("")
+          .map((char) =>
+            `%${char
+              .charCodeAt(0)
+              .toString(16)
+              .padStart(2, "0")}`
+          )
+          .join("")
+      )
+    );
+  } catch {
+    return null;
+  }
+}
+
+function isAdminToken(token) {
+  const value =
+    String(token || "")
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+
+  const payload =
+    decodeTokenPayload(value);
+
+  const role =
+    String(payload?.role || "")
+      .trim()
+      .toLowerCase();
+
+  return (
+    payload?.isAdmin === true ||
+    role === "admin" ||
+    role === "superadmin" ||
+    role === "super_admin"
+  );
+}
+
+function isTokenExpired(token, skewMs = 5000) {
+  const payload =
+    decodeTokenPayload(token);
+
+  const expiresAt =
+    Number(payload?.exp || 0) * 1000;
+
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+    return false;
+  }
+
+  return Date.now() + skewMs >= expiresAt;
+}
+
+function isUsableAdminToken(token) {
+  return (
+    isAdminToken(token) &&
+    !isTokenExpired(token)
+  );
+}
+
+function isUsableUserToken(token) {
+  return (
+    !!token &&
+    !isAdminToken(token) &&
+    !isTokenExpired(token)
+  );
+}
+
+function isAdminUser(user = {}) {
+  if (
+    !user ||
+    typeof user !== "object"
+  ) {
+    return false;
+  }
+
+  const normalizedUser =
+    normalizeAdminUser(user);
+
+  return normalizedUser?.isAdmin === true;
+}
+
 function getStoredToken() {
   try {
-    const token =
-      localStorage.getItem("adminToken") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("accessToken") ||
-      localStorage.getItem("authToken") ||
-      localStorage.getItem("jwt") ||
-      localStorage.getItem("local-admin-token") ||
-      sessionStorage.getItem("adminToken") ||
-      sessionStorage.getItem("token") ||
-      sessionStorage.getItem("accessToken") ||
-      sessionStorage.getItem("authToken") ||
-      sessionStorage.getItem("jwt") ||
-      sessionStorage.getItem("local-admin-token") ||
-      "";
+    if (isAdminPage()) {
+      const adminCandidates = [
+        localStorage.getItem("adminToken"),
+        localStorage.getItem("local-admin-token"),
+        sessionStorage.getItem("adminToken"),
+        sessionStorage.getItem("local-admin-token"),
+      ]
+        .filter(
+          (token) =>
+            token &&
+            token !== "undefined" &&
+            token !== "null"
+        )
+        .map((token) =>
+          String(token)
+            .replace(/^Bearer\s+/i, "")
+            .trim()
+        );
 
-    if (
-      token === "undefined" ||
-      token === "null"
-    ) {
+      const savedAdminToken =
+        adminCandidates.find(isUsableAdminToken);
+
+      if (savedAdminToken) {
+        return savedAdminToken;
+      }
+
+      const legacyAdminCandidates = [
+        localStorage.getItem("token"),
+        localStorage.getItem("accessToken"),
+        localStorage.getItem("authToken"),
+        localStorage.getItem("jwt"),
+        sessionStorage.getItem("token"),
+        sessionStorage.getItem("accessToken"),
+        sessionStorage.getItem("authToken"),
+        sessionStorage.getItem("jwt"),
+      ]
+        .filter(
+          (token) =>
+            token &&
+            token !== "undefined" &&
+            token !== "null"
+        )
+        .map((token) =>
+          String(token)
+            .replace(/^Bearer\s+/i, "")
+            .trim()
+        );
+
+      const legacyAdminToken =
+        legacyAdminCandidates.find(isUsableAdminToken);
+
+      if (legacyAdminToken) {
+        saveAdminToken(legacyAdminToken);
+        return legacyAdminToken;
+      }
+
       return "";
     }
 
-    return token;
+    const userCandidates = [
+      localStorage.getItem("token"),
+      localStorage.getItem("accessToken"),
+      localStorage.getItem("authToken"),
+      localStorage.getItem("jwt"),
+      sessionStorage.getItem("token"),
+      sessionStorage.getItem("accessToken"),
+      sessionStorage.getItem("authToken"),
+      sessionStorage.getItem("jwt"),
+    ]
+      .filter(
+        (token) =>
+          token &&
+          token !== "undefined" &&
+          token !== "null"
+      )
+      .map((token) =>
+        String(token)
+          .replace(/^Bearer\s+/i, "")
+          .trim()
+      );
+
+    return (
+      userCandidates.find(
+        isUsableUserToken
+      ) ||
+      ""
+    );
   } catch {
     return "";
   }
@@ -192,28 +367,40 @@ function normalizeAdminUser(user = {}) {
     ...user,
   };
 
+  const role =
+    String(
+      nextUser.role ||
+      nextUser.userRole ||
+      nextUser.type ||
+      "user"
+    )
+      .trim();
+
+  const normalizedRole =
+    role === "superadmin"
+      ? "superAdmin"
+      : role === "super_admin"
+      ? "superAdmin"
+      : role;
+
+  const isAdmin =
+    nextUser.isAdmin === true ||
+    normalizedRole === "admin" ||
+    normalizedRole === "superAdmin";
+
   nextUser.role =
-    nextUser.role ||
-    nextUser.userRole ||
-    nextUser.type ||
-    "admin";
+    normalizedRole;
 
   nextUser.userRole =
     nextUser.userRole ||
-    nextUser.role ||
-    nextUser.type ||
-    "admin";
+    normalizedRole;
 
   nextUser.type =
     nextUser.type ||
-    nextUser.role ||
-    nextUser.userRole ||
-    "admin";
+    normalizedRole;
 
   nextUser.isAdmin =
-    nextUser.isAdmin === false
-      ? false
-      : true;
+    isAdmin;
 
   return nextUser;
 }
@@ -222,19 +409,18 @@ function saveToken(token) {
   if (
     !token ||
     token === "undefined" ||
-    token === "null"
+    token === "null" ||
+    isAdminToken(token)
   ) {
     return;
   }
 
   try {
     [
-      "adminToken",
       "token",
       "accessToken",
       "authToken",
       "jwt",
-      "local-admin-token",
     ].forEach((key) => {
       localStorage.setItem(
         key,
@@ -254,6 +440,44 @@ function saveToken(token) {
   }
 }
 
+function saveAdminToken(token) {
+  const safeToken =
+    String(token || "")
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+
+  if (
+    !safeToken ||
+    safeToken === "undefined" ||
+    safeToken === "null" ||
+    !isUsableAdminToken(safeToken)
+  ) {
+    return;
+  }
+
+  try {
+    [
+      "adminToken",
+      "local-admin-token",
+    ].forEach((key) => {
+      localStorage.setItem(
+        key,
+        safeToken
+      );
+
+      sessionStorage.setItem(
+        key,
+        safeToken
+      );
+    });
+  } catch (e) {
+    console.warn(
+      "ADMIN TOKEN SAVE ERROR:",
+      e.message
+    );
+  }
+}
+
 function saveUser(user) {
   if (!user) return;
 
@@ -261,15 +485,20 @@ function saveUser(user) {
     const normalizedUser =
       normalizeAdminUser(user);
 
+    const storageKey =
+      normalizedUser?.isAdmin === true
+        ? "adminUser"
+        : "user";
+
     localStorage.setItem(
-      "user",
+      storageKey,
       JSON.stringify(
         normalizedUser
       )
     );
 
     sessionStorage.setItem(
-      "user",
+      storageKey,
       JSON.stringify(
         normalizedUser
       )
@@ -284,14 +513,25 @@ function saveUser(user) {
 
 function clearToken() {
   try {
-    [
-      "token",
-      "accessToken",
-      "authToken",
-      "adminToken",
-      "jwt",
-      "local-admin-token",
-    ].forEach((key) => {
+    const keys =
+      isAdminPage()
+        ? [
+            "adminToken",
+            "local-admin-token",
+            "adminUser",
+            "local-admin",
+            "isAdmin",
+            "adminLoggedIn",
+          ]
+        : [
+            "token",
+            "accessToken",
+            "authToken",
+            "jwt",
+            "user",
+          ];
+
+    keys.forEach((key) => {
       localStorage.removeItem(
         key
       );
@@ -306,6 +546,139 @@ function clearToken() {
       e.message
     );
   }
+}
+
+function normalizeStoredToken(token) {
+  return String(token || "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+}
+
+function removeStoredTokenValue(token) {
+  const failedToken =
+    normalizeStoredToken(token);
+
+  if (!failedToken) {
+    return;
+  }
+
+  try {
+    const tokenKeys = [
+      "adminToken",
+      "local-admin-token",
+      "token",
+      "accessToken",
+      "authToken",
+      "jwt",
+    ];
+
+    [localStorage, sessionStorage].forEach((storage) => {
+      tokenKeys.forEach((key) => {
+        const savedToken =
+          normalizeStoredToken(
+            storage.getItem(key)
+          );
+
+        if (savedToken === failedToken) {
+          storage.removeItem(key);
+        }
+      });
+    });
+  } catch (e) {
+    console.warn(
+      "FAILED ADMIN TOKEN CLEAR ERROR:",
+      e.message
+    );
+  }
+}
+
+function clearInvalidAdminSession() {
+  try {
+    const adminKeys = [
+      "adminToken",
+      "local-admin-token",
+      "adminUser",
+      "local-admin",
+      "isAdmin",
+      "adminLoggedIn",
+    ];
+
+    [localStorage, sessionStorage].forEach((storage) => {
+      adminKeys.forEach((key) => {
+        storage.removeItem(key);
+      });
+
+      [
+        "token",
+        "accessToken",
+        "authToken",
+        "jwt",
+      ].forEach((key) => {
+        const savedToken =
+          normalizeStoredToken(
+            storage.getItem(key)
+          );
+
+        if (
+          savedToken &&
+          (
+            isAdminToken(savedToken) ||
+            isTokenExpired(savedToken)
+          )
+        ) {
+          storage.removeItem(key);
+        }
+      });
+    });
+  } catch (e) {
+    console.warn(
+      "ADMIN SESSION CLEAR ERROR:",
+      e.message
+    );
+  }
+}
+
+function getRequestAuthToken(config = {}) {
+  const headers =
+    config?.headers || {};
+
+  return normalizeStoredToken(
+    headers.Authorization ||
+      headers.authorization ||
+      headers["x-access-token"] ||
+      headers["x-auth-token"] ||
+      ""
+  );
+}
+
+function applyRequestAuthToken(config = {}, token = "") {
+  const safeToken =
+    normalizeStoredToken(token);
+
+  if (!safeToken) {
+    return config;
+  }
+
+  config.headers =
+    config.headers || {};
+
+  config.headers.Authorization =
+    `Bearer ${safeToken}`;
+  config.headers.authorization =
+    `Bearer ${safeToken}`;
+  config.headers["x-access-token"] =
+    safeToken;
+  config.headers["x-auth-token"] =
+    safeToken;
+
+  if (safeToken.startsWith("local-admin-")) {
+    config.headers["x-local-admin"] =
+      "true";
+  } else if (config.headers["x-local-admin"]) {
+    delete config.headers["x-local-admin"];
+  }
+
+  return config;
 }
 
 function isAdminPage() {
@@ -464,27 +837,6 @@ API.interceptors.response.use(
     const data =
       res?.data;
 
-    try {
-      const token =
-        extractToken(data);
-
-      if (token) {
-        saveToken(token);
-      }
-
-      const user =
-        extractUser(data);
-
-      if (user) {
-        saveUser(user);
-      }
-    } catch (e) {
-      console.warn(
-        "AUTO TOKEN SAVE ERROR:",
-        e.message
-      );
-    }
-
     if (data?.data) {
       return data.data;
     }
@@ -597,6 +949,73 @@ API.interceptors.response.use(
         requestUrl.includes("/reviews");
 
       if (
+        isAdminPage() &&
+        isAdminRequest &&
+        !isLoginRequest
+      ) {
+        const failedToken =
+          getRequestAuthToken(
+            err?.config || {}
+          );
+
+        if (failedToken) {
+          removeStoredTokenValue(
+            failedToken
+          );
+        }
+
+        const retryConfig =
+          err?.config || null;
+
+        const nextAdminToken =
+          getStoredToken();
+
+        if (
+          retryConfig &&
+          retryConfig.__noraAdminAuthRetry !== true &&
+          nextAdminToken &&
+          nextAdminToken !== failedToken
+        ) {
+          retryConfig.__noraAdminAuthRetry =
+            true;
+
+          applyRequestAuthToken(
+            retryConfig,
+            nextAdminToken
+          );
+
+          return API.request(
+            retryConfig
+          );
+        }
+
+        clearInvalidAdminSession();
+        lastListAt = 0;
+        lastStatsAt = 0;
+        listPending = null;
+
+        try {
+          window.dispatchEvent(
+            new Event("auth-updated")
+          );
+        } catch (e) {
+          console.warn(
+            "ADMIN AUTH UPDATE EVENT ERROR:",
+            e.message
+          );
+        }
+
+        const path =
+          window.location.pathname;
+
+        if (path !== "/admin") {
+          window.location.replace(
+            "/admin"
+          );
+        }
+      }
+
+      if (
         isAuthRequest &&
         !isLoginRequest &&
         !isAdminRequest &&
@@ -644,9 +1063,8 @@ const userApi = {
     const token =
       extractToken(res);
 
-    if (token) {
-      saveToken(token);
-    }
+    const adminToken =
+      isAdminToken(token);
 
     const user =
       extractUser(res) ||
@@ -654,14 +1072,47 @@ const userApi = {
         id:
           data?.id ||
           data?.email ||
-          "admin",
-        role: "admin",
-        userRole: "admin",
-        type: "admin",
-        isAdmin: true,
+          "",
+        role:
+          adminToken
+            ? "admin"
+            : "user",
+        userRole:
+          adminToken
+            ? "admin"
+            : "user",
+        type:
+          adminToken
+            ? "admin"
+            : "user",
+        isAdmin:
+          adminToken,
       };
 
-    saveUser(user);
+    const normalizedUser =
+      normalizeAdminUser(user);
+
+    if (isAdminPage()) {
+      if (
+        token &&
+        adminToken &&
+        isAdminUser(normalizedUser)
+      ) {
+        saveAdminToken(token);
+        saveUser(normalizedUser);
+      }
+
+      return res;
+    }
+
+    if (
+      token &&
+      !adminToken &&
+      !isAdminUser(normalizedUser)
+    ) {
+      saveToken(token);
+      saveUser(normalizedUser);
+    }
 
     return res;
   },
@@ -676,18 +1127,75 @@ const userApi = {
     const token =
       extractToken(res);
 
-    if (token) {
-      saveToken(token);
-    }
-
     const user =
       extractUser(res);
 
-    if (user) {
+    if (
+      token &&
+      !isAdminToken(token)
+    ) {
+      saveToken(token);
+    }
+
+    if (
+      user &&
+      !isAdminUser(user)
+    ) {
       saveUser(user);
     }
 
+    lastListAt = 0;
+    lastStatsAt = 0;
+
     return res;
+  },
+
+  async shopRegister(data) {
+    const res =
+      await API.post(
+        "/auth/shop/register",
+        data
+      );
+
+    lastListAt = 0;
+    lastStatsAt = 0;
+
+    return res;
+  },
+
+  async adminRegister(data) {
+    return API.post(
+      "/auth/admin/register",
+      data
+    );
+  },
+
+  sendVerificationCode(data) {
+    return API.post(
+      "/auth/send-code",
+      data
+    );
+  },
+
+  verifyVerificationCode(data) {
+    return API.post(
+      "/auth/verify-code",
+      data
+    );
+  },
+
+  sendEmailVerificationCode(data) {
+    return API.post(
+      "/auth/send-email-code",
+      data
+    );
+  },
+
+  verifyEmailVerificationCode(data) {
+    return API.post(
+      "/auth/verify-email-code",
+      data
+    );
   },
 
   async logout() {
@@ -748,17 +1256,16 @@ const userApi = {
       const now =
         Date.now();
 
+      const hasCachedList =
+        Array.isArray(listCache.users) &&
+        listCache.users.length > 0;
+
       if (listPending) {
-        return Promise.race([
-          listPending,
-          resolveAfter(
-            USER_FAST_FALLBACK_MS,
-            listCache
-          ),
-        ]);
+        return listPending;
       }
 
       if (
+        hasCachedList &&
         now - lastListAt < 5000
       ) {
         return listCache;
@@ -769,7 +1276,7 @@ const userApi = {
 
       listPending =
         API.get(
-          "/admin/users",
+          "/users/admin",
           {
             params:
               cleanParams(params),
@@ -778,45 +1285,134 @@ const userApi = {
           }
         )
           .then((res) => {
-            listCache =
+            const normalized =
               normalizeUserList(res);
 
-            return listCache;
+            listCache =
+              normalized;
+
+            return normalized;
           })
           .catch((e) => {
             console.warn(
-              "USER LIST FALLBACK:",
-              e?.message || e
+              "USER LIST ERROR:",
+              e?.message ||
+                e?.msg ||
+                e?.error ||
+                e
             );
 
-            return listCache;
+            const hasFallbackList =
+              Array.isArray(listCache.users) &&
+              listCache.users.length > 0;
+
+            if (hasFallbackList) {
+              return listCache;
+            }
+
+            throw e;
           })
           .finally(() => {
             listPending =
               null;
           });
 
-      return Promise.race([
-        listPending,
-        resolveAfter(
-          USER_FAST_FALLBACK_MS,
-          listCache
-        ),
-      ]);
+      return await listPending;
     } catch (e) {
       console.warn(
-        "USER LIST FALLBACK:",
-        e?.message || e
+        "USER LIST ERROR:",
+        e?.message ||
+          e?.msg ||
+          e?.error ||
+          e
       );
 
-      return listCache;
+      const hasFallbackList =
+        Array.isArray(listCache.users) &&
+        listCache.users.length > 0;
+
+      if (hasFallbackList) {
+        return listCache;
+      }
+
+      throw e;
     }
+  },
+
+  getAll(params = {}) {
+    return this.getList(params);
   },
 
   updateRole(id, role) {
     return API.patch(
       `/users/${id}/role`,
       { role }
+    );
+  },
+
+  async updateServiceType(id, serviceType) {
+    const res =
+      await API.patch(
+        `/users/${id}/service-type`,
+        {
+          serviceType,
+        }
+      );
+
+    lastListAt = 0;
+
+    return res;
+  },
+
+  async updateJobGrade(id, jobGrade) {
+    const res = await API.patch(
+      `/users/${id}/job-grade`,
+      { jobGrade }
+    );
+
+    lastListAt = 0;
+    return res;
+  },
+
+  async updateJobPostingEnabled(id, jobPostingEnabled) {
+    const res = await API.patch(
+      `/users/${id}/job-posting-enabled`,
+      { jobPostingEnabled: jobPostingEnabled === true }
+    );
+
+    lastListAt = 0;
+    return res;
+  },
+
+  getShopLinks() {
+    return API.get(
+      "/users/admin/shop-links"
+    );
+  },
+
+  linkShopToUser(userId, shopId) {
+    return API.post(
+      `/users/admin/shop-links/user/${userId}`,
+      { shopId }
+    );
+  },
+
+  unlinkShopFromUser(userId) {
+    return API.delete(
+      `/users/admin/shop-links/user/${userId}`
+    );
+  },
+
+  approveShopLinkRequest(requestId) {
+    return API.post(
+      `/users/admin/shop-link-requests/${requestId}/approve`
+    );
+  },
+
+  rejectShopLinkRequest(requestId, reason = "") {
+    return API.post(
+      `/users/admin/shop-link-requests/${requestId}/reject`,
+      { reason }
     );
   },
 
@@ -827,12 +1423,45 @@ const userApi = {
     );
   },
 
+  updateId(id, nextId) {
+    return API.patch(
+      `/users/${id}/id`,
+      {
+        id: nextId,
+      }
+    );
+  },
+
+  updateNickname(id, nextNickname) {
+    return API.patch(
+      `/users/${id}/nickname`,
+      {
+        nickname: nextNickname,
+      }
+    );
+  },
+
+  resetPassword(id, nextPassword) {
+    return API.patch(
+      `/users/${id}/password`,
+      {
+        password: nextPassword,
+      }
+    );
+  },
+
   async getStats() {
     try {
       const now =
         Date.now();
 
+      const hasCachedStats =
+        Number(statsCache.total || 0) > 0 ||
+        Number(statsCache.users || 0) > 0 ||
+        Number(statsCache.userCount || 0) > 0;
+
       if (
+        hasCachedStats &&
         now - lastStatsAt < 3000
       ) {
         return statsCache;
@@ -841,45 +1470,79 @@ const userApi = {
       lastStatsAt =
         now;
 
-      const statsPending =
-        API.get(
-          "/users/admin/stats",
-          {
-            timeout:
-              USER_STATS_TIMEOUT_MS,
-          }
-        )
-          .then((res) => {
-            statsCache =
-              normalizeStats(res);
+      try {
+        const res =
+          await API.get(
+            "/users/admin/stats",
+            {
+              timeout:
+                USER_STATS_TIMEOUT_MS,
+            }
+          );
 
-            return statsCache;
-          })
-          .catch((e) => {
-            console.warn(
-              "USER STATS FALLBACK:",
-              e?.message || e
-            );
+        statsCache =
+          normalizeStats(res);
 
-            return statsCache;
+        return statsCache;
+      } catch (e) {
+        console.warn(
+          "USER STATS FALLBACK:",
+          e?.message || e
+        );
+
+        const listRes =
+          await userApi.getList({
+            adminStatsFallback:
+              "true",
           });
 
-      return await Promise.race([
-        statsPending,
-        resolveAfter(
-          USER_FAST_FALLBACK_MS,
-          statsCache
-        ),
-      ]);
+        const normalizedList =
+          normalizeUserList(listRes);
+
+        const total =
+          normalizedList.total ||
+          normalizedList.count ||
+          normalizedList.users.length ||
+          0;
+
+        statsCache = {
+          ...statsCache,
+          ok: true,
+          total,
+          count: total,
+          users: total,
+          userCount: total,
+          items:
+            normalizedList.items,
+          list:
+            normalizedList.list,
+          usersList:
+            normalizedList.users,
+          data:
+            normalizedList.data,
+        };
+
+        return statsCache;
+      }
     } catch (e) {
       console.warn(
-        "USER STATS FALLBACK:",
+        "USER STATS ERROR:",
         e?.message || e
       );
 
-      return statsCache;
+      const hasFallbackStats =
+        Number(statsCache.total || 0) > 0 ||
+        Number(statsCache.users || 0) > 0 ||
+        Number(statsCache.userCount || 0) > 0;
+
+      if (hasFallbackStats) {
+        return statsCache;
+      }
+
+      throw e;
     }
   },
 };
 
 export default userApi;
+

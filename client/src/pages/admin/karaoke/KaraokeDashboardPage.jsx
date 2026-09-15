@@ -1,6 +1,9 @@
 "use strict";
 
-import React, { useEffect } from "react";
+import React, {
+  useEffect,
+} from "react";
+
 import AdminDashboard from "../../AdminDashboard";
 
 /**
@@ -13,31 +16,50 @@ import AdminDashboard from "../../AdminDashboard";
  * ✔ 기존 API 호출 방식 변경 없음
  * ✔ 기존 state / props 변경 없음
  * ✔ /admin/karaoke/dashboard 전용 페이지
+ * ✔ category=karaoke 렌더 전 동기화
  * =====================================================
  */
 
-export default function KaraokeDashboardPage() {
-  useEffect(() => {
-    try {
-      if (
-        window.location.pathname === "/admin/karaoke/dashboard" &&
-        window.location.search !== "?category=karaoke"
-      ) {
-        window.history.replaceState(
-          {},
-          "",
-          "/admin/karaoke/dashboard?category=karaoke"
-        );
-      }
-    } catch (e) {
-      console.warn(
-        "KARAOKE DASHBOARD ROUTE SYNC ERROR:",
-        e.message
+function syncKaraokeDashboardRoute() {
+  try {
+    if (
+      typeof window === "undefined" ||
+      !window.location
+    ) {
+      return;
+    }
+
+    if (
+      window.location.pathname ===
+        "/admin/karaoke/dashboard" &&
+      window.location.search !==
+        "?category=karaoke"
+    ) {
+      window.history.replaceState(
+        {},
+        "",
+        "/admin/karaoke/dashboard?category=karaoke"
       );
     }
+  } catch (e) {
+    console.warn(
+      "KARAOKE DASHBOARD ROUTE SYNC ERROR:",
+      e.message
+    );
+  }
+}
+
+export default function KaraokeDashboardPage() {
+  syncKaraokeDashboardRoute();
+
+  useEffect(() => {
+    syncKaraokeDashboardRoute();
   }, []);
 
   return (
-    <AdminDashboard />
+    <AdminDashboard
+      category="karaoke"
+      dashboardCategory="karaoke"
+    />
   );
 }

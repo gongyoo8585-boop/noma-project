@@ -1,7 +1,7 @@
 "use strict";
 
 import {
-  loadKakaoMap,
+  loadKakaoMap as loadKakaoMapFromApi,
   calculateDistance,
 } from "./map.api";
 
@@ -34,6 +34,361 @@ let activeOverlays = [];
 let activeClusterer =
   null;
 
+const KAKAO_MAP_SCRIPT_ID =
+  "kakao-map-script";
+
+const KAKAO_MAP_SDK_URL =
+  "https://dapi.kakao.com/v2/maps/sdk.js";
+
+let kakaoMapLoadPromise =
+  null;
+
+const getRuntimeEnvValue =
+  (key) => {
+    try {
+      if (
+        typeof window !== "undefined" &&
+        window.__ENV__ &&
+        window.__ENV__[key]
+      ) {
+        return window.__ENV__[key];
+      }
+    } catch (error) {
+      return "";
+    }
+
+    return "";
+  };
+
+const getProcessEnvValue =
+  (key) => {
+    try {
+      if (
+        typeof process !== "undefined" &&
+        process.env &&
+        process.env[key]
+      ) {
+        return process.env[key];
+      }
+    } catch (error) {
+      return "";
+    }
+
+    return "";
+  };
+
+const KAKAO_MAP_LOAD_TIMEOUT =
+  Number(
+    import.meta?.env?.VITE_KAKAO_MAP_TIMEOUT ||
+      getRuntimeEnvValue("KAKAO_MAP_TIMEOUT") ||
+      getRuntimeEnvValue("VITE_KAKAO_MAP_TIMEOUT") ||
+      getProcessEnvValue("REACT_APP_KAKAO_MAP_TIMEOUT") ||
+      12000
+  );
+
+const getKakaoMapKey =
+  () => {
+    return String(
+      import.meta?.env?.VITE_KAKAO_MAP_KEY ||
+        import.meta?.env?.VITE_KAKAO_JS_KEY ||
+        import.meta?.env?.VITE_KAKAO_JAVASCRIPT_KEY ||
+        import.meta?.env?.VITE_KAKAO_APP_KEY ||
+        import.meta?.env?.KAKAO_JS_KEY ||
+        getRuntimeEnvValue("VITE_KAKAO_MAP_KEY") ||
+        getRuntimeEnvValue("VITE_KAKAO_JS_KEY") ||
+        getRuntimeEnvValue("VITE_KAKAO_JAVASCRIPT_KEY") ||
+        getRuntimeEnvValue("KAKAO_MAP_KEY") ||
+        getRuntimeEnvValue("KAKAO_JS_KEY") ||
+        getRuntimeEnvValue("KAKAO_JAVASCRIPT_KEY") ||
+        getProcessEnvValue("REACT_APP_KAKAO_MAP_KEY") ||
+        getProcessEnvValue("REACT_APP_KAKAO_JS_KEY") ||
+        getProcessEnvValue("REACT_APP_KAKAO_JAVASCRIPT_KEY") ||
+        ""
+    ).trim();
+  };
+
+const isKakaoMapReady =
+  () => {
+    return !!(
+      typeof window !== "undefined" &&
+      window.kakao &&
+      window.kakao.maps &&
+      window.kakao.maps.LatLng &&
+      window.kakao.maps.Map
+    );
+  };
+
+const getKakaoMapSdkSrc =
+  () => {
+    const appkey =
+      getKakaoMapKey();
+
+    if (!appkey) {
+      return "";
+    }
+
+    const params =
+      new URLSearchParams({
+        appkey,
+        autoload: "false",
+        libraries: "services,clusterer,drawing",
+      });
+
+    return `${KAKAO_MAP_SDK_URL}?${params.toString()}`;
+  };
+
+const clearBrokenKakaoMapScripts =
+  () => {
+    try {
+      const scripts =
+        Array.from(
+          document.querySelectorAll('script[src*="dapi.kakao.com/v2/maps/sdk.js"]')
+        );
+
+      scripts.forEach(
+        (script) => {
+          const appkey =
+            getKakaoMapKey();
+
+          const hasInvalidKey =
+            !appkey ||
+            script.src.includes("appkey=undefined") ||
+            script.src.includes("appkey=null") ||
+            script.src.includes("appkey=&") ||
+            script.dataset.loadFailed === "true" ||
+            script.dataset.noraKakaoMap === "broken";
+
+          if (hasInvalidKey) {
+            script.parentNode?.removeChild(script);
+          }
+        }
+      );
+    } catch (error) {
+      console.warn(
+        "clearBrokenKakaoMapScripts Error:",
+        error?.message || error
+      );
+    }
+  };
+
+const waitForKakaoMapLoad =
+  (script) => {
+    return new Promise(
+      (resolve, reject) => {
+        let finished =
+          false;
+
+        const timeoutId =
+          window.setTimeout(
+            () => {
+              if (finished) {
+                return;
+              }
+
+              finished = true;
+
+              if (script) {
+                script.dataset.loadFailed = "true";
+                script.dataset.noraKakaoMap = "broken";
+              }
+
+              reject(
+                new Error("KAKAO_MAP_SDK_LOAD_TIMEOUT")
+              );
+            },
+            KAKAO_MAP_LOAD_TIMEOUT
+          );
+
+        const finishSuccess =
+          () => {
+            if (finished) {
+              return;
+            }
+
+            finished = true;
+            window.clearTimeout(timeoutId);
+            resolve(window.kakao);
+          };
+
+        const finishError =
+          () => {
+            if (finished) {
+              return;
+            }
+
+            finished = true;
+            window.clearTimeout(timeoutId);
+
+            if (script) {
+              script.dataset.loadFailed = "true";
+              script.dataset.noraKakaoMap = "broken";
+            }
+
+            reject(
+              new Error("KAKAO_MAP_SDK_LOAD_FAILED")
+            );
+          };
+
+        const runKakaoLoad =
+          () => {
+            try {
+              if (
+                window.kakao &&
+                window.kakao.maps &&
+                typeof window.kakao.maps.load === "function"
+              ) {
+                window.kakao.maps.load(
+                  () => {
+                    if (isKakaoMapReady()) {
+                      finishSuccess();
+                    } else {
+                      finishError();
+                    }
+                  }
+                );
+
+                return;
+              }
+
+              if (isKakaoMapReady()) {
+                finishSuccess();
+                return;
+              }
+
+              finishError();
+            } catch (error) {
+              finishError();
+            }
+          };
+
+        if (isKakaoMapReady()) {
+          finishSuccess();
+          return;
+        }
+
+        if (script?.dataset?.loaded === "true") {
+          runKakaoLoad();
+          return;
+        }
+
+        script.addEventListener(
+          "load",
+          () => {
+            script.dataset.loaded = "true";
+            runKakaoLoad();
+          },
+          {
+            once: true,
+          }
+        );
+
+        script.addEventListener(
+          "error",
+          finishError,
+          {
+            once: true,
+          }
+        );
+      }
+    );
+  };
+
+const loadKakaoMapSafely =
+  async () => {
+    if (
+      typeof window === "undefined" ||
+      typeof document === "undefined"
+    ) {
+      throw new Error("KAKAO_MAP_BROWSER_ONLY");
+    }
+
+    if (isKakaoMapReady()) {
+      return window.kakao;
+    }
+
+    if (kakaoMapLoadPromise) {
+      return kakaoMapLoadPromise;
+    }
+
+    kakaoMapLoadPromise =
+      (async () => {
+        try {
+          clearBrokenKakaoMapScripts();
+
+          const sdkSrc =
+            getKakaoMapSdkSrc();
+
+          if (!sdkSrc) {
+            throw new Error("KAKAO_MAP_KEY_REQUIRED");
+          }
+
+          let script =
+            document.getElementById(
+              KAKAO_MAP_SCRIPT_ID
+            );
+
+          if (
+            script &&
+            script.src &&
+            script.src !== sdkSrc
+          ) {
+            script.parentNode?.removeChild(script);
+            script = null;
+          }
+
+          if (!script) {
+            script =
+              document.createElement("script");
+
+            script.id =
+              KAKAO_MAP_SCRIPT_ID;
+
+            script.async = true;
+            script.defer = true;
+            script.src = sdkSrc;
+            script.dataset.noraKakaoMap = "loading";
+
+            document.head.appendChild(script);
+          }
+
+          const kakao =
+            await waitForKakaoMapLoad(script);
+
+          if (script) {
+            script.dataset.noraKakaoMap = "ready";
+          }
+
+          if (!isKakaoMapReady()) {
+            throw new Error("KAKAO_MAP_NOT_READY");
+          }
+
+          return kakao;
+        } catch (error) {
+          kakaoMapLoadPromise = null;
+
+          try {
+            return await Promise.race([
+              loadKakaoMapFromApi(),
+              new Promise((_, reject) => {
+                window.setTimeout(
+                  () => reject(new Error("KAKAO_MAP_API_LOAD_TIMEOUT")),
+                  KAKAO_MAP_LOAD_TIMEOUT
+                );
+              }),
+            ]);
+          } catch (fallbackError) {
+            throw new Error(
+              fallbackError?.message ||
+                error?.message ||
+                "KAKAO_MAP_LOAD_FAILED"
+            );
+          }
+        }
+      })();
+
+    return kakaoMapLoadPromise;
+  };
+
 /* =========================================================
 🔥 LOAD MAP
 ========================================================= */
@@ -55,7 +410,7 @@ export const initializeKakaoMap =
       }
 
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       const mapOption = {
         center:
@@ -128,7 +483,7 @@ export const createMarker =
   } = {}) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       const targetMap =
         map || activeMap;
@@ -345,7 +700,7 @@ export const createOverlay =
   } = {}) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       const targetMap =
         map || activeMap;
@@ -437,7 +792,7 @@ export const moveToPosition =
   } = {}) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       if (!activeMap) {
         return false;
@@ -483,7 +838,7 @@ export const fitMapBounds =
   ) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       if (
         !activeMap ||
@@ -620,7 +975,7 @@ export const addMapEvent =
   } = {}) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       if (
         !target ||
@@ -704,7 +1059,7 @@ export const createClusterer =
   } = {}) => {
     try {
       const kakao =
-        await loadKakaoMap();
+        await loadKakaoMapSafely();
 
       const targetMap =
         map || activeMap;
