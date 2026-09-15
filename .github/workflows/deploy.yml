@@ -1,4 +1,4 @@
-name: Inspect NORA Live Dist
+name: Deploy NORA365 Current Bundle Patch
 
 on:
   push:
@@ -6,10 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: nora-production-deploy
+  cancel-in-progress: true
+
 jobs:
-  inspect:
+  deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Validate Secrets
         run: |
@@ -17,7 +21,7 @@ jobs:
           test -n "${{ secrets.USERNAME }}"
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
-      - name: Inspect live dist
+      - name: Patch and deploy current NORA365 bundle
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
@@ -25,16 +29,76 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
           script_stop: false
-          command_timeout: 10m
+          command_timeout: 20m
           script: |
-            echo "--- LIVE DIST ---"
-            ls -lah /var/www/nora || true
-            ls -lah /var/www/nora/assets || true
-            sha256sum /var/www/nora/index.html /var/www/nora/assets/*.js 2>/dev/null || true
-            echo "--- INDEX ASSET ---"
-            grep -o 'assets/index-[^" ]*\.js' /var/www/nora/index.html 2>/dev/null || true
-            echo "--- ROUTE/FEATURE STRINGS ---"
-            grep -l -E 'business/signup-agree|BusinessSignupAgree|전체 채용정보|PartnerInquiry|가입 유형|업체 회원가입' /var/www/nora/assets/*.js 2>/dev/null || true
-            echo "--- DIST MTIME ---"
-            stat /var/www/nora/index.html /var/www/nora/assets/*.js 2>/dev/null | grep -E 'File:|Modify:' || true
-            exit 0
+            set -e
+            LIVE_ROOT=/var/www/nora
+            OLD_JS="$LIVE_ROOT/assets/index-7w4aX4Nn.js"
+            NEW_JS="$LIVE_ROOT/assets/index-NORA365-20260915.js"
+            INDEX="$LIVE_ROOT/index.html"
+            EXPECTED_OLD_SHA="5ca77faaff2a63887376dbe12ed54196559a61ae5680ebea88f1e388362c8f09"
+            EXPECTED_NEW_SHA="47ae5635aa42bc5b396b062469c57325c6c20dfb04da4563141d929b768ba8f7"
+
+            echo "=== VERIFY CURRENT LIVE BUNDLE ==="
+            test -f "$OLD_JS"
+            test -f "$INDEX"
+            CURRENT_SHA=$(sha256sum "$OLD_JS" | awk '{print $1}')
+            echo "CURRENT_SHA=$CURRENT_SHA"
+            if [ "$CURRENT_SHA" != "$EXPECTED_OLD_SHA" ] && [ ! -f "$NEW_JS" ]; then
+              echo "Unexpected current bundle hash; refusing unsafe patch"
+              exit 1
+            fi
+
+            echo "=== BACKUP LIVE DIST ==="
+            TS=$(date +%Y%m%d-%H%M%S)
+            sudo mkdir -p "/var/backups/nora/$TS"
+            sudo cp -a "$INDEX" "/var/backups/nora/$TS/index.html"
+            if [ -f "$OLD_JS" ]; then sudo cp -a "$OLD_JS" "/var/backups/nora/$TS/index-7w4aX4Nn.js"; fi
+
+            echo "=== BUILD PATCHED BUNDLE ==="
+            if [ ! -f "$NEW_JS" ] || [ "$(sha256sum "$NEW_JS" | awk '{print $1}')" != "$EXPECTED_NEW_SHA" ]; then
+              sudo cp "$OLD_JS" "$NEW_JS"
+              cat > /tmp/nora_patch_business_agree.py <<'PY'
+            from pathlib import Path
+            import base64
+            p=Path('/var/www/nora/assets/index-NORA365-20260915.js')
+            s=p.read_text(encoding='utf-8')
+            start=s.index('function ox(){')
+            end=s.index('lx="#F7D774"', start)
+            replacement=base64.b64decode('ZnVuY3Rpb24gb3goKXsKY29uc3QgZT13bigpLFt0LG5dPWgudXNlU3RhdGUoe3NlcnZpY2U6ITEscHJpdmFjeTohMSxvd25lckNoZWNrOiExLHRydXRoZnVsOiExfSksW3IsYV09aC51c2VTdGF0ZSh7cHJpdmFjeU9wdGlvbmFsOiExLGxvY2F0aW9uOiExLGtlZXBBY2NvdW50OiExfSksbz1PYmplY3QudmFsdWVzKHQpLmV2ZXJ5KEJvb2xlYW4pLGw9byYmT2JqZWN0LnZhbHVlcyhyKS5ldmVyeShCb29sZWFuKSxzPWM9PntuKHU9Pih7Li4udSxbY106IXVbY119KSl9LEk9Yz0+e2EodT0+KHsuLi51LFtjXTohdVtjXX0pKX0sbT0oKT0+e2NvbnN0IGM9IWw7bih7c2VydmljZTpjLHByaXZhY3k6Yyxvd25lckNoZWNrOmMsdHJ1dGhmdWw6Y30pLGEoe3ByaXZhY3lPcHRpb25hbDpjLGxvY2F0aW9uOmMsa2VlcEFjY291bnQ6Y30pfSxkPWM9PntlKGAvdGVybXM/dHlwZT0ke2VuY29kZVVSSUNvbXBvbmVudChjKX1gKX0sZz0oKT0+e2lmKCFvKXthbGVydCgi7JeF7LK07ZqM7JuQIOqwgOyehSDtlYTsiJjsgqztla3sl5Ag66qo65GQIOuPmeydmO2VtOyjvOyEuOyalC4iKTtyZXR1cm59dHJ5e3Nlc3Npb25TdG9yYWdlLnNldEl0ZW0oImJ1c2luZXNzU2lnbnVwQWdyZWVDaGVja2VkIiwidHJ1ZSIpfWNhdGNoKGMpe2NvbnNvbGUud2FybigiQlVTSU5FU1NfU0lHTlVQX0FHUkVFX1NUT1JBR0VfRVJST1I6IixjKX1lKCIvYnVzaW5lc3Mvc2lnbnVwIil9LHY9KCk9Pnt0cnl7c2Vzc2lvblN0b3JhZ2UucmVtb3ZlSXRlbSgiYnVzaW5lc3NTaWdudXBBZ3JlZUNoZWNrZWQiKX1jYXRjaChjKXtjb25zb2xlLndhcm4oIkJVU0lORVNTX1NJR05VUF9BR1JFRV9TVE9SQUdFX0NMRUFSX0VSUk9SOiIsYyl9ZSgiL3NpZ251cC10eXBlIil9OwpyZXR1cm4gaS5jcmVhdGVFbGVtZW50KCJkaXYiLHtzdHlsZTpHbi5wYWdlfSxpLmNyZWF0ZUVsZW1lbnQoImRpdiIse3N0eWxlOkduLmNhcmRGcmFtZX0saS5jcmVhdGVFbGVtZW50KCJkaXYiLHtzdHlsZTpHbi5jYXJkfSxpLmNyZWF0ZUVsZW1lbnQoImRpdiIse3N0eWxlOkduLnRpdGxlV3JhcH0saS5jcmVhdGVFbGVtZW50KCJoMSIse3N0eWxlOkduLnRpdGxlfSwi7JeF7LK0IO2ajOybkOqwgOyehSDslb3qtIDrj5nsnZgiKSxpLmNyZWF0ZUVsZW1lbnQoImRpdiIse3N0eWxlOkduLnRpdGxlTGluZX0pKSxpLmNyZWF0ZUVsZW1lbnQoInAiLHtzdHlsZTpHbi5kZXNjfSwi64W46528IOyEnOu5hOyKpCDsnbTsmqnsnYQg7JyE7ZW0IOyVhOuemCDslb3qtIDsl5Ag64+Z7J2Y7ZW07KO87IS47JqULiIpLGkuY3JlYXRlRWxlbWVudCgiYnV0dG9uIix7dHlwZToiYnV0dG9uIixzdHlsZTpHbi5hbGxCdXR0b24sb25DbGljazptLCJhcmlhLXByZXNzZWQiOmx9LGkuY3JlYXRlRWxlbWVudCgic3BhbiIse3N0eWxlOnsuLi5Hbi5hbGxDaGVjaywuLi5sP0duLmFsbENoZWNrQWN0aXZlOm51bGx9fSxsPyLinJMiOiIiKSxpLmNyZWF0ZUVsZW1lbnQoInNwYW4iLG51bGwsbD8i7KCE7LK064+Z7J2YIO2VtOygnCI6IuyghOyytOuPmeydmCIpKSxpLmNyZWF0ZUVsZW1lbnQoImRpdiIse3N0eWxlOkduLmFncmVlbWVudExpc3R9LGkuY3JlYXRlRWxlbWVudChGcyx7Y2hlY2tlZDp0LnNlcnZpY2Usb25DbGljazooKT0+cygic2VydmljZSIpLHRleHQ6IuyEnOu5hOyKpCDsnbTsmqnslb3qtIAgKO2VhOyImCkiLG9uVmlldzooKT0+ZCgic2VydmljZSIpLHNob3dWaWV3OiEwfSksaS5jcmVhdGVFbGVtZW50KEZzLHtjaGVja2VkOnQucHJpdmFjeSxvbkNsaWNrOigpPT5zKCJwcml2YWN5IiksdGV4dDoi6rCc7J247KCV67O0IOyymOumrOuwqey5qCAo7ZWE7IiYKSIsb25WaWV3OigpPT5kKCJwcml2YWN5Iiksc2hvd1ZpZXc6ITB9KSxpLmNyZWF0ZUVsZW1lbnQoRnMse2NoZWNrZWQ6dC5vd25lckNoZWNrLG9uQ2xpY2s6KCk9PnMoIm93bmVyQ2hlY2siKSx0ZXh0OiLqsJzsnbjsoJXrs7Qg7IiY7KeRIOuwjyDsnbTsmqnrj5nsnZggKO2VhOyImCkiLG9uVmlldzooKT0+ZCgicHJpdmFjeVJlcXVpcmVkIiksc2hvd1ZpZXc6ITB9KSxpLmNyZWF0ZUVsZW1lbnQoRnMse2NoZWNrZWQ6ci5wcml2YWN5T3B0aW9uYWwsb25DbGljazooKT0+SSgicHJpdmFjeU9wdGlvbmFsIiksdGV4dDoi6rCc7J247KCV67O0IOyImOynkSDrsI8g7J207Jqp64+Z7J2YICjshKDtg50pIixvblZpZXc6KCk9PmQoInByaXZhY3lPcHRpb25hbCIpLHNob3dWaWV3OiEwfSksaS5jcmVhdGVFbGVtZW50KEZzLHtjaGVja2VkOnIubG9jYXRpb24sb25DbGljazooKT0+SSgibG9jYXRpb24iKSx0ZXh0OiLsnITsuZjquLDrsJjshJzruYTsiqQg7J207Jqp7JW96rSAICjshKDtg50pIixvblZpZXc6KCk9PmQoImxvY2F0aW9uIiksc2hvd1ZpZXc6ITB9KSxpLmNyZWF0ZUVsZW1lbnQoRnMse2NoZWNrZWQ6dC50cnV0aGZ1bCxvbkNsaWNrOigpPT5zKCJ0cnV0aGZ1bCIpLHRleHQ6IjE07IS4IOydtOyDgeyeheuLiOuLpC4gKO2VhOyImCkifSksaS5jcmVhdGVFbGVtZW50KEZzLHtjaGVja2VkOnIua2VlcEFjY291bnQsb25DbGljazooKT0+SSgia2VlcEFjY291bnQiKSx0ZXh0OiLsnqXquLDrr7jsgqzsmqnsi5zsl5Drj4Qg6rOE7KCV7Jyg7KeAICjshKDtg50pIn0pKSxpLmNyZWF0ZUVsZW1lbnQoImJ1dHRvbiIse3R5cGU6ImJ1dHRvbiIsc3R5bGU6ey4uLkduLm5leHRCdXR0b24sLi4ubz9udWxsOkduLm5leHRCdXR0b25EaXNhYmxlZH0sb25DbGljazpnLGRpc2FibGVkOiFvfSwi64uk7J2M44CA4oaSIiksaS5jcmVhdGVFbGVtZW50KCJidXR0b24iLHt0eXBlOiJidXR0b24iLHN0eWxlOkduLmJhY2tCdXR0b24sb25DbGljazp2fSwi66Gc6re47J247Jy866GcIOuPjOyVhOqwgOq4sCIpKSkpfQpmdW5jdGlvbiBGcyh7Y2hlY2tlZDplLG9uQ2xpY2s6dCx0ZXh0Om4sb25WaWV3OnIsc2hvd1ZpZXc6YT0hMX0pe3JldHVybiBpLmNyZWF0ZUVsZW1lbnQoImRpdiIse3N0eWxlOnsuLi5Hbi5hZ3JlZUJveCwuLi5lP0duLmFncmVlQm94Q2hlY2tlZDpudWxsfX0saS5jcmVhdGVFbGVtZW50KCJidXR0b24iLHt0eXBlOiJidXR0b24iLHN0eWxlOkduLmNoZWNrUm93LG9uQ2xpY2s6dCwiYXJpYS1wcmVzc2VkIjplfSxpLmNyZWF0ZUVsZW1lbnQoInNwYW4iLHtzdHlsZTp7Li4uR24uY2hlY2ssLi4uZT9Hbi5jaGVja0FjdGl2ZTpudWxsfX0sZT8i4pyTIjoiIiksaS5jcmVhdGVFbGVtZW50KCJzcGFuIix7c3R5bGU6R24ucm93VGV4dH0sbikpLGEmJmkuY3JlYXRlRWxlbWVudCgiYnV0dG9uIix7dHlwZToiYnV0dG9uIixzdHlsZTpHbi52aWV3QnV0dG9uLG9uQ2xpY2s6cn0sIu2BtOumrSIpKX0KY29uc3QgR249e3BhZ2U6e3Bvc2l0aW9uOiJmaXhlZCIsaW5zZXQ6MCxtaW5IZWlnaHQ6IjEwMHZoIix3aWR0aDoiMTAwdnciLGhlaWdodDoiMTAwdmgiLG1hcmdpbjowLHBhZGRpbmc6MCxib3hTaXppbmc6ImJvcmRlci1ib3giLGRpc3BsYXk6ImZsZXgiLGFsaWduSXRlbXM6ImNlbnRlciIsanVzdGlmeUNvbnRlbnQ6ImNlbnRlciIsb3ZlcmZsb3c6ImhpZGRlbiIsYmFja2dyb3VuZEltYWdlOmB1cmwoIiR7WVJ9IilgLGJhY2tncm91bmRTaXplOiIxMDAlIDEwMCUiLGJhY2tncm91bmRQb3NpdGlvbjoiY2VudGVyIixiYWNrZ3JvdW5kUmVwZWF0OiJuby1yZXBlYXQiLGJhY2tncm91bmRDb2xvcjoiIzAwMCIsY29sb3I6IiNmZmYifSxjYXJkRnJhbWU6e3Bvc2l0aW9uOiJyZWxhdGl2ZSIsd2lkdGg6IjEzLjVjbSIsaGVpZ2h0OiIxN2NtIixtaW5XaWR0aDoiMTMuNWNtIixtaW5IZWlnaHQ6IjE3Y20iLG1heFdpZHRoOiIxMy41Y20iLG1heEhlaWdodDoiMTdjbSIsZmxleDoiMCAwIGF1dG8iLG92ZXJmbG93OiJoaWRkZW4iLGJveFNpemluZzoiYm9yZGVyLWJveCJ9LGNhcmQ6e3Bvc2l0aW9uOiJhYnNvbHV0ZSIsbGVmdDowLHRvcDowLHdpZHRoOiIxMy41Y20iLGhlaWdodDoiMTdjbSIsbWluV2lkdGg6IjEzLjVjbSIsbWluSGVpZ2h0OiIxN2NtIixtYXhXaWR0aDoiMTMuNWNtIixtYXhIZWlnaHQ6IjE3Y20iLGJveFNpemluZzoiYm9yZGVyLWJveCIscGFkZGluZzoiMjBweCAyNHB4IDE4cHgiLGJvcmRlcjoiMXB4IHNvbGlkIHRyYW5zcGFyZW50Iixib3JkZXJSYWRpdXM6MTYsYmFja2dyb3VuZDpgbGluZWFyLWdyYWRpZW50KCMwYjBiMGIsICMwYjBiMGIpIHBhZGRpbmctYm94LCAke0ZmfSBib3JkZXItYm94YCxjb2xvcjoiI2ZmZiIsb3ZlcmZsb3c6ImhpZGRlbiIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfSx0aXRsZVdyYXA6e21hcmdpbkJvdHRvbToxMH0sdGl0bGU6e21hcmdpbjowLGZvbnRTaXplOjI4LGxpbmVIZWlnaHQ6MS4zNSxmb250V2VpZ2h0OjkwMCxsZXR0ZXJTcGFjaW5nOiItMC43cHgiLHRleHRBbGlnbjoiY2VudGVyIixiYWNrZ3JvdW5kOkZmLFdlYmtpdEJhY2tncm91bmRDbGlwOiJ0ZXh0IixiYWNrZ3JvdW5kQ2xpcDoidGV4dCIsY29sb3I6InRyYW5zcGFyZW50Iixmb250RmFtaWx5OiciUHJldGVuZGFyZCIsICJOb3RvIFNhbnMgS1IiLCAiTWFsZ3VuIEdvdGhpYyIsICJBcHBsZSBTRCBHb3RoaWMgTmVvIiwgc2Fucy1zZXJpZid9LHRpdGxlTGluZTp7d2lkdGg6IjEwMCUiLGhlaWdodDoyLG1hcmdpblRvcDoxMCxib3JkZXJSYWRpdXM6OTk5LGJhY2tncm91bmQ6RmZ9LGRlc2M6e21hcmdpbjoiMCAwIDEwcHgiLGNvbG9yOiIjYzdjN2M3Iixmb250U2l6ZToxNCxsaW5lSGVpZ2h0OjEuNTUsd29yZEJyZWFrOiJrZWVwLWFsbCIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfSxhbGxCdXR0b246e3dpZHRoOiIxMDAlIixoZWlnaHQ6NDgsbWluSGVpZ2h0OjQ4LGJveFNpemluZzoiYm9yZGVyLWJveCIsZGlzcGxheToiZmxleCIsYWxpZ25JdGVtczoiY2VudGVyIixnYXA6MTEscGFkZGluZzoiMTBweCAxNHB4IixtYXJnaW46IjAgMCA4cHgiLGJvcmRlcjowLGJvcmRlclJhZGl1czoxMCxiYWNrZ3JvdW5kOkZmLGNvbG9yOiIjMDUwNTA1Iixmb250U2l6ZToxNSxmb250V2VpZ2h0OjkwMCx0ZXh0QWxpZ246ImxlZnQiLGN1cnNvcjoicG9pbnRlciIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfSxhbGxDaGVjazp7d2lkdGg6MjQsaGVpZ2h0OjI0LG1pbldpZHRoOjI0LGJveFNpemluZzoiYm9yZGVyLWJveCIsZGlzcGxheToiaW5saW5lLWZsZXgiLGFsaWduSXRlbXM6ImNlbnRlciIsanVzdGlmeUNvbnRlbnQ6ImNlbnRlciIsYm9yZGVyUmFkaXVzOiI1MCUiLGJvcmRlcjoiMnB4IHNvbGlkICMwNTA1MDUiLGJhY2tncm91bmQ6InRyYW5zcGFyZW50Iixjb2xvcjoiIzA1MDUwNSIsZm9udFNpemU6MTUsZm9udFdlaWdodDo5MDB9LGFsbENoZWNrQWN0aXZlOntiYWNrZ3JvdW5kOiIjMDUwNTA1Iixjb2xvcjpwYn0sYWdyZWVtZW50TGlzdDp7ZGlzcGxheToiZmxleCIsZmxleERpcmVjdGlvbjoiY29sdW1uIixnYXA6NX0sYWdyZWVCb3g6e3dpZHRoOiIxMDAlIixoZWlnaHQ6NDcsbWluSGVpZ2h0OjQ3LHBhZGRpbmc6IjdweCAxMnB4Iixib3JkZXI6IjFweCBzb2xpZCAjMzQzNDM0Iixib3JkZXJSYWRpdXM6MTAsYmFja2dyb3VuZDoiIzExMSIsZGlzcGxheToiZmxleCIsYWxpZ25JdGVtczoiY2VudGVyIixqdXN0aWZ5Q29udGVudDoic3BhY2UtYmV0d2VlbiIsZ2FwOjEwLGJveFNpemluZzoiYm9yZGVyLWJveCJ9LGFncmVlQm94Q2hlY2tlZDp7Ym9yZGVyOiIxcHggc29saWQgdHJhbnNwYXJlbnQiLGJhY2tncm91bmQ6YGxpbmVhci1ncmFkaWVudCgjMTUxMzBiLCAjMTUxMzBiKSBwYWRkaW5nLWJveCwgJHtGZn0gYm9yZGVyLWJveGB9LGNoZWNrUm93OntmbGV4OjEsbWluV2lkdGg6MCxoZWlnaHQ6IjEwMCUiLGRpc3BsYXk6ImZsZXgiLGFsaWduSXRlbXM6ImNlbnRlciIsZ2FwOjExLGJvcmRlcjoibm9uZSIsYmFja2dyb3VuZDoidHJhbnNwYXJlbnQiLHBhZGRpbmc6MCxjdXJzb3I6InBvaW50ZXIiLHRleHRBbGlnbjoibGVmdCIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfSxjaGVjazp7d2lkdGg6MjQsaGVpZ2h0OjI0LG1pbldpZHRoOjI0LGJveFNpemluZzoiYm9yZGVyLWJveCIsZGlzcGxheToiaW5saW5lLWZsZXgiLGFsaWduSXRlbXM6ImNlbnRlciIsanVzdGlmeUNvbnRlbnQ6ImNlbnRlciIsYm9yZGVyUmFkaXVzOiI1MCUiLGJvcmRlcjpgMXB4IHNvbGlkICR7Uzd9YCxiYWNrZ3JvdW5kOiIjMDAwIixjb2xvcjoidHJhbnNwYXJlbnQiLGZvbnRTaXplOjE1LGZvbnRXZWlnaHQ6OTAwfSxjaGVja0FjdGl2ZTp7YmFja2dyb3VuZDpGZixjb2xvcjoiIzA1MDUwNSJ9LHJvd1RleHQ6e21pbldpZHRoOjAsY29sb3I6IiNmNGY0ZjQiLGZvbnRTaXplOjE0LGZvbnRXZWlnaHQ6NzAwLGxpbmVIZWlnaHQ6MS40NSx3b3JkQnJlYWs6ImtlZXAtYWxsIix3aGl0ZVNwYWNlOiJub3dyYXAiLGZvbnRGYW1pbHk6JyJQcmV0ZW5kYXJkIiwgIk5vdG8gU2FucyBLUiIsICJNYWxndW4gR290aGljIiwgIkFwcGxlIFNEIEdvdGhpYyBOZW8iLCBzYW5zLXNlcmlmJ30sdmlld0J1dHRvbjp7bWluV2lkdGg6NTQsaGVpZ2h0OjMwLHBhZGRpbmc6IjAgMTBweCIsYm9yZGVyOmAxcHggc29saWQgJHtTN31gLGJvcmRlclJhZGl1czo4LGJhY2tncm91bmQ6IiMwOTA5MDkiLGNvbG9yOnBiLGZvbnRTaXplOjEzLGZvbnRXZWlnaHQ6OTAwLGN1cnNvcjoicG9pbnRlciIsYm94U2l6aW5nOiJib3JkZXItYm94Iixmb250RmFtaWx5OiciUHJldGVuZGFyZCIsICJOb3RvIFNhbnMgS1IiLCAiTWFsZ3VuIEdvdGhpYyIsICJBcHBsZSBTRCBHb3RoaWMgTmVvIiwgc2Fucy1zZXJpZid9LG5leHRCdXR0b246e3dpZHRoOiIxMDAlIixoZWlnaHQ6NDgsbWluSGVpZ2h0OjQ4LG1hcmdpblRvcDoxMCxwYWRkaW5nOiIxMHB4IDE2cHgiLGJvcmRlcjowLGJvcmRlclJhZGl1czoxMCxiYWNrZ3JvdW5kOkZmLGNvbG9yOiIjMDUwNTA1Iixmb250U2l6ZToxNSxmb250V2VpZ2h0OjkwMCxjdXJzb3I6InBvaW50ZXIiLGJveFNpemluZzoiYm9yZGVyLWJveCIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfSxuZXh0QnV0dG9uRGlzYWJsZWQ6e29wYWNpdHk6LjM4LGN1cnNvcjoibm90LWFsbG93ZWQifSxiYWNrQnV0dG9uOnt3aWR0aDoiMTAwJSIsaGVpZ2h0OjQ0LG1pbkhlaWdodDo0NCxtYXJnaW5Ub3A6NixwYWRkaW5nOiI5cHggMTZweCIsYm9yZGVyOiIxcHggc29saWQgIzQ0NCIsYm9yZGVyUmFkaXVzOjEwLGJhY2tncm91bmQ6IiMwMDAiLGNvbG9yOiIjZmZmIixmb250U2l6ZToxNCxmb250V2VpZ2h0OjgwMCxjdXJzb3I6InBvaW50ZXIiLGJveFNpemluZzoiYm9yZGVyLWJveCIsZm9udEZhbWlseTonIlByZXRlbmRhcmQiLCAiTm90byBTYW5zIEtSIiwgIk1hbGd1biBHb3RoaWMiLCAiQXBwbGUgU0QgR290aGljIE5lbyIsIHNhbnMtc2VyaWYnfX0s').decode('utf-8')
+            p.write_text(s[:start]+replacement+s[end:], encoding='utf-8')
+            PY
+              sudo python3 /tmp/nora_patch_business_agree.py
+              rm -f /tmp/nora_patch_business_agree.py
+            fi
+
+            echo "=== VERIFY PATCHED BUNDLE ==="
+            node --check "$NEW_JS"
+            NEW_SHA=$(sha256sum "$NEW_JS" | awk '{print $1}')
+            echo "NEW_SHA=$NEW_SHA"
+            test "$NEW_SHA" = "$EXPECTED_NEW_SHA"
+            grep -q '업체 회원가입 약관동의' "$NEW_JS"
+            grep -q 'linear-gradient(#15130b, #15130b) padding-box' "$NEW_JS"
+
+            echo "=== SWITCH INDEX TO NEW BUNDLE ==="
+            sudo sed -i 's#index-7w4aX4Nn\.js#index-NORA365-20260915.js#g' "$INDEX"
+            grep -q 'index-NORA365-20260915.js' "$INDEX"
+
+            echo "=== RESTART API / RELOAD NGINX ==="
+            if pm2 describe nora-api > /dev/null 2>&1; then
+              pm2 restart nora-api --update-env
+              pm2 save
+            fi
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            echo "=== HEALTH CHECK ==="
+            curl -f --max-time 30 https://api.nora365.co.kr/api/health
+            curl -f --max-time 30 https://www.nora365.co.kr
+            curl -f --max-time 30 https://www.nora365.co.kr/business/signup-agree
+            curl -f --max-time 30 https://www.nora365.co.kr/assets/index-NORA365-20260915.js -o /tmp/nora-live.js
+            test "$(sha256sum /tmp/nora-live.js | awk '{print $1}')" = "$EXPECTED_NEW_SHA"
+            curl -f --max-time 30 https://m.nora365.co.kr || true
+            rm -f /tmp/nora-live.js
+
+            echo "NORA365 DEPLOY SUCCESS"
