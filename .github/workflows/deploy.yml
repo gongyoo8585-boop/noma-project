@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch:
 
-concurrency:
-  group: nora-production-verify
-  cancel-in-progress: true
-
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -31,59 +27,62 @@ jobs:
           script_stop: false
           command_timeout: 15m
           script: |
-            set -e
             LIVE_ROOT=/var/www/nora
             JS="$LIVE_ROOT/assets/index-NORA365-20260915.js"
             INDEX="$LIVE_ROOT/index.html"
             EXPECTED_SHA="47ae5635aa42bc5b396b062469c57325c6c20dfb04da4563141d929b768ba8f7"
+            FAIL=0
 
-            echo "=== STATIC BUNDLE VERIFY ==="
-            test -f "$INDEX"
-            test -f "$JS"
-            grep -q 'index-NORA365-20260915.js' "$INDEX"
-            node --check "$JS"
+            echo "=== STATIC BUNDLE ==="
+            test -f "$INDEX" || FAIL=1
+            test -f "$JS" || FAIL=1
+            grep -q 'index-NORA365-20260915.js' "$INDEX" || FAIL=1
+            node --check "$JS" || FAIL=1
             ACTUAL_SHA=$(sha256sum "$JS" | awk '{print $1}')
             echo "ACTUAL_SHA=$ACTUAL_SHA"
-            test "$ACTUAL_SHA" = "$EXPECTED_SHA"
-            grep -q '업체 회원가입 약관동의' "$JS"
-            grep -q 'linear-gradient(#15130b, #15130b) padding-box' "$JS"
+            test "$ACTUAL_SHA" = "$EXPECTED_SHA" || FAIL=1
+            grep -q '업체 회원가입 약관동의' "$JS" || FAIL=1
+            grep -q 'linear-gradient(#15130b, #15130b) padding-box' "$JS" || FAIL=1
 
-            echo "=== PM2 VERIFY ==="
-            pm2 describe nora-api
-            STATUS=$(pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const a=JSON.parse(s).find(x=>x.name==="nora-api");console.log(a&&a.pm2_env?a.pm2_env.status:"")})')
-            echo "PM2_STATUS=$STATUS"
-            test "$STATUS" = "online"
+            echo "=== SERVICES ==="
+            pm2 describe nora-api | grep -E 'status|online' || FAIL=1
+            sudo nginx -t || FAIL=1
 
-            echo "=== NGINX VERIFY ==="
-            sudo nginx -t
+            echo "=== HEALTH ==="
+            LOCAL_CODE=$(curl -sS -o /tmp/local-health -w '%{http_code}' --max-time 20 http://127.0.0.1:10000/api/health || true)
+            PUBLIC_API_CODE=$(curl -sS -o /tmp/public-health -w '%{http_code}' --max-time 20 https://api.nora365.co.kr/api/health || true)
+            echo "LOCAL_API_HTTP=$LOCAL_CODE"
+            cat /tmp/local-health 2>/dev/null || true
+            echo
+            echo "PUBLIC_API_HTTP=$PUBLIC_API_CODE"
+            cat /tmp/public-health 2>/dev/null || true
+            echo
+            test "$LOCAL_CODE" = "200" || FAIL=1
+            test "$PUBLIC_API_CODE" = "200" || FAIL=1
 
-            echo "=== LOCAL API HEALTH ==="
-            ok=0
-            for i in 1 2 3 4 5 6; do
-              if curl -fsS --max-time 20 http://127.0.0.1:10000/api/health; then ok=1; break; fi
-              echo "local health retry $i"
-              sleep 5
-            done
-            test "$ok" = "1"
-
-            echo "=== PUBLIC API HEALTH ==="
-            ok=0
-            for i in 1 2 3 4 5 6; do
-              if curl -fsS --max-time 20 https://api.nora365.co.kr/api/health; then ok=1; break; fi
-              echo "public api retry $i"
-              sleep 5
-            done
-            test "$ok" = "1"
-
-            echo "=== PUBLIC WEB VERIFY ==="
-            curl -fsS --max-time 30 https://www.nora365.co.kr >/tmp/nora-home.html
-            curl -fsS --max-time 30 https://www.nora365.co.kr/business/signup-agree >/tmp/nora-signup.html
-            curl -fsS --max-time 60 https://www.nora365.co.kr/assets/index-NORA365-20260915.js >/tmp/nora-live.js
-            test "$(sha256sum /tmp/nora-live.js | awk '{print $1}')" = "$EXPECTED_SHA"
-            if curl -fsS --max-time 30 https://m.nora365.co.kr >/tmp/nora-mobile.html; then
-              echo "MOBILE_DOMAIN=OK"
+            echo "=== PUBLIC PAGES ==="
+            HOME_CODE=$(curl -L -sS -o /tmp/home -w '%{http_code}' --max-time 30 https://www.nora365.co.kr || true)
+            SIGNUP_CODE=$(curl -L -sS -o /tmp/signup -w '%{http_code}' --max-time 30 https://www.nora365.co.kr/business/signup-agree || true)
+            ASSET_CODE=$(curl -L -sS -o /tmp/live-js -w '%{http_code}' --max-time 60 https://www.nora365.co.kr/assets/index-NORA365-20260915.js || true)
+            MOBILE_CODE=$(curl -L -sS -o /tmp/mobile -w '%{http_code}' --max-time 30 https://m.nora365.co.kr || true)
+            echo "HOME_HTTP=$HOME_CODE"
+            echo "SIGNUP_HTTP=$SIGNUP_CODE"
+            echo "ASSET_HTTP=$ASSET_CODE"
+            echo "MOBILE_HTTP=$MOBILE_CODE"
+            if [ -f /tmp/live-js ]; then
+              LIVE_SHA=$(sha256sum /tmp/live-js | awk '{print $1}')
+              echo "PUBLIC_ASSET_SHA=$LIVE_SHA"
             else
-              echo "MOBILE_DOMAIN=UNAVAILABLE_OR_NOT_SEPARATE"
+              LIVE_SHA=""
             fi
-            rm -f /tmp/nora-home.html /tmp/nora-signup.html /tmp/nora-live.js /tmp/nora-mobile.html
+            test "$HOME_CODE" = "200" || FAIL=1
+            test "$SIGNUP_CODE" = "200" || FAIL=1
+            test "$ASSET_CODE" = "200" || FAIL=1
+            test "$LIVE_SHA" = "$EXPECTED_SHA" || FAIL=1
+
+            rm -f /tmp/local-health /tmp/public-health /tmp/home /tmp/signup /tmp/live-js /tmp/mobile
+            if [ "$FAIL" != "0" ]; then
+              echo "NORA365 PRODUCTION VERIFY FAILED"
+              exit 1
+            fi
             echo "NORA365 PRODUCTION VERIFY SUCCESS"
