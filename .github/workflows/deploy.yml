@@ -1,4 +1,4 @@
-name: Inspect NORA Images
+name: Inspect NORA Live Dist
 
 on:
   push:
@@ -17,8 +17,7 @@ jobs:
           test -n "${{ secrets.USERNAME }}"
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
-          test -n "${{ secrets.PROJECT_PATH }}"
-      - name: Inspect image payload hashes
+      - name: Inspect live dist
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
@@ -28,28 +27,14 @@ jobs:
           script_stop: false
           command_timeout: 10m
           script: |
-            cd "${{ secrets.PROJECT_PATH }}"
-            python3 - <<'PY'
-            from pathlib import Path
-            import re, hashlib
-            files = [
-              'client/src/pages/HomePage.jsx',
-              'client/src/pages/LoginPage.jsx',
-              'client/src/pages/SignupPage.jsx',
-              'client/src/pages/SignupAgreePage.jsx',
-              'client/src/pages/MapPage.jsx',
-              'client/src/pages/KaraokeMapPage.jsx'
-            ]
-            for f in files:
-              p=Path(f)
-              if not p.exists():
-                print('MISSING', f); continue
-              s=p.read_text(errors='ignore')
-              found=[]
-              found.extend(re.findall(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', s))
-              for m in re.finditer(r'const\s+(\w+)\s*=\s*\n?\s*"(data:image/[^;]+;base64,)"\s*\+(.+?);', s, re.S):
-                var,prefix,body=m.groups(); parts=re.findall(r'"([A-Za-z0-9+/=]+)"', body); found.append(prefix+''.join(parts))
-              print('FILE', f)
-              for x in found:
-                print(len(x), hashlib.sha256(x.encode()).hexdigest())
-            PY
+            echo "--- LIVE DIST ---"
+            ls -lah /var/www/nora || true
+            ls -lah /var/www/nora/assets || true
+            sha256sum /var/www/nora/index.html /var/www/nora/assets/*.js 2>/dev/null || true
+            echo "--- INDEX ASSET ---"
+            grep -o 'assets/index-[^" ]*\.js' /var/www/nora/index.html 2>/dev/null || true
+            echo "--- ROUTE/FEATURE STRINGS ---"
+            grep -l -E 'business/signup-agree|BusinessSignupAgree|전체 채용정보|PartnerInquiry|가입 유형|업체 회원가입' /var/www/nora/assets/*.js 2>/dev/null || true
+            echo "--- DIST MTIME ---"
+            stat /var/www/nora/index.html /var/www/nora/assets/*.js 2>/dev/null | grep -E 'File:|Modify:' || true
+            exit 0
