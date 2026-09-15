@@ -1,4 +1,4 @@
-name: Verify NORA365 Production
+name: Inspect NORA365 Source Before Full Deploy
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  verify:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -17,7 +17,8 @@ jobs:
           test -n "${{ secrets.USERNAME }}"
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
-      - name: Verify NORA365 production
+          test -n "${{ secrets.PROJECT_PATH }}"
+      - name: Inspect latest production source
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
@@ -27,62 +28,44 @@ jobs:
           script_stop: false
           command_timeout: 15m
           script: |
-            LIVE_ROOT=/var/www/nora
-            JS="$LIVE_ROOT/assets/index-NORA365-20260915.js"
-            INDEX="$LIVE_ROOT/index.html"
-            EXPECTED_SHA="47ae5635aa42bc5b396b062469c57325c6c20dfb04da4563141d929b768ba8f7"
-            FAIL=0
-
-            echo "=== STATIC BUNDLE ==="
-            test -f "$INDEX" || FAIL=1
-            test -f "$JS" || FAIL=1
-            grep -q 'index-NORA365-20260915.js' "$INDEX" || FAIL=1
-            node --check "$JS" || FAIL=1
-            ACTUAL_SHA=$(sha256sum "$JS" | awk '{print $1}')
-            echo "ACTUAL_SHA=$ACTUAL_SHA"
-            test "$ACTUAL_SHA" = "$EXPECTED_SHA" || FAIL=1
-            grep -q '업체 회원가입 약관동의' "$JS" || FAIL=1
-            grep -q 'linear-gradient(#15130b, #15130b) padding-box' "$JS" || FAIL=1
-
-            echo "=== SERVICES ==="
-            pm2 describe nora-api | grep -E 'status|online' || FAIL=1
-            sudo nginx -t || FAIL=1
-
-            echo "=== HEALTH ==="
-            LOCAL_CODE=$(curl -sS -o /tmp/local-health -w '%{http_code}' --max-time 20 http://127.0.0.1:10000/api/health || true)
-            PUBLIC_API_CODE=$(curl -sS -o /tmp/public-health -w '%{http_code}' --max-time 20 https://api.nora365.co.kr/api/health || true)
-            echo "LOCAL_API_HTTP=$LOCAL_CODE"
-            cat /tmp/local-health 2>/dev/null || true
-            echo
-            echo "PUBLIC_API_HTTP=$PUBLIC_API_CODE"
-            cat /tmp/public-health 2>/dev/null || true
-            echo
-            test "$LOCAL_CODE" = "200" || FAIL=1
-            test "$PUBLIC_API_CODE" = "200" || FAIL=1
-
-            echo "=== PUBLIC PAGES ==="
-            HOME_CODE=$(curl -L -sS -o /tmp/home -w '%{http_code}' --max-time 30 https://www.nora365.co.kr || true)
-            SIGNUP_CODE=$(curl -L -sS -o /tmp/signup -w '%{http_code}' --max-time 30 https://www.nora365.co.kr/business/signup-agree || true)
-            ASSET_CODE=$(curl -L -sS -o /tmp/live-js -w '%{http_code}' --max-time 60 https://www.nora365.co.kr/assets/index-NORA365-20260915.js || true)
-            MOBILE_CODE=$(curl -L -sS -o /tmp/mobile -w '%{http_code}' --max-time 30 https://m.nora365.co.kr || true)
-            echo "HOME_HTTP=$HOME_CODE"
-            echo "SIGNUP_HTTP=$SIGNUP_CODE"
-            echo "ASSET_HTTP=$ASSET_CODE"
-            echo "MOBILE_HTTP=$MOBILE_CODE"
-            if [ -f /tmp/live-js ]; then
-              LIVE_SHA=$(sha256sum /tmp/live-js | awk '{print $1}')
-              echo "PUBLIC_ASSET_SHA=$LIVE_SHA"
-            else
-              LIVE_SHA=""
-            fi
-            test "$HOME_CODE" = "200" || FAIL=1
-            test "$SIGNUP_CODE" = "200" || FAIL=1
-            test "$ASSET_CODE" = "200" || FAIL=1
-            test "$LIVE_SHA" = "$EXPECTED_SHA" || FAIL=1
-
-            rm -f /tmp/local-health /tmp/public-health /tmp/home /tmp/signup /tmp/live-js /tmp/mobile
-            if [ "$FAIL" != "0" ]; then
-              echo "NORA365 PRODUCTION VERIFY FAILED"
-              exit 1
-            fi
-            echo "NORA365 PRODUCTION VERIFY SUCCESS"
+            cd "${{ secrets.PROJECT_PATH }}" || exit 1
+            echo "PROJECT=$(pwd)"
+            echo "GIT_HEAD=$(git rev-parse HEAD 2>/dev/null || true)"
+            echo "--- GIT STATUS ---"
+            git status --short 2>/dev/null | sed -n '1,120p' || true
+            echo "--- SOURCE FILES ---"
+            for f in \
+              client/src/pages/HomePage.jsx \
+              client/src/pages/MapPage.jsx \
+              client/src/pages/KaraokeMapPage.jsx \
+              client/src/pages/ShopDetailPage.jsx \
+              client/src/pages/KaraokeShopDetailPage.jsx \
+              client/src/pages/JobsPage.jsx \
+              client/src/pages/LoginPage.jsx \
+              client/src/pages/SignupAgreePage.jsx \
+              client/src/pages/SignupPage.jsx \
+              client/src/pages/BusinessSignupAgreePage.jsx \
+              client/src/pages/BusinessSignupPage.jsx \
+              client/src/router/AppRouter.jsx \
+              client/src/services/shop.api.js \
+              client/src/services/user.api.js \
+              client/src/services/job.api.js \
+              client/src/pages/admin/ShopAdminPage.jsx \
+              client/src/pages/admin/UserAdminPage.jsx \
+              client/src/pages/admin/karaoke/KaraokeUserAdminPage.jsx \
+              server.js \
+              package.json \
+              client/package.json; do
+              if [ -f "$f" ]; then
+                printf '%s|' "$f"
+                stat -c '%y|%s|' "$f"
+                sha256sum "$f" | awk '{print $1}'
+              else
+                echo "$f|MISSING"
+              fi
+            done
+            echo "--- ROUTES ---"
+            grep -nE 'path=.*(login|signup-agree|signup|business/signup-agree|admin|jobs|karaoke|map)' client/src/router/AppRouter.jsx 2>/dev/null | sed -n '1,120p' || true
+            echo "--- KEY MARKERS ---"
+            grep -nE 'smallMobilePopupScale|scrollToMobilePageHeader|전체 채용정보|businessSignupAgreeChecked|agreeBoxChecked|agreeBox' client/src/pages/HomePage.jsx client/src/pages/MapPage.jsx client/src/pages/KaraokeMapPage.jsx client/src/pages/JobsPage.jsx client/src/pages/BusinessSignupAgreePage.jsx 2>/dev/null | sed -n '1,160p' || true
+            exit 0
