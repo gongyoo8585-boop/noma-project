@@ -1,4 +1,4 @@
-name: Inspect NORA365 Source Before Full Deploy
+name: Deploy NORA365 Full Production
 
 on:
   push:
@@ -6,10 +6,16 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: nora-production-deploy
+  cancel-in-progress: true
+
 jobs:
-  inspect:
+  deploy:
+    name: Full Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
+
     steps:
       - name: Validate Secrets
         run: |
@@ -18,22 +24,29 @@ jobs:
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
           test -n "${{ secrets.PROJECT_PATH }}"
-      - name: Inspect latest production source
+
+      - name: Build and deploy current NORA365 production source
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
-          script_stop: false
-          command_timeout: 15m
+          script_stop: true
+          command_timeout: 40m
           script: |
-            cd "${{ secrets.PROJECT_PATH }}" || exit 1
+            set -e
+
+            PROJECT="${{ secrets.PROJECT_PATH }}"
+            LIVE_ROOT="/var/www/nora"
+            TS=$(date +%Y%m%d-%H%M%S)
+            BACKUP="/var/backups/nora/full-$TS"
+
+            echo "=== NORA365 FULL DEPLOY START ==="
+            cd "$PROJECT"
             echo "PROJECT=$(pwd)"
-            echo "GIT_HEAD=$(git rev-parse HEAD 2>/dev/null || true)"
-            echo "--- GIT STATUS ---"
-            git status --short 2>/dev/null | sed -n '1,120p' || true
-            echo "--- SOURCE FILES ---"
+
+            echo "=== REQUIRED SOURCE CHECK ==="
             for f in \
               client/src/pages/HomePage.jsx \
               client/src/pages/MapPage.jsx \
@@ -47,25 +60,101 @@ jobs:
               client/src/pages/BusinessSignupAgreePage.jsx \
               client/src/pages/BusinessSignupPage.jsx \
               client/src/router/AppRouter.jsx \
-              client/src/services/shop.api.js \
-              client/src/services/user.api.js \
-              client/src/services/job.api.js \
               client/src/pages/admin/ShopAdminPage.jsx \
-              client/src/pages/admin/UserAdminPage.jsx \
-              client/src/pages/admin/karaoke/KaraokeUserAdminPage.jsx \
-              server.js \
-              package.json \
-              client/package.json; do
-              if [ -f "$f" ]; then
-                printf '%s|' "$f"
-                stat -c '%y|%s|' "$f"
-                sha256sum "$f" | awk '{print $1}'
-              else
-                echo "$f|MISSING"
-              fi
+              server.js; do
+              test -f "$f" || { echo "MISSING REQUIRED FILE: $f"; exit 1; }
             done
-            echo "--- ROUTES ---"
-            grep -nE 'path=.*(login|signup-agree|signup|business/signup-agree|admin|jobs|karaoke|map)' client/src/router/AppRouter.jsx 2>/dev/null | sed -n '1,120p' || true
-            echo "--- KEY MARKERS ---"
-            grep -nE 'smallMobilePopupScale|scrollToMobilePageHeader|전체 채용정보|businessSignupAgreeChecked|agreeBoxChecked|agreeBox' client/src/pages/HomePage.jsx client/src/pages/MapPage.jsx client/src/pages/KaraokeMapPage.jsx client/src/pages/JobsPage.jsx client/src/pages/BusinessSignupAgreePage.jsx 2>/dev/null | sed -n '1,160p' || true
-            exit 0
+
+            echo "=== ROUTE CHECK ==="
+            grep -q 'path="/login"' client/src/router/AppRouter.jsx
+            grep -q 'path="/signup-agree"' client/src/router/AppRouter.jsx
+            grep -q 'path="/signup"' client/src/router/AppRouter.jsx
+            grep -q 'path="/business/signup-agree"' client/src/router/AppRouter.jsx
+            grep -q '/admin' client/src/router/AppRouter.jsx
+            grep -q '/karaoke' client/src/router/AppRouter.jsx
+            grep -q '/map' client/src/router/AppRouter.jsx
+
+            echo "=== BACKUP CURRENT LIVE SITE ==="
+            sudo mkdir -p "$BACKUP"
+            if [ -d "$LIVE_ROOT" ]; then
+              sudo cp -a "$LIVE_ROOT/." "$BACKUP/"
+            fi
+
+            echo "=== ROOT DEPENDENCIES / SERVER CHECK ==="
+            npm install
+            node --check server.js
+
+            echo "=== CLIENT BUILD ==="
+            cd client
+            npm install
+            npm install @rollup/rollup-linux-x64-gnu --save-dev || true
+            chmod +x node_modules/.bin/vite || true
+            CI=false npm run build
+            test -f dist/index.html
+            test -d dist/assets
+
+            echo "=== PUBLISH FULL CLIENT DIST ==="
+            sudo mkdir -p "$LIVE_ROOT"
+            sudo rsync -a --delete dist/ "$LIVE_ROOT/"
+            test -f "$LIVE_ROOT/index.html"
+            test -d "$LIVE_ROOT/assets"
+            cd ..
+
+            echo "=== RESTART API ==="
+            if pm2 describe nora-api > /dev/null 2>&1; then
+              pm2 restart ecosystem.config.js --only nora-api --env production --update-env
+            else
+              pm2 start ecosystem.config.js --only nora-api --env production
+            fi
+            pm2 save
+
+            echo "=== NGINX ==="
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            echo "=== WAIT FOR API ==="
+            ok=0
+            for i in 1 2 3 4 5 6 7 8; do
+              if curl -fsS --max-time 20 http://127.0.0.1:10000/api/health >/tmp/nora-local-health; then
+                ok=1
+                break
+              fi
+              echo "local api retry $i"
+              sleep 5
+            done
+            test "$ok" = "1"
+            cat /tmp/nora-local-health
+            rm -f /tmp/nora-local-health
+
+            echo "=== PUBLIC API ==="
+            curl -fsS --max-time 30 https://api.nora365.co.kr/api/health
+
+            echo "=== PUBLIC PAGE CHECKS ==="
+            for url in \
+              https://www.nora365.co.kr/ \
+              https://www.nora365.co.kr/home \
+              https://www.nora365.co.kr/map \
+              https://www.nora365.co.kr/massage/map \
+              https://www.nora365.co.kr/karaoke \
+              https://www.nora365.co.kr/karaoke/map \
+              https://www.nora365.co.kr/jobs \
+              https://www.nora365.co.kr/login \
+              https://www.nora365.co.kr/signup-agree \
+              https://www.nora365.co.kr/signup \
+              https://www.nora365.co.kr/business/signup-agree \
+              https://www.nora365.co.kr/admin \
+              https://www.nora365.co.kr/admin/dashboard; do
+              code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url" || true)
+              echo "$code $url"
+              test "$code" = "200"
+            done
+
+            echo "=== MOBILE DOMAIN CHECK ==="
+            MOBILE_CODE=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 https://m.nora365.co.kr || true)
+            echo "MOBILE_HTTP=$MOBILE_CODE"
+            test "$MOBILE_CODE" = "200"
+
+            echo "=== SERVICE STATUS ==="
+            pm2 describe nora-api | grep -E 'status|online'
+            echo "BACKUP=$BACKUP"
+            echo "NORA365 FULL DEPLOY SUCCESS"
