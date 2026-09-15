@@ -1,4 +1,4 @@
-name: Inspect NORA Production Source
+name: Inspect NORA Images
 
 on:
   push:
@@ -8,10 +8,8 @@ on:
 
 jobs:
   inspect:
-    name: Inspect Current NORA Server
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Validate Secrets
         run: |
@@ -20,62 +18,38 @@ jobs:
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
           test -n "${{ secrets.PROJECT_PATH }}"
-
-      - name: Inspect Production Files
+      - name: Inspect image payload hashes
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
-          script_stop: false
+          script_stop: true
           command_timeout: 10m
           script: |
-            cd "${{ secrets.PROJECT_PATH }}" || exit 1
-            echo "PROJECT_PATH=$(pwd)"
-            echo "GIT_HEAD=$(git rev-parse HEAD 2>/dev/null || true)"
-            echo "--- FILE HASHES ---"
-            for f in \
-              client/src/pages/HomePage.jsx \
-              client/src/pages/MapPage.jsx \
-              client/src/pages/KaraokeMapPage.jsx \
-              client/src/pages/ShopDetailPage.jsx \
-              client/src/pages/KaraokeShopDetailPage.jsx \
-              client/src/pages/JobsPage.jsx \
-              client/src/pages/BusinessJobFormPage.jsx \
-              client/src/pages/JobDetailPage.jsx \
-              client/src/pages/PartnerInquiryPage.jsx \
-              client/src/pages/SignupTypePage.jsx \
-              client/src/pages/LoginPage.jsx \
-              client/src/pages/SignupPage.jsx \
-              client/src/pages/SignupAgreePage.jsx \
-              client/src/pages/BusinessSignupPage.jsx \
-              client/src/pages/BusinessSignupAgreePage.jsx \
-              client/src/router/AppRouter.jsx \
-              client/src/services/job.api.js \
-              client/src/services/user.api.js \
-              client/src/services/shop.api.js \
-              client/src/components/KakaoMap.jsx \
-              client/src/components/admin/user/UserList.jsx \
-              client/src/components/admin/user/UserItem.jsx \
-              client/src/pages/admin/ShopAdminPage.jsx \
-              server.js \
-              server/models/Shop.js \
-              server/models/User.js \
-              server/controllers/shop.controller.js \
-              server/controllers/user.controller.js \
-              server/controllers/job.controller.js \
-              server/models/job.js \
-              server/routes/user.routes.js \
-              server/middlewares/auth.js \
-              routes/job/job.routes.js \
-              routes/user/user.routes.js; do
-              if test -f "$f"; then
-                sha256sum "$f" || true
-              else
-                echo "MISSING  $f"
-              fi
-            done
-            echo "--- ROUTER REFERENCES ---"
-            grep -n "BusinessSignupAgree\|SignupType\|JobsPage\|PartnerInquiry\|BusinessJobForm" client/src/router/AppRouter.jsx 2>/dev/null || true
-            exit 0
+            cd "${{ secrets.PROJECT_PATH }}"
+            python3 - <<'PY'
+            from pathlib import Path
+            import re, hashlib
+            files = [
+              'client/src/pages/HomePage.jsx',
+              'client/src/pages/LoginPage.jsx',
+              'client/src/pages/SignupPage.jsx',
+              'client/src/pages/SignupAgreePage.jsx',
+              'client/src/pages/MapPage.jsx',
+              'client/src/pages/KaraokeMapPage.jsx'
+            ]
+            for f in files:
+              p=Path(f)
+              if not p.exists():
+                print('MISSING', f); continue
+              s=p.read_text(errors='ignore')
+              found=[]
+              found.extend(re.findall(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', s))
+              for m in re.finditer(r'const\s+(\w+)\s*=\s*\n?\s*"(data:image/[^;]+;base64,)"\s*\+(.+?);', s, re.S):
+                var,prefix,body=m.groups(); parts=re.findall(r'"([A-Za-z0-9+/=]+)"', body); found.append(prefix+''.join(parts))
+              print('FILE', f)
+              for x in found:
+                print(len(x), hashlib.sha256(x.encode()).hexdigest())
+            PY
