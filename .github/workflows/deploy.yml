@@ -99,6 +99,11 @@ jobs:
             echo "=== PUBLISH FRONTEND ==="
             sudo mkdir -p "$LIVE"
             sudo rsync -a --delete "$PROJECT/client/dist/" "$LIVE/"
+            sudo find "$LIVE" -type d -exec chmod 755 {} +
+            sudo find "$LIVE" -type f -exec chmod 644 {} +
+            sudo chown -R root:root "$LIVE"
+            ls -ld "$LIVE"
+            ls -l "$LIVE/index.html"
 
             echo "=== RESTART API ==="
             cd "$PROJECT"
