@@ -6,12 +6,16 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: nora365-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Deploy production
+      - name: Deploy latest source on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
@@ -19,25 +23,105 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
           script_stop: true
-          command_timeout: 25m
+          command_timeout: 30m
           script: |
-            set -e
-            cd "${{ secrets.PROJECT_PATH }}"
-            bash deploy/deploy.sh
+            set -Eeuo pipefail
+            PROJECT="${{ secrets.PROJECT_PATH }}"
+            LIVE="/var/www/nora"
+            STAMP="$(date +%Y%m%d-%H%M%S)"
+            SAFE="/tmp/nora-safe-$STAMP"
+            BACKUP="/var/backups/nora/latest-$STAMP"
 
-      - name: Verify public routes
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.PORT }}
-          script_stop: true
-          command_timeout: 10m
-          script: |
-            set -e
-            curl -fsS --max-time 30 http://127.0.0.1:10000/api/health
-            curl -fsS --max-time 30 https://api.nora365.co.kr/api/health
+            mkdir -p "$SAFE"
+            sudo mkdir -p "$BACKUP/live" "$BACKUP/source"
+            cd "$PROJECT"
+
+            echo "=== BACKUP CURRENT PRODUCTION ==="
+            if [ -d "$LIVE" ]; then
+              sudo rsync -a "$LIVE/" "$BACKUP/live/"
+            fi
+            sudo rsync -a --exclude='.git/' --exclude='node_modules/' --exclude='client/node_modules/' --exclude='client/dist/' --exclude='uploads/' "$PROJECT/" "$BACKUP/source/"
+
+            for f in .env .env.production ecosystem.config.js; do
+              if [ -f "$PROJECT/$f" ]; then
+                cp -p "$PROJECT/$f" "$SAFE/$f"
+              fi
+            done
+
+            echo "=== SYNC GITHUB MAIN ==="
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd -e .env -e .env.production -e ecosystem.config.js -e uploads -e node_modules -e client/node_modules -e client/dist
+
+            for f in .env .env.production ecosystem.config.js; do
+              if [ -f "$SAFE/$f" ]; then
+                cp -p "$SAFE/$f" "$PROJECT/$f"
+              fi
+            done
+
+            DEPLOYED_SHA="$(git rev-parse HEAD)"
+            echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+            test -f client/src/pages/HomePage.jsx
+            test -f client/src/pages/MapPage.jsx
+            test -f client/src/pages/KaraokeMapPage.jsx
+            test -f client/src/pages/ShopDetailPage.jsx
+            test -f client/src/pages/KaraokeShopDetailPage.jsx
+            test -f client/src/pages/JobsPage.jsx
+            test -f client/src/pages/LoginPage.jsx
+            test -f client/src/pages/SignupAgreePage.jsx
+            test -f client/src/pages/SignupPage.jsx
+            test -f client/src/pages/BusinessSignupAgreePage.jsx
+            test -f client/src/pages/BusinessSignupPage.jsx
+            test -f client/src/pages/admin/ShopAdminPage.jsx
+            test -f client/src/pages/admin/UserAdminPage.jsx
+            test -f client/src/pages/admin/karaoke/KaraokeUserAdminPage.jsx
+            test -f server/controllers/job.controller.js
+            test -f server/models/job.js
+
+            echo "=== BACKEND INSTALL/CHECK ==="
+            npm install --no-audit --no-fund
+            node --check server.js
+
+            echo "=== CLIENT INSTALL/BUILD ==="
+            cd "$PROJECT/client"
+            npm install --no-audit --no-fund
+            CI=false npm run build
+            test -s dist/index.html
+            NEW_ASSET="$(grep -o 'assets/index-[^\" ]*\.js' dist/index.html | head -1)"
+            test -n "$NEW_ASSET"
+            test -s "dist/$NEW_ASSET"
+            echo "NEW_ASSET=$NEW_ASSET"
+
+            echo "=== PUBLISH FRONTEND ==="
+            sudo mkdir -p "$LIVE"
+            sudo rsync -a --delete "$PROJECT/client/dist/" "$LIVE/"
+
+            echo "=== RESTART API ==="
+            cd "$PROJECT"
+            pm2 restart nora-api --update-env
+            pm2 save
+
+            API_OK=0
+            for i in 1 2 3 4 5 6; do
+              if HEALTH="$(curl -fsS --max-time 20 http://127.0.0.1:10000/api/health 2>/dev/null)"; then
+                echo "$HEALTH"
+                if printf '%s' "$HEALTH" | grep -q '"dbReady":true'; then
+                  API_OK=1
+                  break
+                fi
+              fi
+              sleep 5
+            done
+            test "$API_OK" = "1"
+
+            echo "=== NGINX ==="
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            echo "=== VERIFY PUBLIC API ==="
+            curl -fsS --max-time 30 https://api.nora365.co.kr/api/health | grep -q '"dbReady":true'
+
+            echo "=== VERIFY PUBLIC ROUTES ==="
             for url in \
               https://www.nora365.co.kr/ \
               https://www.nora365.co.kr/home \
@@ -52,12 +136,23 @@ jobs:
               https://www.nora365.co.kr/business/signup-agree \
               https://www.nora365.co.kr/business/signup \
               https://www.nora365.co.kr/admin \
-              https://www.nora365.co.kr/admin/dashboard; do
-              code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")
+              https://www.nora365.co.kr/admin/dashboard \
+              https://www.nora365.co.kr/admin/shops \
+              https://www.nora365.co.kr/admin/karaoke/shops \
+              https://www.nora365.co.kr/admin/users \
+              https://www.nora365.co.kr/admin/karaoke/users; do
+              code="$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")"
               echo "$code $url"
               test "$code" = "200"
             done
-            code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 https://m.nora365.co.kr)
-            echo "MOBILE_HTTP=$code"
-            test "$code" = "200"
-            echo "NORA365 FULL DEPLOY SUCCESS"
+
+            MOBILE_CODE="$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 https://m.nora365.co.kr/)"
+            echo "MOBILE_HTTP=$MOBILE_CODE"
+            test "$MOBILE_CODE" = "200"
+
+            LIVE_ASSET="$(grep -o 'assets/index-[^\" ]*\.js' "$LIVE/index.html" | head -1)"
+            echo "LIVE_ASSET=$LIVE_ASSET"
+            test "$LIVE_ASSET" = "$NEW_ASSET"
+            pm2 describe nora-api | grep -E 'status|online'
+            echo "BACKUP=$BACKUP"
+            echo "NORA365 VERIFIED LATEST-SOURCE DEPLOY SUCCESS"
