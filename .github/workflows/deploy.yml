@@ -82,10 +82,14 @@ jobs:
             npm install --no-audit --no-fund
             node --check server.js
 
+            echo "=== SERVER MEMORY ==="
+            free -h || true
+            echo "CURRENT_NODE_OPTIONS=${NODE_OPTIONS:-unset}"
+
             echo "=== CLIENT INSTALL/BUILD ==="
             cd "$PROJECT/client"
             npm install --no-audit --no-fund
-            CI=false npm run build
+            NODE_OPTIONS=--max-old-space-size=1024 CI=false npm run build
             test -s dist/index.html
             NEW_ASSET="$(grep -o 'assets/index-[^\" ]*\.js' dist/index.html | head -1)"
             test -n "$NEW_ASSET"
