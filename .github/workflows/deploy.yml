@@ -1,9 +1,6 @@
 name: Deploy NORA Platform
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
