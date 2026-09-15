@@ -1,4 +1,4 @@
-name: Locate Latest NORA365 Source
+name: Redeploy NORA365 Full Production Bundle
 
 on:
   push:
@@ -6,10 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: nora-production-deploy
+  cancel-in-progress: true
+
 jobs:
-  locate:
+  deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Validate Secrets
         run: |
@@ -17,23 +21,84 @@ jobs:
           test -n "${{ secrets.USERNAME }}"
           test -n "${{ secrets.SSH_KEY }}"
           test -n "${{ secrets.PORT }}"
-      - name: Locate latest NORA365 project files
+      - name: Redeploy current full NORA365 production bundle
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
-          script_stop: false
-          command_timeout: 15m
+          script_stop: true
+          command_timeout: 20m
           script: |
-            echo "=== KEY FILE LOCATIONS ==="
-            find /home -maxdepth 9 -type f \( -name 'JobsPage.jsx' -o -name 'BusinessSignupAgreePage.jsx' -o -name 'HomePage.jsx' -o -name 'MapPage.jsx' -o -name 'KaraokeMapPage.jsx' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null | sort -r | sed -n '1,240p'
-            echo "=== CURRENT PROJECT PAGES ==="
-            for d in /home/*/noma-project /home/*/noma-project-backup-20260824-110541 /home/*/noma-deploy-stage-20260824; do
-              if [ -d "$d/client/src/pages" ]; then
-                echo "DIR=$d"
-                ls -lah --time-style=long-iso "$d/client/src/pages" | grep -E 'HomePage|MapPage|KaraokeMapPage|JobsPage|LoginPage|SignupPage|SignupAgreePage|BusinessSignupPage|BusinessSignupAgreePage' || true
-              fi
+            set -e
+            LIVE=/var/www/nora
+            TS=$(date +%Y%m%d-%H%M%S)
+            BACKUP=/var/backups/nora/redeploy-$TS
+
+            echo "=== VERIFY LIVE BUNDLE ==="
+            test -f "$LIVE/index.html"
+            JS=$(grep -o 'assets/index-[^" ]*\.js' "$LIVE/index.html" | head -1)
+            test -n "$JS"
+            test -f "$LIVE/$JS"
+            echo "BUNDLE=$JS"
+            node --check "$LIVE/$JS"
+
+            echo "=== VERIFY REQUESTED FEATURES IN BUNDLE ==="
+            for marker in '/login' '/signup-agree' '/signup' '/business/signup-agree' '/karaoke' '/map' '/admin' '전체 채용정보'; do
+              grep -q "$marker" "$LIVE/$JS" || { echo "MISSING BUNDLE MARKER: $marker"; exit 1; }
             done
-            exit 0
+
+            echo "=== BACKUP CURRENT FULL SITE ==="
+            sudo mkdir -p "$BACKUP"
+            sudo cp -a "$LIVE/." "$BACKUP/"
+
+            echo "=== FULL STATIC REPUBLISH ==="
+            STAGE=/tmp/nora-redeploy-$TS
+            mkdir -p "$STAGE"
+            cp -a "$LIVE/." "$STAGE/"
+            sudo rsync -a --delete "$STAGE/" "$LIVE/"
+            rm -rf "$STAGE"
+
+            echo "=== RESTART BACKEND ==="
+            if pm2 describe nora-api > /dev/null 2>&1; then
+              pm2 restart nora-api --update-env
+              pm2 save
+            fi
+
+            echo "=== RELOAD NGINX ==="
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            echo "=== WAIT FOR API ==="
+            ok=0
+            for i in 1 2 3 4 5 6 7 8; do
+              if curl -fsS --max-time 20 http://127.0.0.1:10000/api/health >/tmp/local-health; then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            test "$ok" = "1"
+            cat /tmp/local-health
+            rm -f /tmp/local-health
+
+            echo "=== PUBLIC API ==="
+            curl -fsS --max-time 30 https://api.nora365.co.kr/api/health
+
+            echo "=== PC ROUTE CHECKS ==="
+            for path in / /home /map /massage/map /karaoke /karaoke/map /jobs /login /signup-agree /signup /business/signup-agree /admin /admin/dashboard /admin/shops /admin/karaoke/shops /admin/users /admin/karaoke/users; do
+              code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "https://www.nora365.co.kr$path" || true)
+              echo "$code $path"
+              test "$code" = "200"
+            done
+
+            echo "=== MOBILE DOMAIN ==="
+            MOBILE=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 https://m.nora365.co.kr || true)
+            echo "MOBILE_HTTP=$MOBILE"
+            test "$MOBILE" = "200"
+
+            echo "=== FINAL STATUS ==="
+            pm2 describe nora-api | grep -E 'status|online'
+            echo "BACKUP=$BACKUP"
+            echo "NORA365 FULL PRODUCTION REDEPLOY SUCCESS"
