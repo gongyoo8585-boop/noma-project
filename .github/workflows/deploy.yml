@@ -27,10 +27,13 @@ jobs:
           script_stop: false
           command_timeout: 15m
           script: |
-            echo "=== PROJECT CANDIDATES ==="
-            find /home -maxdepth 5 -type f \( -name 'JobsPage.jsx' -o -name 'BusinessSignupAgreePage.jsx' -o -name 'HomePage.jsx' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' 2>/dev/null | sort -r | sed -n '1,200p'
-            echo "=== NORA PROJECT DIRS ==="
-            find /home -maxdepth 4 -type d \( -name 'noma-project' -o -name 'nora-project' -o -name 'client' \) -print 2>/dev/null | sed -n '1,120p'
-            echo "=== VAR WWW ==="
-            find /var/www -maxdepth 4 -type f -name 'index.html' -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' 2>/dev/null | sort -r | sed -n '1,80p'
+            echo "=== KEY FILE LOCATIONS ==="
+            find /home -maxdepth 9 -type f \( -name 'JobsPage.jsx' -o -name 'BusinessSignupAgreePage.jsx' -o -name 'HomePage.jsx' -o -name 'MapPage.jsx' -o -name 'KaraokeMapPage.jsx' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null | sort -r | sed -n '1,240p'
+            echo "=== CURRENT PROJECT PAGES ==="
+            for d in /home/*/noma-project /home/*/noma-project-backup-20260824-110541 /home/*/noma-deploy-stage-20260824; do
+              if [ -d "$d/client/src/pages" ]; then
+                echo "DIR=$d"
+                ls -lah --time-style=long-iso "$d/client/src/pages" | grep -E 'HomePage|MapPage|KaraokeMapPage|JobsPage|LoginPage|SignupPage|SignupAgreePage|BusinessSignupPage|BusinessSignupAgreePage' || true
+              fi
+            done
             exit 0
