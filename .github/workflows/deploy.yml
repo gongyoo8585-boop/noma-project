@@ -28,11 +28,10 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
-          script_stop: true
+          script_stop: false
           command_timeout: 10m
           script: |
-            set -e
-            cd "${{ secrets.PROJECT_PATH }}"
+            cd "${{ secrets.PROJECT_PATH }}" || exit 1
             echo "PROJECT_PATH=$(pwd)"
             echo "GIT_HEAD=$(git rev-parse HEAD 2>/dev/null || true)"
             echo "--- FILE HASHES ---"
@@ -71,11 +70,12 @@ jobs:
               server/middlewares/auth.js \
               routes/job/job.routes.js \
               routes/user/user.routes.js; do
-              if [ -f "$f" ]; then
-                sha256sum "$f"
+              if test -f "$f"; then
+                sha256sum "$f" || true
               else
                 echo "MISSING  $f"
               fi
             done
             echo "--- ROUTER REFERENCES ---"
             grep -n "BusinessSignupAgree\|SignupType\|JobsPage\|PartnerInquiry\|BusinessJobForm" client/src/router/AppRouter.jsx 2>/dev/null || true
+            exit 0
