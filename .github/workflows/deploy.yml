@@ -1,41 +1,63 @@
-name: Capture NORA365 Live Bundle
+name: Deploy NORA365 Production
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
-  capture:
+  deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
-      - name: Validate Secrets
-        run: |
-          test -n "${{ secrets.HOST }}"
-          test -n "${{ secrets.USERNAME }}"
-          test -n "${{ secrets.SSH_KEY }}"
-          test -n "${{ secrets.PORT }}"
-      - name: Capture current production bundle
-        shell: bash
-        run: |
-          set -e
-          mkdir -p ~/.ssh capture
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/nora_deploy_key
-          chmod 600 ~/.ssh/nora_deploy_key
-          SCP_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -i ~/.ssh/nora_deploy_key -P "${{ secrets.PORT }}")
-          REMOTE="${{ secrets.USERNAME }}@${{ secrets.HOST }}"
-          scp "${SCP_OPTS[@]}" "$REMOTE:/var/www/nora/index.html" capture/index.html
-          ASSET=$(grep -o 'assets/index-[^" ]*\.js' capture/index.html | head -1)
-          test -n "$ASSET"
-          echo "ASSET=$ASSET"
-          scp "${SCP_OPTS[@]}" "$REMOTE:/var/www/nora/$ASSET" capture/current-live.js
-          sha256sum capture/index.html capture/current-live.js
-          rm -f ~/.ssh/nora_deploy_key
-      - name: Upload capture artifact
-        uses: actions/upload-artifact@v4
+      - name: Deploy production
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          name: nora-live-bundle
-          path: capture/
-          if-no-files-found: error
-          retention-days: 1
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script_stop: true
+          command_timeout: 25m
+          script: |
+            set -e
+            cd "${{ secrets.PROJECT_PATH }}"
+            bash deploy/deploy.sh
+
+      - name: Verify public routes
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script_stop: true
+          command_timeout: 10m
+          script: |
+            set -e
+            curl -fsS --max-time 30 http://127.0.0.1:10000/api/health
+            curl -fsS --max-time 30 https://api.nora365.co.kr/api/health
+            for url in \
+              https://www.nora365.co.kr/ \
+              https://www.nora365.co.kr/home \
+              https://www.nora365.co.kr/map \
+              https://www.nora365.co.kr/massage/map \
+              https://www.nora365.co.kr/karaoke \
+              https://www.nora365.co.kr/karaoke/map \
+              https://www.nora365.co.kr/jobs \
+              https://www.nora365.co.kr/login \
+              https://www.nora365.co.kr/signup-agree \
+              https://www.nora365.co.kr/signup \
+              https://www.nora365.co.kr/business/signup-agree \
+              https://www.nora365.co.kr/business/signup \
+              https://www.nora365.co.kr/admin \
+              https://www.nora365.co.kr/admin/dashboard; do
+              code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")
+              echo "$code $url"
+              test "$code" = "200"
+            done
+            code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 https://m.nora365.co.kr)
+            echo "MOBILE_HTTP=$code"
+            test "$code" = "200"
+            echo "NORA365 FULL DEPLOY SUCCESS"
