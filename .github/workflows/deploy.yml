@@ -36,127 +36,66 @@ jobs:
           command_timeout: 30m
           script: |
             set -e
-
             echo "=================================="
             echo "NORA SAFE DEPLOY START"
             echo "=================================="
-
             cd "${{ secrets.PROJECT_PATH }}"
 
-            echo "=================================="
             echo "PATCH BUSINESS SIGNUP AGREEMENT"
-            echo "=================================="
+            python3 -c 'from pathlib import Path; p=Path("client/src/pages/BusinessSignupAgreePage.jsx"); s=p.read_text(encoding="utf-8"); old="  agreeBoxChecked: {\n    borderColor: GOLD,\n    background: \"#15130b\",\n  },"; new="  agreeBoxChecked: {\n    border: \"1px solid transparent\",\n    background: `linear-gradient(#15130b, #15130b) padding-box, ${GOLD_GRADIENT} border-box`,\n  },"; assert old in s or new in s, "Expected agreeBoxChecked block not found"; p.write_text(s if new in s else s.replace(old,new,1), encoding="utf-8"); print("BusinessSignupAgreePage patch verified")'
 
-            python3 - <<'PY'
-            from pathlib import Path
-
-            path = Path('client/src/pages/BusinessSignupAgreePage.jsx')
-            if not path.exists():
-                raise SystemExit(f'{path} not found')
-
-            text = path.read_text(encoding='utf-8')
-            old = '''  agreeBoxChecked: {
-    borderColor: GOLD,
-    background: "#15130b",
-  },'''
-            new = '''  agreeBoxChecked: {
-    border: "1px solid transparent",
-    background: `linear-gradient(#15130b, #15130b) padding-box, ${GOLD_GRADIENT} border-box`,
-  },'''
-
-            if new in text:
-                print('BusinessSignupAgreePage already patched')
-            elif old in text:
-                path.write_text(text.replace(old, new, 1), encoding='utf-8')
-                print('BusinessSignupAgreePage patched')
-            else:
-                raise SystemExit('Expected agreeBoxChecked block not found; refusing unsafe patch')
-            PY
-
-            echo "=================================="
             echo "SERVER SYNTAX CHECK"
-            echo "=================================="
-
             if [ -f server.js ]; then
               node --check server.js
             fi
 
-            echo "=================================="
             echo "CLIENT INSTALL AND FULL BUILD"
-            echo "=================================="
-
             cd client
             npm install
             npm install @rollup/rollup-linux-x64-gnu --save-dev || true
             chmod +x node_modules/.bin/vite || true
             CI=false npm run build
-
-            if [ ! -d dist ]; then
-              echo "client/dist not found"
-              exit 1
-            fi
-
+            test -d dist
             cd ..
 
-            echo "=================================="
             echo "ENV CHECK"
-            echo "=================================="
-
             if [ ! -f .env ] && [ ! -f .env.production ]; then
               echo ".env or .env.production not found"
               exit 1
             fi
-
             if ! grep -q "^JWT_SECRET=" .env .env.production 2>/dev/null; then
               echo "JWT_SECRET not found"
               exit 1
             fi
 
-            echo "=================================="
             echo "PM2 RESTART"
-            echo "=================================="
-
             if pm2 describe nora-api > /dev/null 2>&1; then
               pm2 restart ecosystem.config.js --only nora-api --env production --update-env
             else
               pm2 start ecosystem.config.js --only nora-api --env production
             fi
-
             pm2 save
             sleep 20
             pm2 describe nora-api
             pm2 logs nora-api --lines 100 --nostream
+            pm2 pid nora-api > /dev/null 2>&1
 
-            if ! pm2 pid nora-api > /dev/null 2>&1; then
-              echo "nora-api pm2 pid not found"
-              exit 1
-            fi
-
-            echo "=================================="
             echo "NGINX CHECK AND RELOAD"
-            echo "=================================="
-
             sudo systemctl daemon-reload
             sudo nginx -t
             sudo systemctl reload nginx
 
-            echo "=================================="
             echo "HEALTH CHECKS"
-            echo "=================================="
-
             for i in 1 2 3 4 5; do
               if curl -f --max-time 30 http://127.0.0.1:10000/api/health; then
                 break
               fi
-
               if [ "$i" = "5" ]; then
                 echo "local api health check failed"
                 exit 1
               fi
-
               sleep 5
             done
-
             curl -f --max-time 30 https://api.nora365.co.kr/api/health
             curl -f --max-time 30 https://www.nora365.co.kr
             curl -f --max-time 30 https://m.nora365.co.kr || true
